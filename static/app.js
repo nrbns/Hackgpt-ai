@@ -247,7 +247,7 @@ async function checkHealth() {
         showSetupPanel(
           "Start Ollama",
           "The UI is ready, but no Ollama server is running yet. Start Ollama and pull a model to enable chat.",
-          "ollama pull mistral"
+          "ollama pull tinyllama"
         );
       } else if (!data.ollama_has_models) {
         statusEl.textContent = `Ollama ready · pull a model${rag}`;
@@ -255,7 +255,7 @@ async function checkHealth() {
         showSetupPanel(
           "Pull a local model",
           "Ollama is reachable, but no local model is installed yet.",
-          "ollama pull mistral"
+          "ollama pull tinyllama"
         );
       } else {
         statusEl.textContent = `${backend} · ${data.model}${rag}`;

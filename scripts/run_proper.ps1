@@ -27,11 +27,11 @@ if ($ollama) {
     Write-Host "Ollama found — configuring ollama backend."
     & .\scripts\use_ollama.ps1 | Out-Null
     $models = & ollama list 2>$null
-    if ($models -match "mistral") {
-        Write-Host "Mistral model ready."
+    if ($models -match "tinyllama") {
+        Write-Host "TinyLlama model ready."
     } else {
-        Write-Host "Pulling mistral model (one-time download)..."
-        & ollama pull mistral
+        Write-Host "Pulling tinyllama model (one-time download)..."
+        & ollama pull tinyllama
     }
 } else {
     Write-Host "Ollama not found — using HuggingFace CPU model (Qwen2.5-0.5B)." -ForegroundColor Yellow

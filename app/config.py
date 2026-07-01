@@ -6,7 +6,7 @@ class Settings(BaseSettings):
 
     model_backend: str = "ollama"
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "llama3"
+    ollama_model: str = "tinyllama"
     openai_compat_base_url: str = "http://localhost:1234/v1"
     openai_compat_model: str = "local-model"
     openai_compat_api_key: str = "lm-studio"

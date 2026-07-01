@@ -11,6 +11,12 @@ from app.config import settings
 
 RECOMMENDED_MODELS = [
     {
+        "id": "tinyllama",
+        "name": "TinyLlama 1.1B",
+        "pull": "tinyllama",
+        "description": "Fastest CPU-friendly default for local chat.",
+    },
+    {
         "id": "llama3",
         "name": "Llama 3 8B",
         "pull": "llama3",

@@ -18,7 +18,7 @@ For better quality (larger download): `ollama pull mistral`
 ```env
 MODEL_BACKEND=ollama
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3
+OLLAMA_MODEL=tinyllama
 ```
 
 4. Start the app:

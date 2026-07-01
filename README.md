@@ -28,7 +28,7 @@ Open **http://localhost:8080**
 Or manually:
 
 ```powershell
-ollama pull llama3
+ollama pull tinyllama
 ```
 
 ### LM Studio

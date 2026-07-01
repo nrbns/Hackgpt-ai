@@ -2,8 +2,8 @@
 # Usage: .\scripts\setup_ollama.ps1
 
 $ErrorActionPreference = "Stop"
-
-$models = @("llama3", "mistral", "codellama")
+$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location (Join-Path $root "..")
 
 Write-Host "PentestGPT Ollama Setup" -ForegroundColor Green
 Write-Host ""
@@ -17,16 +17,24 @@ if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
 Write-Host "Ollama found: $(ollama --version)"
 Write-Host ""
 
-foreach ($model in $models) {
-    Write-Host "Pulling $model ..." -ForegroundColor Cyan
-    ollama pull $model
-}
+Write-Host "Pulling tinyllama (fast CPU default)..." -ForegroundColor Cyan
+ollama pull tinyllama
 
 Write-Host ""
 Write-Host "Installed models:" -ForegroundColor Green
 ollama list
 
+if (-not (Test-Path ".env")) {
+    Copy-Item .env.example .env
+}
+
+$content = Get-Content ".env"
+$content = $content -replace "^MODEL_BACKEND=.*", "MODEL_BACKEND=ollama"
+$content = $content -replace "^OLLAMA_MODEL=.*", "OLLAMA_MODEL=tinyllama"
+$content | Set-Content ".env"
+
 Write-Host ""
-Write-Host "Default model set to llama3 in .env.example"
-Write-Host "Start PentestGPT: python run.py"
+Write-Host "Configured .env for Ollama + tinyllama."
+Write-Host "Optional larger models: ollama pull mistral | ollama pull llama3"
+Write-Host "Start PentestGPT: .\scripts\start.ps1"
 Write-Host "Open: http://localhost:8080"
