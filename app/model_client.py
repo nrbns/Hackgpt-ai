@@ -66,7 +66,8 @@ class ModelClient:
             "stream": True,
         }
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            timeout = httpx.Timeout(connect=10.0, read=600.0, write=30.0, pool=10.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 async with client.stream("POST", url, json=payload) as response:
                     if response.status_code != 200:
                         body = await response.aread()
@@ -92,6 +93,11 @@ class ModelClient:
                 "1. Install Ollama: https://ollama.com\n"
                 f"2. Run: `ollama pull {settings.ollama_model}`\n"
                 "3. Start Ollama, then refresh this page."
+            )
+        except httpx.ReadTimeout:
+            yield (
+                f"**Ollama timed out** waiting for `{settings.ollama_model}`.\n\n"
+                "Try a smaller model (`tinyllama`) in the model dropdown, or disable RAG for faster replies."
             )
 
     async def _stream_openai_compat(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
