@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PentestGPT — Local Security AI</title>
+  <link rel="stylesheet" href="/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="brand">
+        <span class="logo">🛡️</span>
+        <div>
+          <h1>PentestGPT</h1>
+          <p class="subtitle">Real-time local security assistant</p>
+        </div>
+      </div>
+      <div class="controls">
+        <select id="backend" title="Model backend">
+          <option value="ollama">Ollama</option>
+          <option value="openai_compat">LM Studio</option>
+          <option value="huggingface">Hugging Face</option>
+        </select>
+        <select id="mode">
+          <option value="default">Default</option>
+          <option value="ctf">CTF Mode</option>
+          <option value="lab">Lab Mode</option>
+          <option value="redteam">Red Team Lab</option>
+          <option value="blueteam">Blue Team</option>
+          <option value="malware">Malware Analysis</option>
+        </select>
+        <select id="model" title="Ollama model">
+          <option value="">Loading models…</option>
+        </select>
+        <label class="toggle">
+          <input type="checkbox" id="useRag" checked />
+          RAG
+        </label>
+        <span id="status" class="status">Connecting…</span>
+        <button id="ingestRag" type="button" class="btn-secondary" title="Re-index knowledge base">Re-index</button>
+        <button id="pullModel" type="button" class="btn-secondary" title="Pull selected model via Ollama">Pull</button>
+      </div>
+    </header>
+
+    <div id="quickPrompts" class="quick-prompts"></div>
+    <section id="setupPanel" class="setup-panel hidden">
+      <div class="setup-copy">
+        <h2 id="setupTitle">Local model setup needed</h2>
+        <p id="setupText">Connect a local backend to start chatting.</p>
+      </div>
+      <div class="setup-actions">
+        <button id="setupPrimary" type="button" class="btn-secondary">Copy command</button>
+      </div>
+    </section>
+
+    <main id="chat" class="chat"></main>
+
+    <footer class="composer">
+      <textarea
+        id="input"
+        rows="2"
+        placeholder="Ask about detection, IR, YARA, CTF, labs… (authorized only)"
+      ></textarea>
+      <button id="send" type="button">Send</button>
+    </footer>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

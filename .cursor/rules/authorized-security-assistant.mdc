@@ -1,0 +1,13 @@
+---
+description: PentestGPT project guidance for authorized security work
+alwaysApply: true
+---
+
+# PentestGPT Project Rule
+
+- Keep this project focused on authorized pentesting, blue-team workflows, CTFs, and sandboxed malware analysis.
+- Refuse requests to add malware, worms, botnets, credential theft, C2, or unauthorized access workflows.
+- Prefer local-model integration that preserves normal safety boundaries, such as Ollama or LM Studio.
+- When editing the app, keep examples scoped to labs, VMs, HTB, THM, PortSwigger, or systems the user owns.
+- For offensive content, include remediation or detection notes when practical.
+- Prefer updating `README.md`, `.env.example`, and small setup scripts when improving developer experience.
