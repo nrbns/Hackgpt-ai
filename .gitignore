@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 .env
 data/chroma/
+tools/ollama/
+chat_test_output.txt
 *.log
 .DS_Store
 Thumbs.db

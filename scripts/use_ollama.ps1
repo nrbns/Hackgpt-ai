@@ -8,7 +8,7 @@ if (-not (Test-Path ".env")) {
 $content = Get-Content ".env"
 $content = $content -replace "^MODEL_BACKEND=.*", "MODEL_BACKEND=ollama"
 $content = $content -replace "^OLLAMA_BASE_URL=.*", "OLLAMA_BASE_URL=http://localhost:11434"
-$content = $content -replace "^OLLAMA_MODEL=.*", "OLLAMA_MODEL=llama3"
+$content = $content -replace "^OLLAMA_MODEL=.*", "OLLAMA_MODEL=tinyllama"
 $content | Set-Content ".env"
 
 Write-Host "Configured .env for Ollama."

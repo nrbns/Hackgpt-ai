@@ -5,6 +5,12 @@ Real-time local security assistant for authorized pentesting, blue-team workflow
 ## Run
 
 ```powershell
+.\scripts\run_proper.ps1
+```
+
+Or quick start:
+
+```powershell
 .\scripts\start.ps1
 ```
 

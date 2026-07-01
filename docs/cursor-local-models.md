@@ -8,8 +8,10 @@ This project supports safe local-model workflows with **Ollama**, **LM Studio**,
 2. Pull a model:
 
 ```powershell
-ollama pull llama3
+ollama pull tinyllama
 ```
+
+For better quality (larger download): `ollama pull mistral`
 
 3. In `.env`, use:
 
@@ -59,7 +61,7 @@ Replace `OPENAI_COMPAT_MODEL` with the model name exposed by LM Studio if needed
 
 ```env
 MODEL_BACKEND=huggingface
-HF_MODEL=microsoft/Phi-3-mini-4k-instruct
+HF_MODEL=Qwen/Qwen2.5-0.5B-Instruct
 ```
 
 4. Start the app:
@@ -68,7 +70,7 @@ HF_MODEL=microsoft/Phi-3-mini-4k-instruct
 .\scripts\start.ps1
 ```
 
-This backend runs inference directly in Python and is best for smaller local models unless you have substantial GPU memory.
+This backend runs inference directly in Python. On **CPU-only** machines, use `Qwen/Qwen2.5-0.5B-Instruct` for practical response times.
 
 ## Cursor usage
 
@@ -78,7 +80,7 @@ Recommended project behavior:
 
 - Use local models for privacy/offline workflows
 - Keep prompts scoped to authorized pentests, blue-team work, CTFs, and sandbox analysis
-- Prefer `llama3` or `mistral` for methodology
+- Prefer `tinyllama` or `mistral` on CPU; `llama3` if you have more RAM
 - Prefer code-focused models for scripting help in labs
 
 ## Verify the backend

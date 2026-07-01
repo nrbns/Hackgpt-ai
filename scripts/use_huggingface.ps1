@@ -7,7 +7,7 @@ if (-not (Test-Path ".env")) {
 
 $content = Get-Content ".env"
 $content = $content -replace "^MODEL_BACKEND=.*", "MODEL_BACKEND=huggingface"
-$content = $content -replace "^HF_MODEL=.*", "HF_MODEL=microsoft/Phi-3-mini-4k-instruct"
+$content = $content -replace "^HF_MODEL=.*", "HF_MODEL=Qwen/Qwen2.5-0.5B-Instruct"
 $content | Set-Content ".env"
 
 Write-Host "Configured .env for direct Hugging Face local inference."

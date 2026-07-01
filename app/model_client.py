@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import queue as thread_queue
 from collections.abc import AsyncIterator
 from threading import Thread
 
@@ -31,12 +32,13 @@ class ModelClient:
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
-        load_kwargs: dict = {"trust_remote_code": True}
+        load_kwargs: dict = {"trust_remote_code": True, "attn_implementation": "eager"}
         if torch.cuda.is_available():
             load_kwargs["torch_dtype"] = torch.float16
             load_kwargs["device_map"] = "auto"
         else:
             load_kwargs["torch_dtype"] = torch.float32
+            load_kwargs["low_cpu_mem_usage"] = True
 
         model = AutoModelForCausalLM.from_pretrained(settings.hf_model, **load_kwargs)
         self._hf_tokenizer = tokenizer
@@ -139,11 +141,16 @@ class ModelClient:
                 f"3. Set `OPENAI_COMPAT_MODEL` to the loaded local model name in `.env`"
             )
 
-    def _hf_generate_sync(self, messages: list[dict[str, str]]) -> list[str]:
-        from transformers import TextIteratorStreamer
-        import torch
-
-        tokenizer, model = self._load_hf_model()
+    def _hf_build_prompt(self, tokenizer, messages: list[dict[str, str]]) -> str:
+        if hasattr(tokenizer, "apply_chat_template"):
+            try:
+                return tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:
+                pass
 
         parts = []
         for m in messages:
@@ -156,7 +163,14 @@ class ModelClient:
             else:
                 parts.append(f"<|assistant|>\n{content}<|end|>")
         parts.append("<|assistant|>\n")
-        prompt = "\n".join(parts)
+        return "\n".join(parts)
+
+    def _hf_stream_sync(self, messages: list[dict[str, str]], out_queue: thread_queue.Queue) -> None:
+        from transformers import TextIteratorStreamer
+        import torch
+
+        tokenizer, model = self._load_hf_model()
+        prompt = self._hf_build_prompt(tokenizer, messages)
 
         inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=3072)
         if torch.cuda.is_available():
@@ -173,13 +187,17 @@ class ModelClient:
             temperature=0.7,
         )
 
-        thread = Thread(target=model.generate, kwargs=generation_kwargs)
+        def generate() -> None:
+            model.generate(**generation_kwargs)
+
+        thread = Thread(target=generate)
         thread.start()
-        chunks: list[str] = []
-        for text in streamer:
-            chunks.append(text)
-        thread.join()
-        return chunks
+        try:
+            for text in streamer:
+                out_queue.put(text)
+        finally:
+            thread.join()
+            out_queue.put(None)
 
     async def _stream_huggingface(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
         try:
@@ -196,9 +214,15 @@ class ModelClient:
             yield f"**Loading model** `{settings.hf_model}` — first request may take a few minutes…\n\n"
 
         try:
-            chunks = await asyncio.to_thread(self._hf_generate_sync, messages)
-            for chunk in chunks:
+            out_queue: thread_queue.Queue[str | None] = thread_queue.Queue()
+            loop = asyncio.get_running_loop()
+            worker = loop.run_in_executor(None, self._hf_stream_sync, messages, out_queue)
+            while True:
+                chunk = await loop.run_in_executor(None, out_queue.get)
+                if chunk is None:
+                    break
                 yield chunk
+            await worker
         except Exception as exc:
             yield f"**Model error:** {exc}\n\nCheck `HF_MODEL` in `.env` and your internet connection for first download."
 
