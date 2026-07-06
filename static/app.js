@@ -6,6 +6,7 @@ const modeEl = document.getElementById("mode");
 const modelEl = document.getElementById("model");
 const pullBtn = document.getElementById("pullModel");
 const ingestBtn = document.getElementById("ingestRag");
+const preloadBtn = document.getElementById("preloadModel");
 const quickEl = document.getElementById("quickPrompts");
 const ragEl = document.getElementById("useRag");
 const statusEl = document.getElementById("status");
@@ -20,6 +21,7 @@ let streaming = false;
 /** @type {Record<string, string[]>} */
 let quickPrompts = {};
 let lastSetupCommand = "";
+let backendReady = false;
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -230,6 +232,41 @@ async function pullModel() {
   }
 }
 
+async function preloadModel() {
+  if (streaming || backendEl.value !== "huggingface") return;
+
+  streaming = true;
+  preloadBtn.disabled = true;
+  sendBtn.disabled = true;
+
+  const body = appendMessage("assistant", "", false);
+  body.classList.add("typing");
+  let fullText = `Preloading **${modelEl.value}**…\n\n`;
+
+  try {
+    const res = await fetch("/api/models/preload", { method: "POST" });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      fullText += decoder.decode(value, { stream: true });
+      body.innerHTML = renderMarkdown(fullText);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+    body.classList.remove("typing");
+    body.innerHTML = renderMarkdown(fullText + "\n\n**Model ready.**");
+    await checkHealth();
+  } catch (err) {
+    body.classList.remove("typing");
+    body.innerHTML = renderMarkdown(`**Preload failed:** ${err.message}`);
+  } finally {
+    streaming = false;
+    preloadBtn.disabled = false;
+    sendBtn.disabled = false;
+  }
+}
+
 async function checkHealth() {
   try {
     const res = await fetch("/api/health");
@@ -237,6 +274,9 @@ async function checkHealth() {
     const rag = data.rag_documents != null ? ` · RAG:${data.rag_documents}` : "";
     const backend = data.backend;
     backendEl.value = backend;
+    backendReady = Boolean(data.backend_ready);
+    sendBtn.disabled = streaming || !backendReady;
+    preloadBtn.classList.add("hidden");
 
     if (backend === "ollama") {
       modelEl.disabled = false;
@@ -289,9 +329,10 @@ async function checkHealth() {
         } else {
           statusEl.textContent = `${backend} · ${data.model}${statusSuffix}${rag}`;
           statusEl.className = "status ok";
+          preloadBtn.classList.remove("hidden");
           showSetupPanel(
             "Hugging Face model not loaded yet",
-            "The first chat request downloads and loads the model. For faster replies later, install Ollama or LM Studio.",
+            "Click Preload to load the model now, or send a chat message. First load can take a few minutes on CPU.",
           );
         }
       } else {
@@ -308,11 +349,13 @@ async function checkHealth() {
       }
     }
   } catch {
+    backendReady = false;
+    sendBtn.disabled = true;
     statusEl.textContent = "Offline";
     statusEl.className = "status err";
     showSetupPanel(
       "Server offline",
-      "The frontend could not reach the PentestGPT backend. Start the app with .\\scripts\\start.ps1."
+      "Start the backend with .\\scripts\\start.ps1 (Windows) or bash scripts/start.sh (Linux/macOS)."
     );
   }
 }
@@ -320,6 +363,14 @@ async function checkHealth() {
 async function sendMessage() {
   const message = inputEl.value.trim();
   if (!message || streaming) return;
+  if (!backendReady) {
+    appendMessage(
+      "assistant",
+      renderMarkdown("**Backend not ready.** Check the status bar and connect a local model backend first."),
+      true
+    );
+    return;
+  }
 
   streaming = true;
   sendBtn.disabled = true;
@@ -363,6 +414,7 @@ async function sendMessage() {
     history.push({ role: "user", content: message });
     history.push({ role: "assistant", content: fullText });
     if (history.length > 40) history = history.slice(-40);
+    await checkHealth();
   } catch (err) {
     assistantBody.classList.remove("typing");
     assistantBody.innerHTML = renderMarkdown(`**Error:** ${err.message}`);
@@ -375,6 +427,7 @@ async function sendMessage() {
 
 sendBtn.addEventListener("click", sendMessage);
 pullBtn.addEventListener("click", pullModel);
+preloadBtn.addEventListener("click", preloadModel);
 ingestBtn.addEventListener("click", ingestRag);
 backendEl.addEventListener("change", () => switchBackend(backendEl.value));
 modeEl.addEventListener("change", renderQuickPrompts);

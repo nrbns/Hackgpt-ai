@@ -5,9 +5,22 @@ This project supports safe local-model workflows with **Ollama**, **LM Studio**,
 ## Option 1: Ollama
 
 1. Install [Ollama](https://ollama.com).
+
+Linux:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+macOS:
+
+```bash
+brew install ollama
+```
+
 2. Pull a model:
 
-```powershell
+```bash
 ollama pull tinyllama
 ```
 
@@ -23,8 +36,16 @@ OLLAMA_MODEL=tinyllama
 
 4. Start the app:
 
+Windows:
+
 ```powershell
 .\scripts\start.ps1
+```
+
+Linux/macOS:
+
+```bash
+bash scripts/start.sh
 ```
 
 ## Option 2: LM Studio
@@ -47,14 +68,30 @@ Replace `OPENAI_COMPAT_MODEL` with the model name exposed by LM Studio if needed
 
 1. Install optional packages:
 
+Windows:
+
 ```powershell
 .\.venv\Scripts\pip install torch transformers accelerate
 ```
 
+Linux/macOS:
+
+```bash
+.venv/bin/python -m pip install torch transformers accelerate
+```
+
 2. Switch the app config:
+
+Windows:
 
 ```powershell
 .\scripts\use_huggingface.ps1
+```
+
+Linux/macOS:
+
+```bash
+bash scripts/use_huggingface.sh
 ```
 
 3. In `.env`, confirm:
@@ -66,8 +103,16 @@ HF_MODEL=Qwen/Qwen2.5-0.5B-Instruct
 
 4. Start the app:
 
+Windows:
+
 ```powershell
 .\scripts\start.ps1
+```
+
+Linux/macOS:
+
+```bash
+bash scripts/start.sh
 ```
 
 This backend runs inference directly in Python. On **CPU-only** machines, use `Qwen/Qwen2.5-0.5B-Instruct` for practical response times.

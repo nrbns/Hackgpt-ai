@@ -1,31 +1,34 @@
 #!/usr/bin/env bash
 # Ollama setup helper for PentestGPT (Linux/macOS)
-# Usage: bash scripts/setup_ollama.sh
-
-set -e
-
-MODELS=("llama3" "mistral" "codellama")
+set -euo pipefail
+cd "$(dirname "$0")/.."
+. scripts/common.sh
 
 echo "PentestGPT Ollama Setup"
 echo ""
 
-if ! command -v ollama &> /dev/null; then
-    echo "Ollama not found. Install from: https://ollama.com/download"
-    exit 1
+if ! command -v ollama >/dev/null 2>&1; then
+  echo "Ollama not found. Install from: https://ollama.com/download"
+  echo "Linux: curl -fsSL https://ollama.com/install.sh | sh"
+  echo "macOS: brew install ollama or install the app from ollama.com"
+  exit 1
 fi
 
 ollama --version
 echo ""
 
-for model in "${MODELS[@]}"; do
-    echo "Pulling $model ..."
-    ollama pull "$model"
-done
+echo "Pulling tinyllama (fast CPU default)..."
+ollama pull tinyllama
 
 echo ""
 echo "Installed models:"
 ollama list
 
+set_env_value MODEL_BACKEND ollama
+set_env_value OLLAMA_MODEL tinyllama
+
 echo ""
-echo "Start PentestGPT: python run.py"
+echo "Configured .env for Ollama + tinyllama."
+echo "Optional larger models: ollama pull mistral | ollama pull llama3"
+echo "Start PentestGPT: bash scripts/start.sh"
 echo "Open: http://localhost:8080"

@@ -232,6 +232,10 @@ textarea:focus {
   display: none;
 }
 
+.hidden {
+  display: none !important;
+}
+
 .setup-copy h2 {
   font-size: 0.95rem;
   margin-bottom: 0.2rem;

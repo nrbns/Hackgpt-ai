@@ -4,6 +4,8 @@ Real-time local security assistant for authorized pentesting, blue-team workflow
 
 ## Run
 
+### Windows PowerShell
+
 ```powershell
 .\scripts\run_proper.ps1
 ```
@@ -14,36 +16,74 @@ Or quick start:
 .\scripts\start.ps1
 ```
 
+### Linux / macOS
+
+```bash
+bash scripts/run_proper.sh
+```
+
+Or quick start:
+
+```bash
+bash scripts/start.sh
+```
+
 Open **http://localhost:8080**
 
 ## Local model backends
 
 ### Ollama
 
+Windows:
+
 ```powershell
 .\scripts\use_ollama.ps1
 .\scripts\setup_ollama.ps1
 ```
 
+Linux/macOS:
+
+```bash
+bash scripts/use_ollama.sh
+bash scripts/setup_ollama.sh
+```
+
 Or manually:
 
-```powershell
+```bash
 ollama pull tinyllama
 ```
 
 ### LM Studio
 
+Windows:
+
 ```powershell
 .\scripts\use_lmstudio.ps1
+```
+
+Linux/macOS:
+
+```bash
+bash scripts/use_lmstudio.sh
 ```
 
 Then start the LM Studio local server in **OpenAI-compatible** mode on `http://localhost:1234/v1`.
 
 ### Direct Hugging Face
 
+Windows:
+
 ```powershell
 .\scripts\use_huggingface.ps1
 .\.venv\Scripts\pip install torch transformers accelerate
+```
+
+Linux/macOS:
+
+```bash
+bash scripts/use_huggingface.sh
+.venv/bin/python -m pip install torch transformers accelerate
 ```
 
 More details: `docs/cursor-local-models.md`
@@ -92,9 +132,18 @@ These keep the project aligned with authorized security work while supporting lo
 
 ## Smoke test
 
+Windows:
+
 ```powershell
 .\.venv\Scripts\python scripts\smoke_test.py
 .\.venv\Scripts\python scripts\smoke_test.py --chat
+```
+
+Linux/macOS:
+
+```bash
+.venv/bin/python scripts/smoke_test.py
+.venv/bin/python scripts/smoke_test.py --chat
 ```
 
 `--chat` sends a short message (can be slow on HuggingFace CPU).
