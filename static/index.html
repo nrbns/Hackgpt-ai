@@ -2,72 +2,248 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PentestGPT — Local Security AI</title>
-  <link rel="stylesheet" href="/style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f6e6a" />
+  <meta name="color-scheme" content="light" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="HackGPT" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="description" content="HackGPT — local security AI for authorized pentesting, CTFs, and blue-team workflows." />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/icon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <title>HackGPT</title>
+  <link rel="stylesheet" href="/style.css?v=10" />
+  <script src="/vendor/marked.min.js"></script>
 </head>
 <body>
-  <div class="app">
-    <header class="header">
-      <div class="brand">
-        <span class="logo">🛡️</span>
-        <div>
-          <h1>PentestGPT</h1>
-          <p class="subtitle">Real-time local security assistant</p>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar" aria-label="Workspace">
+      <div class="sidebar-brand">
+        <div class="brand-mark" aria-hidden="true"><span>H</span></div>
+        <div class="brand-copy">
+          <p class="brand-name">HackGPT</p>
+          <p class="brand-tag">Authorized security AI</p>
         </div>
       </div>
-      <div class="controls">
-        <select id="backend" title="Model backend">
-          <option value="ollama">Ollama</option>
-          <option value="openai_compat">LM Studio</option>
-          <option value="huggingface">Hugging Face</option>
-        </select>
-        <select id="mode">
+
+      <button id="newChatBtn" type="button" class="btn-new-chat">
+        <span class="btn-new-chat-plus" aria-hidden="true">+</span>
+        New chat
+      </button>
+
+      <div class="sidebar-section chat-history-section">
+        <p class="sidebar-label">Chats</p>
+        <div id="chatList" class="chat-list" role="list"></div>
+      </div>
+
+      <div class="sidebar-section">
+        <p class="sidebar-label">Mode</p>
+        <select id="mode" title="Mode">
           <option value="default">Default</option>
           <option value="ctf">CTF Mode</option>
           <option value="lab">Lab Mode</option>
           <option value="redteam">Red Team Lab</option>
           <option value="blueteam">Blue Team</option>
           <option value="malware">Malware Analysis</option>
+          <option value="research">Research Search</option>
+          <option value="lab_offensive">Lab Offensive</option>
         </select>
-        <select id="model" title="Ollama model">
+      </div>
+
+      <div class="sidebar-section" id="controls">
+        <p class="sidebar-label">Model</p>
+        <select id="backend" title="Model backend">
+          <option value="ollama">Ollama</option>
+          <option value="openai_compat">LM Studio</option>
+          <option value="hermes">Hermes Agent</option>
+          <option value="unsloth">Unsloth</option>
+          <option value="huggingface">Hugging Face</option>
+        </select>
+        <select id="model" title="Model">
           <option value="">Loading models…</option>
         </select>
         <label class="toggle">
           <input type="checkbox" id="useRag" checked />
-          RAG
+          Use RAG knowledge
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="useWebSearch" checked />
+          Live web search
         </label>
         <span id="status" class="status">Connecting…</span>
-        <button id="ingestRag" type="button" class="btn-secondary" title="Re-index knowledge base">Re-index</button>
-        <button id="preloadModel" type="button" class="btn-secondary hidden" title="Preload Hugging Face model">Preload</button>
-        <button id="pullModel" type="button" class="btn-secondary" title="Pull selected model via Ollama">Pull</button>
       </div>
-    </header>
 
-    <div id="quickPrompts" class="quick-prompts"></div>
-    <section id="setupPanel" class="setup-panel hidden">
-      <div class="setup-copy">
-        <h2 id="setupTitle">Local model setup needed</h2>
-        <p id="setupText">Connect a local backend to start chatting.</p>
+      <div class="sidebar-actions">
+        <button id="settingsBtn" type="button" class="btn-sidebar" title="API keys &amp; backend settings">Settings</button>
+        <button id="hermesNewSession" type="button" class="btn-sidebar hidden" title="Start a new Hermes Agent session">New Hermes</button>
+        <button id="ingestRag" type="button" class="btn-sidebar" title="Re-index knowledge base">Re-index RAG</button>
+        <button id="preloadModel" type="button" class="btn-sidebar hidden" title="Preload local model">Preload</button>
+        <button id="trainUnsloth" type="button" class="btn-sidebar hidden" title="Fine-tune with Unsloth">Train</button>
+        <button id="pullModel" type="button" class="btn-sidebar" title="Pull selected model via Ollama">Pull model</button>
       </div>
-      <div class="setup-actions">
-        <button id="setupPrimary" type="button" class="btn-secondary">Copy command</button>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <button id="menuToggle" type="button" class="icon-btn" aria-expanded="false" aria-controls="sidebar" title="Open menu">
+          <span class="icon-menu" aria-hidden="true"></span>
+        </button>
+        <div class="topbar-brand">
+          <span class="topbar-name" id="topbarChatTitle">HackGPT</span>
+          <span id="topbarMode" class="topbar-mode">Default</span>
+        </div>
+        <button id="topSettingsBtn" type="button" class="icon-btn" title="Settings" aria-label="Settings">
+          <span class="icon-gear" aria-hidden="true"></span>
+        </button>
+      </header>
+
+      <section id="setupPanel" class="setup-panel hidden" data-tone="info">
+        <div class="setup-copy">
+          <h2 id="setupTitle">Local model setup needed</h2>
+          <p id="setupText">Connect a local backend to start chatting.</p>
+        </div>
+        <div class="setup-actions">
+          <button id="setupPrimary" type="button" class="btn-secondary">Copy command</button>
+          <button id="setupDismiss" type="button" class="btn-ghost" title="Dismiss">Dismiss</button>
+        </div>
+      </section>
+
+      <div class="stage">
+        <div id="emptyState" class="empty-state">
+          <div class="empty-mark" aria-hidden="true">H</div>
+          <p class="empty-brand">HackGPT</p>
+          <p class="empty-lead">Authorized pentesting, CTFs, and blue-team workflows — local and private.</p>
+          <p id="emptyMeta" class="empty-meta"></p>
+          <div id="quickPrompts" class="quick-prompts"></div>
+        </div>
+        <main id="chat" class="chat" aria-live="polite"></main>
       </div>
-    </section>
 
-    <main id="chat" class="chat"></main>
+      <footer class="composer-wrap">
+        <div class="composer">
+          <textarea
+            id="input"
+            rows="1"
+            enterkeyhint="send"
+            autocomplete="off"
+            autocapitalize="sentences"
+            placeholder="Message HackGPT…"
+          ></textarea>
+          <button id="send" type="button" aria-label="Send">
+            <span class="icon-send" aria-hidden="true"></span>
+          </button>
+        </div>
+        <p class="composer-hint">HackGPT · authorized &amp; defensive security only · Shift+Enter for new line</p>
+      </footer>
+    </div>
 
-    <footer class="composer">
-      <textarea
-        id="input"
-        rows="2"
-        placeholder="Ask about detection, IR, YARA, CTF, labs… (authorized only)"
-      ></textarea>
-      <button id="send" type="button">Send</button>
-    </footer>
+    <div class="backdrop" id="sidebarBackdrop" hidden></div>
   </div>
 
-  <script src="/app.js"></script>
+  <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsHeading">
+    <div class="modal-backdrop" data-close-settings></div>
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="settingsHeading">Settings &amp; API keys</h2>
+        <button type="button" class="btn-secondary" data-close-settings>Close</button>
+      </div>
+      <p class="lan-tip" id="lanTip">Phones/tablets: open this app via your host LAN URL (same Wi‑Fi). Backends run on the host.</p>
+      <form id="settingsForm" class="settings-form">
+        <fieldset>
+          <legend>Ollama</legend>
+          <label>Base URL
+            <input type="text" id="setOllamaUrl" inputmode="url" autocomplete="off" />
+          </label>
+          <label>Model
+            <input type="text" id="setOllamaModel" autocomplete="off" />
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Hugging Face</legend>
+          <label>HF token (gated models / Unsloth downloads)
+            <input type="password" id="setHfToken" autocomplete="off" placeholder="hf_… (leave blank to keep)" />
+          </label>
+          <p class="hint" id="hfTokenHint">Not set</p>
+          <label>HF model id
+            <input type="text" id="setHfModel" autocomplete="off" />
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Unsloth</legend>
+          <label>Base model
+            <input type="text" id="setUnslothModel" autocomplete="off" />
+          </label>
+          <label>Adapter output dir
+            <input type="text" id="setUnslothAdapter" autocomplete="off" />
+          </label>
+          <label>Max sequence length
+            <input type="number" id="setUnslothSeq" min="512" max="8192" step="256" inputmode="numeric" />
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="setUnsloth4bit" />
+            Load in 4-bit (QLoRA)
+          </label>
+          <div class="settings-row">
+            <label>Train epochs
+              <input type="number" id="setTrainEpochs" min="1" max="10" value="1" inputmode="numeric" />
+            </label>
+            <button type="button" id="settingsTrainBtn" class="btn-secondary">Start Unsloth train</button>
+          </div>
+          <p class="hint" id="finetuneHint">Idle</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Hermes Agent</legend>
+          <label>Base URL
+            <input type="text" id="setHermesUrl" inputmode="url" autocomplete="off" />
+          </label>
+          <label>Model name
+            <input type="text" id="setHermesModel" autocomplete="off" />
+          </label>
+          <label>API key
+            <input type="password" id="setHermesKey" autocomplete="off" placeholder="Leave blank to keep" />
+          </label>
+          <p class="hint" id="hermesKeyHint">Not set</p>
+          <label>Session key (memory scope)
+            <input type="password" id="setHermesSessionKey" autocomplete="off" placeholder="Leave blank to keep" />
+          </label>
+          <p class="hint" id="hermesSessionKeyHint">Optional</p>
+          <label class="toggle">
+            <input type="checkbox" id="setHermesTools" checked />
+            Show tool progress in chat
+          </label>
+          <p class="hint" id="hermesStatusHint">Status: —</p>
+          <button type="button" id="hermesRefreshStatus" class="btn-secondary">Refresh Hermes status</button>
+        </fieldset>
+
+        <fieldset>
+          <legend>LM Studio / OpenAI-compat</legend>
+          <label>Base URL
+            <input type="text" id="setCompatUrl" inputmode="url" autocomplete="off" />
+          </label>
+          <label>Model
+            <input type="text" id="setCompatModel" autocomplete="off" />
+          </label>
+          <label>API key
+            <input type="password" id="setCompatKey" autocomplete="off" placeholder="Leave blank to keep" />
+          </label>
+          <p class="hint" id="compatKeyHint">Not set</p>
+        </fieldset>
+
+        <div class="modal-footer">
+          <button type="submit" id="settingsSave">Save settings</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/app.js?v=10"></script>
 </body>
 </html>

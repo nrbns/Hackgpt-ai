@@ -18,14 +18,23 @@ from app.prompts import (
     BLUETEAM_MODE_PROMPT,
     CTF_MODE_PROMPT,
     LAB_MODE_PROMPT,
+    LAB_OFFENSIVE_MODE_PROMPT,
     MALWARE_ANALYSIS_MODE_PROMPT,
     REDTEAM_MODE_PROMPT,
+    RESEARCH_MODE_PROMPT,
+    SEARCH_BEHAVIOR_PROMPT,
     SYSTEM_PROMPT,
 )
-from app.backends import openai_compat_reachable
+from app.backends import hermes_reachable, openai_compat_reachable
 from app.env_persist import update_env_value
+from app.fine_tune.job import finetune_job, launch_unsloth_job
+from app.hermes_client import fetch_hermes_status
 from app.ollama_models import RECOMMENDED_MODELS, list_installed_models, ollama_reachable, pull_model
+from app.platform_info import platform_info
+from app.probe import probe_backends
 from app.rag import rag_engine
+from app.settings_api import apply_settings_patch, public_settings
+from app.web_search import format_search_context, web_search
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -40,10 +49,14 @@ async def lifespan(app: FastAPI):
         print(f"RAG ingest skipped: {exc}")
     if settings.model_backend == "huggingface":
         print(f"HuggingFace backend: {settings.hf_model} (loads on first chat)")
+    elif settings.model_backend == "unsloth":
+        print(f"Unsloth backend: {settings.unsloth_model} (loads on first chat)")
+    elif settings.model_backend == "hermes":
+        print(f"Hermes backend: {settings.hermes_base_url}")
     yield
 
 
-app = FastAPI(title="PentestGPT", version="1.1.0", lifespan=lifespan)
+app = FastAPI(title="HackGPT", version="1.3.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,6 +64,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Hermes-Session-Id", "X-Hermes-Session-Key"],
 )
 
 
@@ -62,8 +76,20 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=16000)
     history: list[ChatMessage] = Field(default_factory=list)
-    mode: Literal["default", "ctf", "lab", "redteam", "blueteam", "malware"] = "default"
+    mode: Literal[
+        "default",
+        "ctf",
+        "lab",
+        "redteam",
+        "blueteam",
+        "malware",
+        "research",
+        "lab_offensive",
+    ] = "default"
     use_rag: bool = True
+    use_web_search: bool | None = None
+    hermes_session_id: str | None = Field(default=None, max_length=256)
+    reset_hermes_session: bool = False
 
 
 class IngestResponse(BaseModel):
@@ -79,7 +105,34 @@ class ModelPullRequest(BaseModel):
 
 
 class BackendSwitchRequest(BaseModel):
-    backend: Literal["ollama", "openai_compat", "huggingface"]
+    backend: Literal["ollama", "openai_compat", "hermes", "unsloth", "huggingface"]
+
+
+class SettingsUpdateRequest(BaseModel):
+    openai_compat_base_url: str | None = None
+    openai_compat_model: str | None = None
+    openai_compat_api_key: str | None = None
+    hermes_base_url: str | None = None
+    hermes_model: str | None = None
+    hermes_api_key: str | None = None
+    hermes_session_key: str | None = None
+    hermes_show_tool_progress: bool | None = None
+    hf_model: str | None = None
+    hf_token: str | None = None
+    unsloth_model: str | None = None
+    unsloth_adapter_dir: str | None = None
+    unsloth_max_seq_length: int | None = None
+    unsloth_load_in_4bit: bool | None = None
+    ollama_base_url: str | None = None
+    ollama_model: str | None = None
+
+
+class FinetuneStartRequest(BaseModel):
+    engine: Literal["unsloth"] = "unsloth"
+    model: str | None = None
+    output: str | None = None
+    epochs: int = Field(default=1, ge=1, le=10)
+    batch_size: int = Field(default=2, ge=1, le=16)
 
 
 MODE_RAG_TOP_K = {
@@ -89,6 +142,8 @@ MODE_RAG_TOP_K = {
     "redteam": 4,
     "blueteam": 5,
     "malware": 5,
+    "research": 4,
+    "lab_offensive": 5,
 }
 
 QUICK_PROMPTS = {
@@ -116,10 +171,22 @@ QUICK_PROMPTS = {
         "Static analysis workflow for suspicious EXE",
         "Write a YARA rule for PowerShell download cradle",
     ],
+    "research": [
+        "Latest critical CVEs affecting Windows this month",
+        "Compare Nuclei vs custom scripts for lab recon",
+        "Kerberoasting technique, detection, and lab setup",
+        "Public writeups for Log4Shell exploitation path",
+    ],
+    "lab_offensive": [
+        "Full attack chain on Metasploitable 2 with detection notes",
+        "Lab reverse shell + persistence on a disposable VM",
+        "Kerberoasting in an authorized AD lab + Sigma detection",
+        "XSS to session hijack demo in Juice Shop + fixes",
+    ],
 }
 
 
-def _build_messages(req: ChatRequest) -> list[dict[str, str]]:
+async def _build_messages(req: ChatRequest) -> list[dict[str, str]]:
     system_parts = [SYSTEM_PROMPT]
     if req.mode == "ctf":
         system_parts.append(CTF_MODE_PROMPT)
@@ -131,6 +198,31 @@ def _build_messages(req: ChatRequest) -> list[dict[str, str]]:
         system_parts.append(BLUETEAM_MODE_PROMPT)
     elif req.mode == "malware":
         system_parts.append(MALWARE_ANALYSIS_MODE_PROMPT)
+    elif req.mode == "research":
+        system_parts.append(RESEARCH_MODE_PROMPT)
+    elif req.mode == "lab_offensive":
+        system_parts.append(LAB_OFFENSIVE_MODE_PROMPT)
+
+    # Live search default ON for all cybersecurity modes unless explicitly disabled
+    cyber_modes = {
+        "default",
+        "ctf",
+        "lab",
+        "redteam",
+        "blueteam",
+        "malware",
+        "research",
+        "lab_offensive",
+    }
+    do_search = (
+        req.use_web_search
+        if req.use_web_search is not None
+        else (req.mode in cyber_modes)
+    )
+    if do_search and settings.web_search_enabled:
+        search_payload = await web_search(req.message)
+        system_parts.append(SEARCH_BEHAVIOR_PROMPT)
+        system_parts.append(format_search_context(search_payload))
 
     if req.use_rag:
         top_k = MODE_RAG_TOP_K.get(req.mode, 3)
@@ -158,6 +250,14 @@ async def health():
         backend_ready = await openai_compat_reachable()
         current = settings.openai_compat_model
         backend_status = "ready" if backend_ready else "offline"
+    elif settings.model_backend == "hermes":
+        backend_ready = await hermes_reachable()
+        current = settings.hermes_model
+        backend_status = "ready" if backend_ready else "offline"
+    elif settings.model_backend == "unsloth":
+        backend_ready = True
+        current = settings.unsloth_adapter_dir if Path(settings.unsloth_adapter_dir).exists() else settings.unsloth_model
+        backend_status = "ready" if model_client.unsloth_model_loaded else "loads_on_chat"
     else:
         backend_ready = True
         current = settings.hf_model
@@ -169,10 +269,20 @@ async def health():
         "backend_ready": backend_ready,
         "backend_status": backend_status,
         "hf_model_loaded": model_client.hf_model_loaded if settings.model_backend == "huggingface" else None,
+        "unsloth_model_loaded": model_client.unsloth_model_loaded if settings.model_backend == "unsloth" else None,
+        "hf_token_set": bool(settings.hf_token),
         "installed_models": installed,
         "ollama_connected": backend_ready if settings.model_backend == "ollama" else None,
         "ollama_has_models": bool(installed) if settings.model_backend == "ollama" else None,
         "rag_documents": rag_engine.document_count(),
+        "finetune": finetune_job.snapshot(),
+        "integrations": {
+            "hermes": True,
+            "unsloth": True,
+            "settings": True,
+            "rag": True,
+            "modes": list(MODE_RAG_TOP_K.keys()),
+        },
     }
 
 
@@ -180,8 +290,14 @@ async def health():
 async def backend():
     return {
         "backend": settings.model_backend,
-        "options": ["ollama", "openai_compat", "huggingface"],
+        "options": ["ollama", "openai_compat", "hermes", "unsloth", "huggingface"],
     }
+
+
+@app.get("/api/backends/probe")
+async def backends_probe():
+    """Which AI backends are ready — used by UI auto-select."""
+    return await probe_backends()
 
 
 @app.post("/api/backend")
@@ -193,18 +309,76 @@ async def switch_backend(req: BackendSwitchRequest):
 
 @app.post("/api/models/preload")
 async def preload_model():
-    if settings.model_backend != "huggingface":
-        raise HTTPException(status_code=400, detail="Preload only supported with HuggingFace backend.")
+    if settings.model_backend not in ("huggingface", "unsloth"):
+        raise HTTPException(status_code=400, detail="Preload only supported with HuggingFace or Unsloth backends.")
 
     async def stream():
-        yield f"Loading `{settings.hf_model}`…\n"
+        label = settings.hf_model if settings.model_backend == "huggingface" else settings.unsloth_model
+        yield f"Loading `{label}`…\n"
         try:
-            await model_client.preload_huggingface()
+            if settings.model_backend == "huggingface":
+                await model_client.preload_huggingface()
+            else:
+                await model_client.preload_unsloth()
             yield "Model ready.\n"
         except Exception as exc:
             yield f"Load failed: {exc}\n"
 
-    return StreamingResponse(stream(), media_type="text/plain")
+    return StreamingResponse(stream(), media_type="text/plain; charset=utf-8")
+
+
+@app.get("/api/settings")
+async def get_settings():
+    return public_settings()
+
+
+@app.post("/api/settings")
+async def update_settings(req: SettingsUpdateRequest):
+    payload = req.model_dump(exclude_none=True)
+    return apply_settings_patch(payload)
+
+
+@app.get("/api/platform")
+async def platform():
+    """OS + LAN URLs + backend capabilities for Win/Linux/macOS hosts and mobile browsers."""
+    return platform_info()
+
+
+@app.get("/api/hermes/status")
+async def hermes_status():
+    """Hermes Agent reachability, models, and /v1/capabilities."""
+    return await fetch_hermes_status()
+
+
+@app.get("/api/search")
+async def api_search(q: str = "", limit: int = 6):
+    """Live cybersecurity web search (for UI/debug)."""
+    query = (q or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Missing q")
+    return await web_search(query, max_results=limit)
+
+
+@app.get("/api/finetune")
+async def finetune_status():
+    return finetune_job.snapshot()
+
+
+@app.post("/api/finetune")
+async def finetune_start(req: FinetuneStartRequest):
+    if req.engine != "unsloth":
+        raise HTTPException(status_code=400, detail="Only engine=unsloth is supported.")
+    model = (req.model or settings.unsloth_model).strip()
+    output = (req.output or settings.unsloth_adapter_dir).strip()
+    ok = launch_unsloth_job(
+        model=model,
+        output=output,
+        epochs=req.epochs,
+        batch_size=req.batch_size,
+    )
+    if not ok:
+        raise HTTPException(status_code=409, detail="A fine-tune job is already running.")
+    return finetune_job.snapshot()
 
 
 @app.get("/api/modes")
@@ -231,6 +405,11 @@ async def models():
         current = settings.ollama_model
     elif settings.model_backend == "openai_compat":
         current = settings.openai_compat_model
+    elif settings.model_backend == "hermes":
+        current = settings.hermes_model
+    elif settings.model_backend == "unsloth":
+        adapter = Path(settings.unsloth_adapter_dir)
+        current = str(adapter) if adapter.exists() else settings.unsloth_model
     else:
         current = settings.hf_model
     return {
@@ -258,7 +437,7 @@ async def pull_ollama_model(req: ModelPullRequest):
         async for line in pull_model(req.model):
             yield line
 
-    return StreamingResponse(stream(), media_type="text/plain")
+    return StreamingResponse(stream(), media_type="text/plain; charset=utf-8")
 
 
 @app.post("/api/ingest")
@@ -273,15 +452,34 @@ async def chat(req: ChatRequest):
     if not guard.allowed:
         async def refusal_stream():
             yield guard.reason or "Request blocked."
-        return StreamingResponse(refusal_stream(), media_type="text/plain")
+        return StreamingResponse(refusal_stream(), media_type="text/plain; charset=utf-8")
 
-    messages = _build_messages(req)
+    messages = await _build_messages(req)
+    response_headers: dict[str, str] = {}
+
+    if settings.model_backend == "hermes":
+        session_id = None if req.reset_hermes_session else (req.hermes_session_id or None)
+
+        async def hermes_stream():
+            async for token, sid in model_client.stream_chat_hermes(messages, session_id=session_id):
+                if sid:
+                    response_headers["X-Hermes-Session-Id"] = sid
+                    # Also emit a machine marker the UI can parse if headers are opaque
+                    yield f"[[hermes_session:{sid}]]"
+                if token:
+                    yield token
+
+        return StreamingResponse(
+            hermes_stream(),
+            media_type="text/plain; charset=utf-8",
+            headers=response_headers,
+        )
 
     async def event_stream():
         async for token in model_client.stream_chat(messages):
             yield token
 
-    return StreamingResponse(event_stream(), media_type="text/plain")
+    return StreamingResponse(event_stream(), media_type="text/plain; charset=utf-8")
 
 
 if STATIC_DIR.exists():

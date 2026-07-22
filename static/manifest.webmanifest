@@ -1,0 +1,18 @@
+{
+  "name": "HackGPT",
+  "short_name": "HackGPT",
+  "description": "Local security AI for authorized pentesting, CTFs, and blue-team work",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#e8eef2",
+  "theme_color": "#0f6e6a",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

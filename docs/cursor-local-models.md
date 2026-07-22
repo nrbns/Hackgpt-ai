@@ -1,6 +1,6 @@
 # Cursor Local Models
 
-This project supports safe local-model workflows with **Ollama**, **LM Studio**, or direct **Hugging Face Transformers** inference.
+This project supports safe local-model workflows with **Ollama**, **LM Studio**, **Hermes Agent**, **Unsloth**, or direct **Hugging Face Transformers** inference on a Windows / Linux / macOS host. Android and iOS devices use the same web UI over LAN (or localhost via Termux on Android if you host there).
 
 ## Option 1: Ollama
 
@@ -64,7 +64,95 @@ OPENAI_COMPAT_API_KEY=lm-studio
 
 Replace `OPENAI_COMPAT_MODEL` with the model name exposed by LM Studio if needed.
 
-## Option 3: Direct Hugging Face inference
+## Option 3: Hermes Agent (Nous Research)
+
+1. Install [Hermes Agent](https://github.com/NousResearch/hermes-agent).
+
+Windows:
+
+```powershell
+iex (irm https://hermes-agent.nousresearch.com/install.ps1)
+```
+
+Linux/macOS/WSL2:
+
+```bash
+curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+```
+
+2. Configure a provider: `hermes setup` or `hermes setup --portal`.
+
+3. Enable the OpenAI-compatible API server in Hermes env (`%LOCALAPPDATA%\hermes\.env` on native Windows, `~/.hermes/.env` elsewhere):
+
+```env
+API_SERVER_ENABLED=true
+API_SERVER_KEY=change-me-local-dev
+API_SERVER_HOST=127.0.0.1
+API_SERVER_PORT=8642
+```
+
+4. Start the gateway: `hermes gateway`.
+
+5. Point HackGPT at Hermes:
+
+Windows:
+
+```powershell
+.\scripts\use_hermes.ps1
+```
+
+Linux/macOS:
+
+```bash
+bash scripts/use_hermes.sh
+```
+
+`.env` keys:
+
+```env
+MODEL_BACKEND=hermes
+HERMES_BASE_URL=http://127.0.0.1:8642/v1
+HERMES_MODEL=hermes-agent
+HERMES_API_KEY=change-me-local-dev
+```
+
+`HERMES_API_KEY` must match Hermes `API_SERVER_KEY`. Chat still flows through PentestGPT guardrails, modes, and RAG before Hermes.
+
+## Option 4: Unsloth (train + infer)
+
+1. Install [Unsloth](https://github.com/unslothai/unsloth) (GPU + CUDA recommended):
+
+```powershell
+.\.venv\Scripts\pip install unsloth
+.\.venv\Scripts\pip install datasets trl peft accelerate bitsandbytes
+```
+
+2. Switch config:
+
+```powershell
+.\scripts\use_unsloth.ps1
+```
+
+```bash
+bash scripts/use_unsloth.sh
+```
+
+3. In `.env` (or **Settings** in the UI):
+
+```env
+MODEL_BACKEND=unsloth
+HF_TOKEN=hf_your_token_here
+UNSLOTH_MODEL=unsloth/Qwen2.5-0.5B-Instruct-bnb-4bit
+UNSLOTH_ADAPTER_DIR=./models/pentestgpt-unsloth
+UNSLOTH_MAX_SEQ_LENGTH=2048
+UNSLOTH_LOAD_IN_4BIT=true
+```
+
+4. Optional train: `python -m app.fine_tune.train_unsloth --epochs 1` or UI Settings → Start Unsloth train.
+
+5. Chat with backend **Unsloth** (Preload recommended).
+
+## Option 5: Direct Hugging Face inference
 
 1. Install optional packages:
 

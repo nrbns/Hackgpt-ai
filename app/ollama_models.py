@@ -46,13 +46,26 @@ RECOMMENDED_MODELS = [
         "pull": "deepseek-coder:6.7b",
         "description": "Strong coding assistant for CTF and scripting.",
     },
+    {
+        "id": "dolphin-llama3",
+        "name": "Dolphin Llama 3 (research)",
+        "pull": "dolphin-llama3",
+        "description": "Less-refusal local model for authorized security research / Research Search mode.",
+    },
+    {
+        "id": "dolphin-mistral",
+        "name": "Dolphin Mistral (research)",
+        "pull": "dolphin-mistral",
+        "description": "Faster less-refusal local model for technical security Q&A.",
+    },
 ]
 
 
 async def ollama_reachable() -> bool:
     url = f"{settings.ollama_base_url.rstrip('/')}/api/tags"
+    timeout = httpx.Timeout(connect=1.5, read=2.0, write=2.0, pool=2.0)
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             return (await client.get(url)).status_code == 200
     except httpx.HTTPError:
         return False

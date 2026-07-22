@@ -1,4 +1,4 @@
-"""Start PentestGPT server."""
+"""Start HackGPT server."""
 
 import uvicorn
 

@@ -23,14 +23,29 @@ def main() -> int:
         health = client.get(f"{base}/api/health").json()
         backend = client.get(f"{base}/api/backend").json()
         status = client.get(f"{base}/api/status").json()
+        settings = client.get(f"{base}/api/settings").json()
+        platform = client.get(f"{base}/api/platform").json()
 
     print("health:", health)
     print("backend:", backend)
     print("rag_documents:", status.get("rag_documents"))
+    print("settings_keys:", sorted(settings.keys())[:8], "...")
+    print("platform:", platform.get("os"), platform.get("lan_urls"))
 
     if health.get("status") != "ok":
         return 1
     if not health.get("backend"):
+        return 1
+    options = backend.get("options") or []
+    for required in ("ollama", "openai_compat", "hermes", "unsloth", "huggingface"):
+        if required not in options:
+            print(f"missing backend option: {required}")
+            return 1
+    if "hf_token_set" not in settings:
+        print("settings missing hf_token_set")
+        return 1
+    if not platform.get("os"):
+        print("platform missing os")
         return 1
 
     if args.chat:

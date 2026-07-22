@@ -1,3 +1,7 @@
+"""Request guardrails — block clear criminal misuse, allow full cyber research language."""
+
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass
 
@@ -8,29 +12,33 @@ class GuardrailResult:
     reason: str | None = None
 
 
+# Narrow blocks: real-world crime / unauthorized targeting — not normal pentest vocabulary.
 BLOCK_PATTERNS = [
     r"\b(clone|skim|rip)\s+(a\s+)?(credit\s+)?card",
     r"\bcredit\s+card\s+(fraud|dump|cvv|bin)",
     r"\b(stalk|doxx?|swat)\b",
-    r"\b(ransomware|ransom)\s+(deploy|spread|target)",
+    r"\b(ransomware|ransom)\s+(deploy|spread)\b.*\b(company|hospital|victim|production)\b",
     r"\bwithout\s+(permission|consent|authorization)\b.*\b(hack|attack|exploit|break\s+into)\b",
     r"\bhack\s+(my\s+)?(ex|neighbor|boss|school|bank|government)\b",
-    r"\bsteal\s+(passwords?|credentials?|money|crypto)\b",
-    r"\bdeploy\s+rootkit\b",
-    r"\bkeylogger\b.*\b(install|deploy|spread)\b",
+    r"\b(steal|phish|breach)\b.*\b(my\s+)?(ex|neighbor|boss|girlfriend|boyfriend)\b",
     r"\b(wormgpt|worm\s*gpt)\b",
-    r"\b(self[- ]?replicat|polymorphic)\b.*\b(worm|malware|payload)\b",
-    r"\b(build|write|create|code)\b.*\b(worm|botnet|ransomware|stealer|clipper)\b",
-    r"\bc2\s+(server|infrastructure)\b.*\b(set\s*up|deploy|build)\b",
-    r"\bexfiltrat(e|ion)\b.*\b(without|no)\s+(auth|permission|consent)\b",
-    r"\b(clipper|stealer|infostealer)\b.*\b(build|write|deploy|use)\b",
-    r"\bcredential\s+theft\b",
-    r"\bbrowser\s+(cookie|credential)\s+steal",
-    r"\btelegram\s+stealer\b",
+    r"\b(build|write|create)\b.*\b(botnet|ransomware)\b.*\b(deploy|spread|sell)\b",
+    r"\btelegram\s+stealer\b.*\b(build|sell|spread)\b",
 ]
 
+# Phrases that indicate authorized / educational context → never hard-block on dual-use wording
+ALLOW_CONTEXT = re.compile(
+    r"\b("
+    r"lab|ctf|htb|hackthebox|tryhackme|thm|portswigger|dvwa|webgoat|juice\s*shop|"
+    r"metasploitable|vulnhub|authorized|engagement|scope|pentest|red\s*team|"
+    r"blue\s*team|malware\s*analysis|sandbox|yara|sigma|detection|mitigation|"
+    r"lab\s*offensive|owned\s*vm|local\s*lab|owasp|cve-\d{4}|writeup|forensics|incident\s*response"
+    r")\b",
+    re.IGNORECASE,
+)
+
 REFUSAL_MESSAGE = (
-    "I can't help with that request. PentestGPT only supports **authorized** security work — "
+    "I can't help with that request. HackGPT only supports **authorized** security work — "
     "systems you own or have explicit written permission to test. "
     "I can help with lab setups, CTF challenges, OWASP testing methodology, malware analysis in sandboxes, and defensive hardening instead."
 )
@@ -40,6 +48,10 @@ def check_request(message: str) -> GuardrailResult:
     text = message.lower().strip()
     if not text:
         return GuardrailResult(allowed=False, reason="Empty message.")
+
+    # Educational / scoped cyber language is allowed even if dual-use terms appear
+    if ALLOW_CONTEXT.search(text):
+        return GuardrailResult(allowed=True)
 
     for pattern in BLOCK_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
