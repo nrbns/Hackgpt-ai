@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#0f6e6a" />
-  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#0f6e6a" id="metaThemeColor" />
+  <meta name="color-scheme" content="light dark" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="HackGPT" />
@@ -17,7 +17,21 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
   <title>HackGPT</title>
-  <link rel="stylesheet" href="/style.css?v=10" />
+  <script>
+    (function () {
+      try {
+        var key = "hackgpt.theme";
+        var t = localStorage.getItem(key);
+        if (t !== "light" && t !== "dark") {
+          t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/style.css?v=17" />
   <script src="/vendor/marked.min.js"></script>
 </head>
 <body>
@@ -52,6 +66,9 @@
           <option value="malware">Malware Analysis</option>
           <option value="research">Research Search</option>
           <option value="lab_offensive">Lab Offensive</option>
+          <option value="assess">Vuln Assessment</option>
+          <option value="ciso">CISO / GRC</option>
+          <option value="awareness">Awareness / Phishing</option>
         </select>
       </div>
 
@@ -67,18 +84,38 @@
         <select id="model" title="Model">
           <option value="">Loading models…</option>
         </select>
+        <label class="field-label" for="targetIp">Target IP / host
+          <input type="text" id="targetIp" class="target-input" placeholder="192.168.56.101 or 10.10.10.x" autocomplete="off" spellcheck="false" />
+        </label>
         <label class="toggle">
           <input type="checkbox" id="useRag" checked />
           Use RAG knowledge
         </label>
         <label class="toggle">
-          <input type="checkbox" id="useWebSearch" checked />
+          <input type="checkbox" id="useWebSearch" />
           Live web search
         </label>
+        <label class="toggle">
+          <input type="checkbox" id="useNetAssess" />
+          Probe target (lab/owned)
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="useLocalTools" checked />
+          Security tools (auto / on instruct)
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="authorizedTarget" />
+          I own / authorized this target
+        </label>
+        <p id="toolsStatus" class="tools-status" title="Built-in tools always work; PATH tools when installed">Tools: …</p>
         <span id="status" class="status">Connecting…</span>
       </div>
 
       <div class="sidebar-actions">
+        <button id="themeToggle" type="button" class="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle theme">
+          <span class="theme-toggle-icon" aria-hidden="true"></span>
+          <span id="themeToggleLabel">Dark mode</span>
+        </button>
         <button id="settingsBtn" type="button" class="btn-sidebar" title="API keys &amp; backend settings">Settings</button>
         <button id="hermesNewSession" type="button" class="btn-sidebar hidden" title="Start a new Hermes Agent session">New Hermes</button>
         <button id="ingestRag" type="button" class="btn-sidebar" title="Re-index knowledge base">Re-index RAG</button>
@@ -97,6 +134,9 @@
           <span class="topbar-name" id="topbarChatTitle">HackGPT</span>
           <span id="topbarMode" class="topbar-mode">Default</span>
         </div>
+        <button id="themeToggleTop" type="button" class="icon-btn theme-btn" title="Toggle theme" aria-label="Toggle theme">
+          <span class="theme-toggle-icon" aria-hidden="true"></span>
+        </button>
         <button id="topSettingsBtn" type="button" class="icon-btn" title="Settings" aria-label="Settings">
           <span class="icon-gear" aria-hidden="true"></span>
         </button>
@@ -125,6 +165,12 @@
       </div>
 
       <footer class="composer-wrap">
+        <div id="liveBar" class="live-bar" aria-live="polite">
+          <span class="live-dot" id="liveDot" aria-hidden="true"></span>
+          <span id="livePhase" class="live-phase">Connecting…</span>
+          <span id="liveMeta" class="live-meta"></span>
+          <span id="liveActivity" class="live-activity"></span>
+        </div>
         <div class="composer">
           <textarea
             id="input"
@@ -149,11 +195,67 @@
     <div class="modal-backdrop" data-close-settings></div>
     <div class="modal-card">
       <div class="modal-header">
-        <h2 id="settingsHeading">Settings &amp; API keys</h2>
+        <h2 id="settingsHeading">Settings</h2>
         <button type="button" class="btn-secondary" data-close-settings>Close</button>
       </div>
       <p class="lan-tip" id="lanTip">Phones/tablets: open this app via your host LAN URL (same Wi‑Fi). Backends run on the host.</p>
       <form id="settingsForm" class="settings-form">
+        <fieldset>
+          <legend>Appearance</legend>
+          <label>Theme
+            <select id="setTheme">
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+          <p class="hint">Applies immediately. “System” follows your OS preference until you pick light/dark.</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Web search</legend>
+          <label class="toggle">
+            <input type="checkbox" id="setWebSearchEnabled" checked />
+            Enable live web search
+          </label>
+          <label>Max results
+            <input type="number" id="setWebSearchMax" min="1" max="10" step="1" inputmode="numeric" />
+          </label>
+          <label>Search timeout (seconds)
+            <input type="number" id="setWebSearchTimeout" min="2" max="20" step="0.5" inputmode="decimal" />
+          </label>
+          <label>SearXNG URL (optional)
+            <input type="text" id="setSearxngUrl" inputmode="url" autocomplete="off" placeholder="http://127.0.0.1:8088" />
+          </label>
+          <p class="hint">Prefer SearXNG when set. Otherwise DuckDuckGo + NVD are used.</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Security tools &amp; assessment</legend>
+          <label class="toggle">
+            <input type="checkbox" id="setLocalToolsEnabled" checked />
+            Enable local security tools
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="setLocalToolsAuto" checked />
+            Auto-run light tools on assess / target IP
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="setLocalToolsHeavy" />
+            Allow heavy scanners by default (nuclei / nikto / ffuf)
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="setNetAssessEnabled" checked />
+            Enable network probe (ports / banners)
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="setNetAssessNmap" checked />
+            Use nmap in network probe when installed
+          </label>
+          <p class="hint" id="settingsToolsHint">Tools: loading…</p>
+          <button type="button" id="settingsRefreshTools" class="btn-secondary">Refresh tools list</button>
+        </fieldset>
+
         <fieldset>
           <legend>Ollama</legend>
           <label>Base URL
@@ -244,6 +346,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=10"></script>
+  <script src="/app.js?v=17"></script>
 </body>
 </html>

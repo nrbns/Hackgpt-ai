@@ -27,9 +27,22 @@ const newChatBtn = document.getElementById("newChatBtn");
 const chatListEl = document.getElementById("chatList");
 const topbarChatTitleEl = document.getElementById("topbarChatTitle");
 const topbarModeEl = document.getElementById("topbarMode");
+const themeToggleBtn = document.getElementById("themeToggle");
+const themeToggleTopBtn = document.getElementById("themeToggleTop");
+const themeToggleLabel = document.getElementById("themeToggleLabel");
+const metaThemeColor = document.getElementById("metaThemeColor");
 const ragEl = document.getElementById("useRag");
 const webSearchEl = document.getElementById("useWebSearch");
+const netAssessEl = document.getElementById("useNetAssess");
+const localToolsEl = document.getElementById("useLocalTools");
+const authorizedTargetEl = document.getElementById("authorizedTarget");
+const targetIpEl = document.getElementById("targetIp");
+const toolsStatusEl = document.getElementById("toolsStatus");
 const statusEl = document.getElementById("status");
+const liveBarEl = document.getElementById("liveBar");
+const livePhaseEl = document.getElementById("livePhase");
+const liveMetaEl = document.getElementById("liveMeta");
+const liveActivityEl = document.getElementById("liveActivity");
 const setupPanelEl = document.getElementById("setupPanel");
 const setupTitleEl = document.getElementById("setupTitle");
 const setupTextEl = document.getElementById("setupText");
@@ -42,6 +55,133 @@ const emptyLeadEl = document.querySelector(".empty-lead");
 
 const CHAT_STORE_KEY = "hackgpt.chats.v1";
 const CHAT_STORE_LEGACY = "pentestgpt.chats.v1";
+const THEME_KEY = "hackgpt.theme";
+
+const LIVE_PHASE_LABELS = {
+  start: "Preparing…",
+  search: "Live web search…",
+  assess: "Network probe…",
+  tools: "Security tools…",
+  rag: "RAG knowledge…",
+  model: "Model generating…",
+  done: "Live",
+  error: "Pipeline error",
+};
+
+function setLiveState(state, phaseText, activity) {
+  if (!liveBarEl) return;
+  liveBarEl.classList.remove("live-on", "live-busy", "live-off");
+  liveBarEl.classList.add(state);
+  if (livePhaseEl && phaseText) livePhaseEl.textContent = phaseText;
+  if (liveActivityEl && activity !== undefined) liveActivityEl.textContent = activity || "";
+}
+
+function applyLiveMarker(phase) {
+  const label = LIVE_PHASE_LABELS[phase] || phase;
+  if (phase === "done") {
+    setLiveState("live-on", "Live", "");
+    return;
+  }
+  if (phase === "error") {
+    setLiveState("live-off", label, "");
+    return;
+  }
+  setLiveState("live-busy", label, phase);
+}
+
+function stripLiveMarkers(text) {
+  return text.replace(/\[\[live:([a-z0-9_-]+)\]\]/gi, (_, phase) => {
+    applyLiveMarker(phase.toLowerCase());
+    return "";
+  });
+}
+
+function startRealtimeFeed() {
+  if (!window.EventSource) {
+    setLiveState("live-off", "SSE unsupported", "");
+    return;
+  }
+  try {
+    const es = new EventSource("/api/realtime");
+    es.onopen = () => setLiveState("live-on", "Live", "");
+    es.onmessage = (ev) => {
+      if (streaming) return;
+      try {
+        const data = JSON.parse(ev.data);
+        if (data.error) {
+          setLiveState("live-off", "Feed error", data.error);
+          return;
+        }
+        const ready = data.backend_ready || data.backend_status === "loads_on_chat";
+        setLiveState(ready ? "live-on" : "live-off", ready ? "Live" : "Backend offline", "");
+        if (liveMetaEl) {
+          liveMetaEl.textContent = `${data.backend || "?"} · ${data.model || "?"} · tools ${data.tools_available || 0}/${data.tools_total || 0} · RAG ${data.rag_documents ?? "—"}`;
+        }
+        if (toolsStatusEl && data.tools_available != null) {
+          toolsStatusEl.textContent = `Tools ${data.tools_available}/${data.tools_total} ready`;
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    es.onerror = () => setLiveState("live-off", "Reconnecting…", "");
+  } catch {
+    setLiveState("live-off", "Realtime offline", "");
+  }
+}
+
+function getTheme() {
+  const t = document.documentElement.getAttribute("data-theme");
+  return t === "dark" ? "dark" : "light";
+}
+
+function applyTheme(theme) {
+  const next = theme === "dark" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", next);
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    /* ignore */
+  }
+  if (metaThemeColor) {
+    metaThemeColor.setAttribute("content", next === "dark" ? "#0c1117" : "#0f6e6a");
+  }
+  const appleBar = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+  if (appleBar) {
+    appleBar.setAttribute("content", next === "dark" ? "black-translucent" : "default");
+  }
+  if (themeToggleLabel) {
+    themeToggleLabel.textContent = next === "dark" ? "Light mode" : "Dark mode";
+  }
+  const tip = next === "dark" ? "Switch to light mode" : "Switch to dark mode";
+  themeToggleBtn?.setAttribute("title", tip);
+  themeToggleTopBtn?.setAttribute("title", tip);
+}
+
+function toggleTheme() {
+  applyTheme(getTheme() === "dark" ? "light" : "dark");
+}
+
+function initTheme() {
+  let theme = "light";
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === "light" || saved === "dark") theme = saved;
+    else if (window.matchMedia("(prefers-color-scheme: dark)").matches) theme = "dark";
+  } catch {
+    /* ignore */
+  }
+  applyTheme(theme);
+  try {
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
+      const saved = localStorage.getItem(THEME_KEY);
+      if (saved === "light" || saved === "dark") return;
+      applyTheme(e.matches ? "dark" : "light");
+    });
+  } catch {
+    /* ignore */
+  }
+}
 const MAX_CHATS = 40;
 const MAX_MESSAGES = 40;
 
@@ -441,11 +581,60 @@ function openSettings() {
   refreshFinetuneHint();
   loadPlatformTip();
   refreshHermesStatus();
+  refreshSettingsToolsHint();
 }
 
 function closeSettings() {
   settingsModal.classList.add("hidden");
   document.body.style.overflow = "";
+}
+
+async function refreshSettingsToolsHint() {
+  const hint = document.getElementById("settingsToolsHint");
+  if (!hint) return;
+  try {
+    const res = await fetch("/api/tools");
+    const data = await res.json();
+    const ready = (data.tools || []).filter((t) => t.available).map((t) => t.id);
+    hint.textContent = `${data.available_count || 0}/${data.count || 0} tools ready — ${ready.join(", ") || "none"}`;
+  } catch {
+    hint.textContent = "Tools status unavailable";
+  }
+}
+
+function syncThemeSelect() {
+  const el = document.getElementById("setTheme");
+  if (!el) return;
+  let saved = null;
+  try {
+    saved = localStorage.getItem(THEME_KEY);
+  } catch {
+    /* ignore */
+  }
+  if (saved === "light" || saved === "dark") el.value = saved;
+  else el.value = "system";
+}
+
+function applyThemeFromSettings() {
+  const el = document.getElementById("setTheme");
+  if (!el) return;
+  const v = el.value;
+  if (v === "system") {
+    try {
+      localStorage.removeItem(THEME_KEY);
+    } catch {
+      /* ignore */
+    }
+    const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    applyTheme(dark ? "dark" : "light");
+    try {
+      localStorage.removeItem(THEME_KEY);
+    } catch {
+      /* ignore */
+    }
+  } else {
+    applyTheme(v);
+  }
 }
 
 function toggleMenu() {
@@ -563,6 +752,24 @@ async function loadSettingsForm() {
   try {
     const res = await fetch("/api/settings");
     const s = await res.json();
+    syncThemeSelect();
+    const setChecked = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.checked = Boolean(val);
+    };
+    const setVal = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.value = val ?? "";
+    };
+    setChecked("setWebSearchEnabled", s.web_search_enabled !== false);
+    setVal("setWebSearchMax", s.web_search_max_results ?? 8);
+    setVal("setWebSearchTimeout", s.web_search_timeout_sec ?? 5);
+    setVal("setSearxngUrl", s.searxng_url || "");
+    setChecked("setLocalToolsEnabled", s.local_tools_enabled !== false);
+    setChecked("setLocalToolsAuto", s.local_tools_auto !== false);
+    setChecked("setLocalToolsHeavy", Boolean(s.local_tools_allow_heavy));
+    setChecked("setNetAssessEnabled", s.net_assess_enabled !== false);
+    setChecked("setNetAssessNmap", s.net_assess_use_nmap !== false);
     document.getElementById("setOllamaUrl").value = s.ollama_base_url || "";
     document.getElementById("setOllamaModel").value = s.ollama_model || "";
     document.getElementById("setHfModel").value = s.hf_model || "";
@@ -594,6 +801,7 @@ async function loadSettingsForm() {
     document.getElementById("compatKeyHint").textContent = s.openai_compat_api_key_set
       ? "Saved: •••••••• (hidden)"
       : "Not set";
+    await refreshSettingsToolsHint();
   } catch (err) {
     appendMessage("assistant", renderMarkdown(`**Settings load failed:** ${err.message}`), true);
   }
@@ -601,7 +809,17 @@ async function loadSettingsForm() {
 
 async function saveSettings(event) {
   event.preventDefault();
+  applyThemeFromSettings();
   const payload = {
+    web_search_enabled: document.getElementById("setWebSearchEnabled")?.checked ?? true,
+    web_search_max_results: Number(document.getElementById("setWebSearchMax")?.value) || 8,
+    web_search_timeout_sec: Number(document.getElementById("setWebSearchTimeout")?.value) || 5,
+    searxng_url: document.getElementById("setSearxngUrl")?.value.trim() || "",
+    local_tools_enabled: document.getElementById("setLocalToolsEnabled")?.checked ?? true,
+    local_tools_auto: document.getElementById("setLocalToolsAuto")?.checked ?? true,
+    local_tools_allow_heavy: document.getElementById("setLocalToolsHeavy")?.checked ?? false,
+    net_assess_enabled: document.getElementById("setNetAssessEnabled")?.checked ?? true,
+    net_assess_use_nmap: document.getElementById("setNetAssessNmap")?.checked ?? true,
     ollama_base_url: document.getElementById("setOllamaUrl").value.trim(),
     ollama_model: document.getElementById("setOllamaModel").value.trim(),
     hf_model: document.getElementById("setHfModel").value.trim(),
@@ -626,9 +844,14 @@ async function saveSettings(event) {
       body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    appendMessage("assistant", renderMarkdown("**Settings saved** to `.env` (secrets are masked in the UI)."), true);
+    // Mirror tool toggles into sidebar for this session
+    if (localToolsEl) localToolsEl.checked = payload.local_tools_enabled;
+    if (netAssessEl) netAssessEl.checked = payload.net_assess_enabled && (netAssessEl.checked || modeEl.value === "assess");
+    if (webSearchEl && !payload.web_search_enabled) webSearchEl.checked = false;
+    appendMessage("assistant", renderMarkdown("**Settings saved** to `.env` (secrets stay masked)."), true);
     await loadSettingsForm();
     await loadModels();
+    await loadToolsStatus();
     await checkHealth();
   } catch (err) {
     appendMessage("assistant", renderMarkdown(`**Save failed:** ${err.message}`), true);
@@ -854,10 +1077,13 @@ async function ensureWorkingBackend(healthData) {
   }
 }
 
+let lastHealthData = null;
+
 async function checkHealth() {
   try {
     const res = await fetch("/api/health");
     const data = await res.json();
+    lastHealthData = data;
     const rag = data.rag_documents != null ? ` · RAG:${data.rag_documents}` : "";
     const backend = data.backend;
     backendEl.value = backend;
@@ -1046,6 +1272,10 @@ async function sendMessage() {
         mode: modeEl.value,
         use_rag: ragEl.checked,
         use_web_search: webSearchEl ? webSearchEl.checked : modeEl.value === "research",
+        use_net_assess: netAssessEl ? netAssessEl.checked : modeEl.value === "assess",
+        use_local_tools: localToolsEl ? localToolsEl.checked : true,
+        target: targetIpEl && targetIpEl.value.trim() ? targetIpEl.value.trim() : null,
+        authorized_target: authorizedTargetEl ? authorizedTargetEl.checked : false,
         hermes_session_id: hermesSessionId || null,
         reset_hermes_session: resetHermesNext,
       }),
@@ -1070,14 +1300,16 @@ async function sendMessage() {
       const { done, value } = await reader.read();
       if (done) break;
       carry += decoder.decode(value, { stream: true });
-      // Hermes session marker may arrive split across chunks
       carry = carry.replace(/\[\[hermes_session:([^\]]+)\]\]/g, (_, sid) => {
         hermesSessionId = sid;
         localStorage.setItem("hermesSessionId", hermesSessionId);
         return "";
       });
-      // Keep a short tail in case marker is split
-      if (carry.includes("[[hermes_session:") && !carry.includes("]]")) {
+      carry = stripLiveMarkers(carry);
+      if (
+        (carry.includes("[[hermes_session:") || carry.includes("[[live:")) &&
+        !carry.includes("]]")
+      ) {
         continue;
       }
       fullText += carry;
@@ -1091,17 +1323,20 @@ async function sendMessage() {
         localStorage.setItem("hermesSessionId", hermesSessionId);
         return "";
       });
+      carry = stripLiveMarkers(carry);
       fullText += carry;
       assistantBody.innerHTML = renderMarkdown(fullText);
     }
 
+    applyLiveMarker("done");
     assistantBody.classList.remove("typing");
     history.push({ role: "user", content: message });
     history.push({ role: "assistant", content: fullText });
     if (history.length > MAX_MESSAGES) history = history.slice(-MAX_MESSAGES);
     if (!getCurrentChat()) createChat(true, { clearUi: false });
     persistCurrentChat();
-    await checkHealth();
+    // fire-and-forget status refresh (don't await — keeps chat snappy)
+    checkHealth();
   } catch (err) {
     assistantBody.classList.remove("typing");
     assistantBody.innerHTML = renderMarkdown(`**Error:** ${err.message}`);
@@ -1124,8 +1359,15 @@ on(hermesRefreshStatusBtn, "click", refreshHermesStatus);
 on(menuToggle, "click", toggleMenu);
 on(sidebarBackdrop, "click", closeSidebar);
 on(newChatBtn, "click", newChat);
+on(themeToggleBtn, "click", toggleTheme);
+on(themeToggleTopBtn, "click", toggleTheme);
 on(settingsForm, "submit", saveSettings);
 on(settingsTrainBtn, "click", startUnslothTrain);
+on(document.getElementById("settingsRefreshTools"), "click", () => {
+  refreshSettingsToolsHint();
+  loadToolsStatus();
+});
+on(document.getElementById("setTheme"), "change", applyThemeFromSettings);
 if (settingsModal) {
   settingsModal.querySelectorAll("[data-close-settings]").forEach((el) => {
     el.addEventListener("click", closeSettings);
@@ -1136,10 +1378,20 @@ on(backendEl, "change", () => {
   closeSidebar();
 });
 on(modeEl, "change", () => {
+  const mode = modeEl.value;
+  if (webSearchEl && (mode === "research" || mode === "assess" || mode === "ciso" || mode === "awareness")) {
+    webSearchEl.checked = true;
+  }
+  if (netAssessEl && (mode === "assess" || mode === "lab" || mode === "redteam" || mode === "lab_offensive" || mode === "ciso")) {
+    netAssessEl.checked = true;
+  }
+  if (localToolsEl && (mode === "assess" || mode === "lab" || mode === "redteam" || mode === "lab_offensive" || mode === "ctf" || mode === "ciso" || mode === "awareness")) {
+    localToolsEl.checked = true;
+  }
   renderQuickPrompts();
   const chat = getCurrentChat();
   if (chat) {
-    chat.mode = modeEl.value;
+    chat.mode = mode;
     persistCurrentChat();
   }
   closeSidebar();
@@ -1200,31 +1452,52 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+initTheme();
 loadBackend();
 loadModes();
 loadModels();
+loadToolsStatus();
+startRealtimeFeed();
 ensureActiveChat();
 checkHealth().then(showWelcome);
-setInterval(checkHealth, 15000);
+setInterval(checkHealth, 45000);
 resizeInput();
 
-async function showWelcome() {
-  let ragCount = "24";
+async function loadToolsStatus() {
+  if (!toolsStatusEl) return;
   try {
-    const res = await fetch("/api/health");
+    const res = await fetch("/api/tools");
     const data = await res.json();
-    if (data.rag_documents != null) ragCount = String(data.rag_documents);
+    const avail = data.available_count ?? 0;
+    const total = data.count ?? 0;
+    const names = (data.tools || [])
+      .filter((t) => t.available)
+      .map((t) => t.id)
+      .slice(0, 8)
+      .join(", ");
+    toolsStatusEl.textContent = `Tools ${avail}/${total} ready${names ? `: ${names}` : ""}`;
+    toolsStatusEl.title = (data.tools || [])
+      .map((t) => `${t.available ? "✓" : "·"} ${t.id} — ${t.description}`)
+      .join("\n");
   } catch {
-    /* use default */
+    toolsStatusEl.textContent = "Tools: unavailable";
   }
+}
+
+async function showWelcome() {
+  const ragCount =
+    lastHealthData && lastHealthData.rag_documents != null
+      ? String(lastHealthData.rag_documents)
+      : "—";
 
   if (emptyLeadEl) {
     emptyLeadEl.textContent =
       "Authorized pentesting, CTFs, and blue-team workflows — local and private.";
   }
   const leadMeta = document.getElementById("emptyMeta");
-  if (leadMeta) leadMeta.textContent = `${ragCount} RAG docs ready`;
-  // Don't overwrite a restored conversation
+  if (leadMeta) {
+    leadMeta.textContent = `${ragCount} RAG docs · set Target IP · say “run nmap” to use tools`;
+  }
   syncEmptyState();
   renderChatList();
   updateChatTitle();

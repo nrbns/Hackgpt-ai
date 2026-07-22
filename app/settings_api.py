@@ -35,6 +35,14 @@ def public_settings() -> dict[str, Any]:
         "unsloth_max_seq_length": settings.unsloth_max_seq_length,
         "unsloth_load_in_4bit": settings.unsloth_load_in_4bit,
         "web_search_enabled": settings.web_search_enabled,
+        "web_search_max_results": settings.web_search_max_results,
+        "web_search_timeout_sec": settings.web_search_timeout_sec,
+        "searxng_url": settings.searxng_url or "",
+        "net_assess_enabled": settings.net_assess_enabled,
+        "net_assess_use_nmap": settings.net_assess_use_nmap,
+        "local_tools_enabled": settings.local_tools_enabled,
+        "local_tools_auto": settings.local_tools_auto,
+        "local_tools_allow_heavy": settings.local_tools_allow_heavy,
     }
     # Defense-in-depth: never allow raw secret keys in the payload
     forbidden = {
@@ -72,6 +80,15 @@ _WRITABLE: dict[str, tuple[str, type]] = {
     "unsloth_load_in_4bit": ("UNSLOTH_LOAD_IN_4BIT", bool),
     "ollama_base_url": ("OLLAMA_BASE_URL", str),
     "ollama_model": ("OLLAMA_MODEL", str),
+    "web_search_enabled": ("WEB_SEARCH_ENABLED", bool),
+    "web_search_max_results": ("WEB_SEARCH_MAX_RESULTS", int),
+    "web_search_timeout_sec": ("WEB_SEARCH_TIMEOUT_SEC", float),
+    "searxng_url": ("SEARXNG_URL", str),
+    "net_assess_enabled": ("NET_ASSESS_ENABLED", bool),
+    "net_assess_use_nmap": ("NET_ASSESS_USE_NMAP", bool),
+    "local_tools_enabled": ("LOCAL_TOOLS_ENABLED", bool),
+    "local_tools_auto": ("LOCAL_TOOLS_AUTO", bool),
+    "local_tools_allow_heavy": ("LOCAL_TOOLS_ALLOW_HEAVY", bool),
 }
 
 
@@ -95,6 +112,10 @@ def apply_settings_patch(data: dict[str, Any]) -> dict[str, Any]:
             update_env_value(env_key, "true" if value else "false")
         elif typ is int:
             value = int(raw)
+            setattr(settings, field, value)
+            update_env_value(env_key, str(value))
+        elif typ is float:
+            value = float(raw)
             setattr(settings, field, value)
             update_env_value(env_key, str(value))
         else:

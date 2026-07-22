@@ -18,9 +18,7 @@ class RAGEngine:
         self._collection = None
         self._cached_count: int = 0
 
-    def _ensure_ready(self) -> None:
-        if self._embedder is None:
-            self._embedder = SentenceTransformer(settings.embedding_model)
+    def _ensure_client(self) -> None:
         if self._client is None:
             persist = Path(settings.chroma_persist_dir)
             persist.mkdir(parents=True, exist_ok=True)
@@ -33,25 +31,47 @@ class RAGEngine:
                 metadata={"hnsw:space": "cosine"},
             )
 
-    def ingest_directory(self, directory: Path | None = None) -> int:
-        self._ensure_ready()
+    def _ensure_ready(self) -> None:
+        self._ensure_client()
+        if self._embedder is None:
+            self._embedder = SentenceTransformer(settings.embedding_model)
+
+    def _knowledge_files(self, root: Path) -> list[Path]:
+        files: list[Path] = []
+        for path in sorted(root.glob("**/*")):
+            if path.suffix.lower() in {".md", ".txt", ".json"} and path.is_file():
+                files.append(path)
+        return files
+
+    def ingest_directory(self, directory: Path | None = None, force: bool = False) -> int:
         root = directory or KNOWLEDGE_DIR
         if not root.exists():
             return 0
 
+        self._ensure_client()
+        assert self._collection is not None
+        files = self._knowledge_files(root)
+        if not files:
+            return 0
+
+        # Fast path: already indexed — skip embedding model load on startup
+        if not force:
+            existing = self._collection.count()
+            if existing >= len(files) and existing > 0:
+                self._cached_count = existing
+                return 0
+
+        self._ensure_ready()
         docs: list[str] = []
         ids: list[str] = []
         metas: list[dict] = []
 
-        for path in sorted(root.glob("**/*")):
-            if path.suffix.lower() not in {".md", ".txt", ".json"}:
-                continue
+        for path in files:
             text = path.read_text(encoding="utf-8")
             if not text.strip():
                 continue
-            doc_id = path.stem
             docs.append(text)
-            ids.append(doc_id)
+            ids.append(path.stem)
             metas.append({"source": str(path.relative_to(root))})
 
         if not docs:
@@ -59,7 +79,6 @@ class RAGEngine:
 
         assert self._embedder is not None
         embeddings = self._embedder.encode(docs, show_progress_bar=False).tolist()
-        assert self._collection is not None
         self._collection.upsert(ids=ids, documents=docs, embeddings=embeddings, metadatas=metas)
         self._cached_count = len(docs)
         return len(docs)
@@ -67,14 +86,14 @@ class RAGEngine:
     def document_count(self) -> int:
         if self._cached_count:
             return self._cached_count
-        self._ensure_ready()
+        self._ensure_client()
         assert self._collection is not None
         count = self._collection.count()
         self._cached_count = count
         return count
 
     def list_sources(self) -> list[str]:
-        self._ensure_ready()
+        self._ensure_client()
         assert self._collection is not None
         if self._collection.count() == 0:
             return []
@@ -88,7 +107,7 @@ class RAGEngine:
         assert self._collection is not None
 
         if self._collection.count() == 0:
-            self.ingest_directory()
+            self.ingest_directory(force=True)
 
         if self._collection.count() == 0:
             return []

@@ -1,7 +1,8 @@
-"""Live web search for cybersecurity research (multi-source)."""
+"""Live web search for cybersecurity research (multi-source, parallel, detailed)."""
 
 from __future__ import annotations
 
+import asyncio
 import html as html_lib
 import re
 from typing import Any
@@ -26,11 +27,23 @@ _LITE_LINK_RE = re.compile(
     r'<a[^>]+href="(?P<href>https?://[^"]+)"[^>]*>(?P<title>.*?)</a>',
     re.IGNORECASE | re.DOTALL,
 )
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+_META_DESC_RE = re.compile(
+    r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
+    re.I,
+)
+_META_DESC_RE2 = re.compile(
+    r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']description["\']',
+    re.I,
+)
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 HackGPT/1.3"
+    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 HackGPT/1.4"
 )
+
+_SNIPPET_LEN = 900
+_DETAIL_LEN = 1600
 
 
 def _clean(text: str) -> str:
@@ -57,14 +70,14 @@ def _cyber_queries(query: str) -> list[str]:
     cyber_terms = (
         "cve", "exploit", "pentest", "owasp", "nmap", "kerberos", "xss", "sqli",
         "ransomware", "malware", "yara", "att&ck", "mitre", "vulnerability",
+        "assessment", "nuclei", "advisory",
     )
     if not any(t in lower for t in cyber_terms) and not _CVE_RE.search(q):
         queries.append(f"{q} cybersecurity vulnerability OR exploit OR CVE")
     cves = _CVE_RE.findall(q)
     for cve in cves[:2]:
         queries.append(f"{cve} NVD")
-        queries.append(f"{cve} exploit")
-    # de-dupe preserve order
+        queries.append(f"{cve} exploit PoC")
     seen: set[str] = set()
     out: list[str] = []
     for item in queries:
@@ -72,7 +85,26 @@ def _cyber_queries(query: str) -> list[str]:
         if key not in seen:
             seen.add(key)
             out.append(item)
-    return out[:4]
+    return out[:3]
+
+
+def _nvd_metrics(cve: dict[str, Any]) -> dict[str, str]:
+    metrics = cve.get("metrics") or {}
+    for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+        arr = metrics.get(key) or []
+        if not arr:
+            continue
+        data = arr[0].get("cvssData") or {}
+        score = data.get("baseScore")
+        sev = data.get("baseSeverity") or arr[0].get("baseSeverity") or ""
+        vector = data.get("vectorString") or ""
+        return {
+            "cvss": str(score) if score is not None else "",
+            "severity": str(sev),
+            "vector": str(vector),
+            "cvss_version": key.replace("cvssMetric", ""),
+        }
+    return {}
 
 
 async def _search_searxng(client: httpx.AsyncClient, query: str, max_results: int) -> list[dict[str, str]]:
@@ -92,7 +124,7 @@ async def _search_searxng(client: httpx.AsyncClient, query: str, max_results: in
         link = (item.get("url") or "").strip()
         snippet = (item.get("content") or item.get("snippet") or "").strip()
         if title and link:
-            out.append({"title": title, "url": link, "snippet": snippet[:420]})
+            out.append({"title": title, "url": link, "snippet": snippet[:_SNIPPET_LEN], "source": "searxng"})
     return out
 
 
@@ -118,32 +150,37 @@ async def _search_duckduckgo_html(client: httpx.AsyncClient, query: str, max_res
         snippet = ""
         sn = _SNIPPET_AFTER_RE.search(body, m.end())
         if sn:
-            snippet = _clean(sn.group("snippet"))[:420]
+            snippet = _clean(sn.group("snippet"))
         if title and href.startswith("http"):
-            out.append({"title": title, "url": href, "snippet": snippet})
+            out.append(
+                {
+                    "title": title,
+                    "url": href,
+                    "snippet": snippet[:_SNIPPET_LEN],
+                    "source": "duckduckgo",
+                }
+            )
         if len(out) >= max_results:
             break
     return out
 
 
 async def _search_duckduckgo_lite(client: httpx.AsyncClient, query: str, max_results: int) -> list[dict[str, str]]:
-    headers = {"User-Agent": _UA, "Accept": "text/html"}
-    r = await client.post(
-        "https://lite.duckduckgo.com/lite/",
-        data={"q": query},
+    headers = {"User-Agent": _UA}
+    r = await client.get(
+        f"https://lite.duckduckgo.com/lite/?q={quote_plus(query)}",
         headers=headers,
     )
     if r.status_code != 200:
         return []
     out: list[dict[str, str]] = []
     for m in _LITE_LINK_RE.finditer(r.text):
-        href = _unwrap_ddg(m.group("href"))
+        href = m.group("href")
         title = _clean(m.group("title"))
-        if not title or not href.startswith("http"):
-            continue
         if "duckduckgo.com" in href:
             continue
-        out.append({"title": title, "url": href, "snippet": ""})
+        if title and href.startswith("http"):
+            out.append({"title": title, "url": href, "snippet": "", "source": "duckduckgo-lite"})
         if len(out) >= max_results:
             break
     return out
@@ -159,35 +196,39 @@ async def _search_ddg_instant(client: httpx.AsyncClient, query: str) -> list[dic
         return []
     data = r.json()
     out: list[dict[str, str]] = []
-    if data.get("AbstractText") and data.get("AbstractURL"):
+    abstract = (data.get("AbstractText") or "").strip()
+    abs_url = (data.get("AbstractURL") or "").strip()
+    heading = (data.get("Heading") or query).strip()
+    if abstract and abs_url:
         out.append(
             {
-                "title": data.get("Heading") or query,
-                "url": data["AbstractURL"],
-                "snippet": data["AbstractText"][:420],
+                "title": f"{heading} — DuckDuckGo Instant",
+                "url": abs_url,
+                "snippet": abstract[:_SNIPPET_LEN],
+                "source": "duckduckgo-instant",
             }
         )
-    for topic in data.get("RelatedTopics") or []:
-        if isinstance(topic, dict) and topic.get("FirstURL") and topic.get("Text"):
+    for topic in (data.get("RelatedTopics") or [])[:4]:
+        if isinstance(topic, dict) and topic.get("Text") and topic.get("FirstURL"):
             out.append(
                 {
-                    "title": topic["Text"][:80],
+                    "title": _clean(topic["Text"])[:120],
                     "url": topic["FirstURL"],
-                    "snippet": topic["Text"][:420],
+                    "snippet": _clean(topic["Text"])[:_SNIPPET_LEN],
+                    "source": "duckduckgo-instant",
                 }
             )
-        elif isinstance(topic, dict) and "Topics" in topic:
-            for sub in topic.get("Topics") or []:
-                if sub.get("FirstURL") and sub.get("Text"):
+        elif isinstance(topic, dict) and topic.get("Topics"):
+            for sub in topic["Topics"][:2]:
+                if sub.get("Text") and sub.get("FirstURL"):
                     out.append(
                         {
-                            "title": sub["Text"][:80],
+                            "title": _clean(sub["Text"])[:120],
                             "url": sub["FirstURL"],
-                            "snippet": sub["Text"][:420],
+                            "snippet": _clean(sub["Text"])[:_SNIPPET_LEN],
+                            "source": "duckduckgo-instant",
                         }
                     )
-        if len(out) >= 5:
-            break
     return out
 
 
@@ -206,14 +247,62 @@ async def _search_nvd(client: httpx.AsyncClient, cve_id: str) -> list[dict[str, 
         cve = vul.get("cve") or {}
         descriptions = cve.get("descriptions") or []
         desc = next((d.get("value") for d in descriptions if d.get("lang") == "en"), "")
+        metrics = _nvd_metrics(cve)
+        weaknesses = []
+        for w in cve.get("weaknesses") or []:
+            for d in w.get("description") or []:
+                if d.get("value"):
+                    weaknesses.append(d["value"])
+        published = (cve.get("published") or "")[:10]
+        modified = (cve.get("lastModified") or "")[:10]
+        detail_parts = [desc[:800] if desc else ""]
+        if metrics.get("cvss"):
+            detail_parts.append(
+                f"CVSS{metrics.get('cvss_version', '')} {metrics['cvss']} "
+                f"({metrics.get('severity', '')}) {metrics.get('vector', '')}".strip()
+            )
+        if weaknesses:
+            detail_parts.append("CWE: " + ", ".join(weaknesses[:4]))
+        if published:
+            detail_parts.append(f"Published: {published}; Modified: {modified}")
+        snippet = " | ".join(p for p in detail_parts if p)[:_DETAIL_LEN]
         out.append(
             {
-                "title": f"{cve_id} — NVD",
+                "title": f"{cve_id} — NVD {metrics.get('severity', '')}".strip(),
                 "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}",
-                "snippet": (desc or "")[:420],
+                "snippet": snippet,
+                "source": "nvd",
+                "cvss": metrics.get("cvss", ""),
+                "severity": metrics.get("severity", ""),
+                "published": published,
             }
         )
     return out
+
+
+async def _fetch_page_detail(client: httpx.AsyncClient, url: str) -> str:
+    try:
+        host = (urlparse(url).hostname or "").lower()
+        if any(x in host for x in ("facebook.com", "twitter.com", "x.com", "youtube.com")):
+            return ""
+        r = await client.get(url, headers={"User-Agent": _UA, "Accept": "text/html"})
+        if r.status_code != 200 or "text/html" not in (r.headers.get("content-type") or ""):
+            return ""
+        body = r.text[:120_000]
+        meta = ""
+        m = _META_DESC_RE.search(body) or _META_DESC_RE2.search(body)
+        if m:
+            meta = _clean(m.group(1))
+        # Prefer main-ish text: strip scripts/styles roughly
+        stripped = re.sub(r"(?is)<(script|style|nav|footer)[^>]*>.*?</\1>", " ", body)
+        text = _clean(stripped)
+        # Drop very short chrome
+        if len(text) < 80 and not meta:
+            return ""
+        combined = (meta + " — " if meta else "") + text
+        return combined[:_DETAIL_LEN]
+    except Exception:
+        return ""
 
 
 def _merge_results(*groups: list[dict[str, str]], limit: int) -> list[dict[str, str]]:
@@ -232,54 +321,88 @@ def _merge_results(*groups: list[dict[str, str]], limit: int) -> list[dict[str, 
 
 
 async def web_search(query: str, max_results: int | None = None) -> dict[str, Any]:
-    """Aggregate SearXNG / DDG / NVD results for cybersecurity queries."""
+    """Aggregate SearXNG / DDG / NVD results fast (parallel) with richer detail."""
     limit = max_results or settings.web_search_max_results
     limit = max(1, min(int(limit), 10))
+    budget = max(2.0, float(getattr(settings, "web_search_timeout_sec", 5.0)))
 
     if not settings.web_search_enabled:
         return {"query": query, "results": [], "provider": "disabled", "error": "Web search disabled"}
 
     queries = _cyber_queries(query)
+    if not queries:
+        return {"query": query, "results": [], "provider": "none", "error": "Empty query"}
+
     providers_used: list[str] = []
     buckets: list[list[dict[str, str]]] = []
     error = None
 
-    timeout = httpx.Timeout(connect=3.0, read=12.0, write=8.0, pool=8.0)
-    try:
+    timeout = httpx.Timeout(connect=2.0, read=min(8.0, budget), write=4.0, pool=4.0)
+
+    async def _run() -> None:
+        nonlocal error
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            # CVE enrichment first
+            tasks: list[Any] = []
+            labels: list[str] = []
+
             for cve in _CVE_RE.findall(query)[:2]:
-                nvd = await _search_nvd(client, cve)
-                if nvd:
-                    buckets.append(nvd)
-                    providers_used.append("nvd")
+                tasks.append(_search_nvd(client, cve))
+                labels.append("nvd")
 
-            for q in queries:
-                if settings.searxng_url:
-                    sx = await _search_searxng(client, q, limit)
-                    if sx:
-                        buckets.append(sx)
-                        providers_used.append("searxng")
+            primary = queries[0]
+            if settings.searxng_url:
+                tasks.append(_search_searxng(client, primary, limit))
+                labels.append("searxng")
+            tasks.append(_search_duckduckgo_html(client, primary, limit))
+            labels.append("duckduckgo")
+            tasks.append(_search_ddg_instant(client, primary))
+            labels.append("duckduckgo-instant")
 
-                html_hits = await _search_duckduckgo_html(client, q, limit)
-                if html_hits:
-                    buckets.append(html_hits)
-                    providers_used.append("duckduckgo")
-                else:
-                    lite = await _search_duckduckgo_lite(client, q, limit)
-                    if lite:
-                        buckets.append(lite)
-                        providers_used.append("duckduckgo-lite")
+            # One cyber-biased follow-up max
+            if len(queries) > 1:
+                tasks.append(_search_duckduckgo_html(client, queries[1], max(3, limit // 2)))
+                labels.append("duckduckgo")
 
-                instant = await _search_ddg_instant(client, q)
-                if instant:
-                    buckets.append(instant)
-                    providers_used.append("duckduckgo-instant")
+            results_list = await asyncio.gather(*tasks, return_exceptions=True)
+            for label, res in zip(labels, results_list):
+                if isinstance(res, Exception):
+                    error = str(res)
+                    continue
+                if res:
+                    buckets.append(res)  # type: ignore[arg-type]
+                    providers_used.append(label)
 
-                # Enough results — stop extra queries
-                merged_preview = _merge_results(*buckets, limit=limit)
-                if len(merged_preview) >= limit:
-                    break
+            # Lite fallback only if nothing useful
+            merged_preview = _merge_results(*buckets, limit=limit)
+            if len(merged_preview) < 2:
+                lite = await _search_duckduckgo_lite(client, primary, limit)
+                if lite:
+                    buckets.append(lite)
+                    providers_used.append("duckduckgo-lite")
+
+            merged = _merge_results(*buckets, limit=limit)
+
+            # Fetch page detail for top non-NVD hits (parallel, capped)
+            enrich_targets = [item for item in merged if item.get("source") != "nvd"][:3]
+            if enrich_targets:
+                details = await asyncio.gather(
+                    *[_fetch_page_detail(client, item["url"]) for item in enrich_targets],
+                    return_exceptions=True,
+                )
+                for item, detail in zip(enrich_targets, details):
+                    if isinstance(detail, str) and detail:
+                        if item.get("snippet"):
+                            item["detail"] = detail
+                            if len(item["snippet"]) < 200:
+                                item["snippet"] = (item["snippet"] + " — " + detail)[:_DETAIL_LEN]
+                        else:
+                            item["snippet"] = detail
+                            item["detail"] = detail
+
+    try:
+        await asyncio.wait_for(_run(), timeout=budget)
+    except asyncio.TimeoutError:
+        error = error or f"Search budget {budget:.0f}s reached"
     except Exception as exc:
         error = str(exc)
 
@@ -306,16 +429,29 @@ def format_search_context(payload: dict[str, Any]) -> str:
         )
 
     lines = [
-        "## Live web search results (cybersecurity)",
+        "## Live web search results (detailed cybersecurity)",
         f"Provider: `{payload.get('provider')}` · Query: `{payload.get('query', '')}`",
-        "Ground answers in these sources when relevant. Cite titles/URLs. "
+        "Ground answers in these sources. Cite titles/URLs. Prefer CVSS/CWE/dates when present.",
         "Still give complete technical steps for authorized lab/research use.",
         "",
     ]
     for i, item in enumerate(results, 1):
         lines.append(f"{i}. **{item.get('title', 'Result')}**")
         lines.append(f"   URL: {item.get('url', '')}")
+        meta_bits = []
+        if item.get("cvss"):
+            meta_bits.append(f"CVSS {item['cvss']}")
+        if item.get("severity"):
+            meta_bits.append(item["severity"])
+        if item.get("published"):
+            meta_bits.append(f"published {item['published']}")
+        if item.get("source"):
+            meta_bits.append(item["source"])
+        if meta_bits:
+            lines.append(f"   Meta: {', '.join(meta_bits)}")
         if item.get("snippet"):
-            lines.append(f"   Snippet: {item['snippet']}")
+            lines.append(f"   Summary: {item['snippet']}")
+        if item.get("detail") and item.get("detail") != item.get("snippet"):
+            lines.append(f"   Detail: {item['detail'][:1200]}")
         lines.append("")
     return "\n".join(lines)

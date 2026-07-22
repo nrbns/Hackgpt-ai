@@ -29,8 +29,16 @@ class Settings(BaseSettings):
     embedding_model: str = "all-MiniLM-L6-v2"
     # Live web search for Research mode (DuckDuckGo HTML, or SearXNG if set)
     web_search_enabled: bool = True
-    web_search_max_results: int = 6
+    web_search_max_results: int = 8
+    web_search_timeout_sec: float = 5.0
     searxng_url: str = ""
+    # Network assess: light TCP/HTTP probes (+ nmap if installed)
+    net_assess_enabled: bool = True
+    net_assess_use_nmap: bool = True
+    # Local security tools registry (builtins + PATH binaries)
+    local_tools_enabled: bool = True
+    local_tools_auto: bool = True  # auto light tools on assess / when target set
+    local_tools_allow_heavy: bool = False  # nuclei/nikto/ffuf only when instructed
 
 
 settings = Settings()

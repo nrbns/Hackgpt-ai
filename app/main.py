@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from pathlib import Path
 from typing import Literal
 
@@ -15,7 +17,10 @@ from app.config import settings
 from app.guardrails import check_request
 from app.model_client import model_client
 from app.prompts import (
+    ASSESS_MODE_PROMPT,
+    AWARENESS_MODE_PROMPT,
     BLUETEAM_MODE_PROMPT,
+    CISO_MODE_PROMPT,
     CTF_MODE_PROMPT,
     LAB_MODE_PROMPT,
     LAB_OFFENSIVE_MODE_PROMPT,
@@ -24,16 +29,19 @@ from app.prompts import (
     RESEARCH_MODE_PROMPT,
     SEARCH_BEHAVIOR_PROMPT,
     SYSTEM_PROMPT,
+    TOOLS_BEHAVIOR_PROMPT,
 )
 from app.backends import hermes_reachable, openai_compat_reachable
 from app.env_persist import update_env_value
 from app.fine_tune.job import finetune_job, launch_unsloth_job
 from app.hermes_client import fetch_hermes_status
-from app.ollama_models import RECOMMENDED_MODELS, list_installed_models, ollama_reachable, pull_model
+from app.net_assess import assess_from_request, extract_targets, format_assess_context
+from app.ollama_models import RECOMMENDED_MODELS, fetch_ollama_tags, list_installed_models, pull_model
 from app.platform_info import platform_info
 from app.probe import probe_backends
 from app.rag import rag_engine
 from app.settings_api import apply_settings_patch, public_settings
+from app.tools import format_tools_context, list_tools_status, run_security_tools
 from app.web_search import format_search_context, web_search
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -42,13 +50,26 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        count = rag_engine.ingest_directory()
+        count = rag_engine.ingest_directory(force=False)
         if count:
             print(f"RAG: indexed {count} knowledge documents.")
+        else:
+            existing = rag_engine.document_count()
+            if existing:
+                print(f"RAG: using existing index ({existing} docs) — fast start.")
     except Exception as exc:
         print(f"RAG ingest skipped: {exc}")
     if settings.model_backend == "huggingface":
-        print(f"HuggingFace backend: {settings.hf_model} (loads on first chat)")
+        print(f"HuggingFace backend: {settings.hf_model} (preloading in background)")
+
+        async def _bg_preload() -> None:
+            try:
+                await model_client.preload_huggingface()
+                print("HuggingFace model ready.")
+            except Exception as exc:
+                print(f"HuggingFace preload deferred: {exc}")
+
+        asyncio.create_task(_bg_preload())
     elif settings.model_backend == "unsloth":
         print(f"Unsloth backend: {settings.unsloth_model} (loads on first chat)")
     elif settings.model_backend == "hermes":
@@ -56,7 +77,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="HackGPT", version="1.3.0", lifespan=lifespan)
+app = FastAPI(title="HackGPT", version="1.4.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -85,9 +106,17 @@ class ChatRequest(BaseModel):
         "malware",
         "research",
         "lab_offensive",
+        "assess",
+        "ciso",
+        "awareness",
     ] = "default"
     use_rag: bool = True
     use_web_search: bool | None = None
+    use_net_assess: bool | None = None
+    use_local_tools: bool | None = None
+    tools: list[str] | None = None
+    target: str | None = Field(default=None, max_length=253)
+    authorized_target: bool = False
     hermes_session_id: str | None = Field(default=None, max_length=256)
     reset_hermes_session: bool = False
 
@@ -125,6 +154,15 @@ class SettingsUpdateRequest(BaseModel):
     unsloth_load_in_4bit: bool | None = None
     ollama_base_url: str | None = None
     ollama_model: str | None = None
+    web_search_enabled: bool | None = None
+    web_search_max_results: int | None = None
+    web_search_timeout_sec: float | None = None
+    searxng_url: str | None = None
+    net_assess_enabled: bool | None = None
+    net_assess_use_nmap: bool | None = None
+    local_tools_enabled: bool | None = None
+    local_tools_auto: bool | None = None
+    local_tools_allow_heavy: bool | None = None
 
 
 class FinetuneStartRequest(BaseModel):
@@ -144,6 +182,9 @@ MODE_RAG_TOP_K = {
     "malware": 5,
     "research": 4,
     "lab_offensive": 5,
+    "assess": 5,
+    "ciso": 5,
+    "awareness": 5,
 }
 
 QUICK_PROMPTS = {
@@ -183,10 +224,37 @@ QUICK_PROMPTS = {
         "Kerberoasting in an authorized AD lab + Sigma detection",
         "XSS to session hijack demo in Juice Shop + fixes",
     ],
+    "assess": [
+        "Assess my lab host 192.168.56.101 — prioritize findings",
+        "Vulnerability assessment for HTB target 10.10.10.x from open ports",
+        "Map banners to CVEs and give verify + remediate steps",
+    ],
+    "ciso": [
+        "30/60/90 day security roadmap for a mid-size company",
+        "Board briefing: ransomware risk, controls, and metrics",
+        "Map our vuln backlog to ISO 27001 and CIS Controls",
+        "How should CISO prioritize Greenbone vs Burp vs EDR spend?",
+    ],
+    "awareness": [
+        "Design an authorized phishing simulation with training banners",
+        "Teach users 10 phishing red flags with examples",
+        "SPF DKIM DMARC checklist + awareness talking points",
+        "Tabletop: employee clicked a fake MFA prompt — IR + coaching",
+    ],
 }
 
 
 async def _build_messages(req: ChatRequest) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] | None = None
+    async for kind, payload in _iter_build_messages(req):
+        if kind == "messages":
+            messages = payload  # type: ignore[assignment]
+    assert messages is not None
+    return messages
+
+
+async def _iter_build_messages(req: ChatRequest):
+    """Yield ('phase', name) then ('messages', list) for realtime UI progress."""
     system_parts = [SYSTEM_PROMPT]
     if req.mode == "ctf":
         system_parts.append(CTF_MODE_PROMPT)
@@ -202,48 +270,133 @@ async def _build_messages(req: ChatRequest) -> list[dict[str, str]]:
         system_parts.append(RESEARCH_MODE_PROMPT)
     elif req.mode == "lab_offensive":
         system_parts.append(LAB_OFFENSIVE_MODE_PROMPT)
+    elif req.mode == "assess":
+        system_parts.append(ASSESS_MODE_PROMPT)
+    elif req.mode == "ciso":
+        system_parts.append(CISO_MODE_PROMPT)
+    elif req.mode == "awareness":
+        system_parts.append(AWARENESS_MODE_PROMPT)
 
-    # Live search default ON for all cybersecurity modes unless explicitly disabled
-    cyber_modes = {
-        "default",
-        "ctf",
-        "lab",
-        "redteam",
-        "blueteam",
-        "malware",
-        "research",
-        "lab_offensive",
-    }
+    search_default_modes = {"research", "assess", "lab_offensive", "ciso", "awareness"}
     do_search = (
         req.use_web_search
         if req.use_web_search is not None
-        else (req.mode in cyber_modes)
+        else (req.mode in search_default_modes)
     )
+    search_task = None
     if do_search and settings.web_search_enabled:
-        search_payload = await web_search(req.message)
+        yield ("phase", "search")
+        search_task = asyncio.create_task(web_search(req.message))
+
+    targets = extract_targets(req.message, req.target)
+    assess_modes = {"assess", "lab", "redteam", "ctf", "lab_offensive", "ciso"}
+    do_assess = (
+        req.use_net_assess
+        if req.use_net_assess is not None
+        else (req.mode == "assess" or bool(req.target) or (bool(targets) and req.mode in assess_modes))
+    )
+    assess_task = None
+    if do_assess and settings.net_assess_enabled and (targets or req.target):
+        authorized = bool(req.authorized_target) or req.mode in assess_modes
+        yield ("phase", "assess")
+        assess_task = asyncio.create_task(
+            assess_from_request(
+                req.message,
+                target=req.target,
+                authorized=authorized,
+                allow_public=bool(req.authorized_target),
+            )
+        )
+
+    tools_modes = {"assess", "lab", "redteam", "ctf", "lab_offensive", "ciso"}
+    msg_lower = (req.message or "").lower()
+    instruct_tools = any(
+        k in msg_lower
+        for k in (
+            "run nmap", "run nikto", "run nuclei", "run zap", "use nmap", "use nuclei",
+            "use zap", "use burp", "greenbone", "openvas", "acunetix", "tools:",
+            "scan with", "probe with", "suite_guide", "phishing_url",
+        )
+    ) or bool(req.tools)
+    do_tools = (
+        req.use_local_tools
+        if req.use_local_tools is not None
+        else (
+            settings.local_tools_auto
+            and (
+                req.mode == "assess"
+                or bool(req.target)
+                or instruct_tools
+                or (bool(targets) and req.mode in tools_modes)
+            )
+        )
+    )
+    tools_task = None
+    if do_tools and settings.local_tools_enabled:
+        authorized = bool(req.authorized_target) or req.mode in tools_modes
+        yield ("phase", "tools")
+        tools_task = asyncio.create_task(
+            run_security_tools(
+                req.message,
+                target=req.target,
+                tools=req.tools,
+                authorized=authorized,
+                allow_public=bool(req.authorized_target),
+                auto=not instruct_tools and not req.tools,
+                include_heavy=settings.local_tools_allow_heavy or instruct_tools,
+            )
+        )
+
+    if search_task is not None:
+        try:
+            search_payload = await search_task
+        except Exception as exc:
+            search_payload = {"query": req.message, "results": [], "provider": "error", "error": str(exc)}
         system_parts.append(SEARCH_BEHAVIOR_PROMPT)
         system_parts.append(format_search_context(search_payload))
 
+    if assess_task is not None:
+        try:
+            assess_payload = await assess_task
+        except Exception as exc:
+            assess_payload = {"ok": False, "error": str(exc), "results": []}
+        system_parts.append(ASSESS_MODE_PROMPT if req.mode != "assess" else "")
+        system_parts.append(format_assess_context(assess_payload))
+    elif do_assess and not (targets or req.target):
+        system_parts.append(
+            "## Network assessment\nNo target IP found. Ask for a lab/private IP "
+            "(e.g. 192.168.x.x / 10.x) or fill the Target IP field."
+        )
+
+    if tools_task is not None:
+        try:
+            tools_payload = await tools_task
+        except Exception as exc:
+            tools_payload = {"ok": False, "error": str(exc), "runs": []}
+        system_parts.append(TOOLS_BEHAVIOR_PROMPT)
+        system_parts.append(format_tools_context(tools_payload))
+
     if req.use_rag:
+        yield ("phase", "rag")
         top_k = MODE_RAG_TOP_K.get(req.mode, 3)
-        context = rag_engine.build_context(req.message, top_k=top_k)
+        context = await asyncio.to_thread(rag_engine.build_context, req.message, top_k)
         if context:
             system_parts.append(context)
 
+    system_parts = [p for p in system_parts if p]
     messages: list[dict[str, str]] = [{"role": "system", "content": "\n\n".join(system_parts)}]
-
     for msg in req.history[-20:]:
         messages.append({"role": msg.role, "content": msg.content})
-
     messages.append({"role": "user", "content": req.message})
-    return messages
+    yield ("phase", "model")
+    yield ("messages", messages)
 
 
 @app.get("/api/health")
 async def health():
-    installed = await list_installed_models() if settings.model_backend == "ollama" else []
+    installed: list[str] = []
     if settings.model_backend == "ollama":
-        backend_ready = await ollama_reachable()
+        backend_ready, installed = await fetch_ollama_tags()
         current = settings.ollama_model
         backend_status = "ready" if backend_ready and installed else "needs_model" if backend_ready else "offline"
     elif settings.model_backend == "openai_compat":
@@ -281,6 +434,8 @@ async def health():
             "unsloth": True,
             "settings": True,
             "rag": True,
+            "net_assess": settings.net_assess_enabled,
+            "local_tools": settings.local_tools_enabled,
             "modes": list(MODE_RAG_TOP_K.keys()),
         },
     }
@@ -351,12 +506,65 @@ async def hermes_status():
 
 
 @app.get("/api/search")
-async def api_search(q: str = "", limit: int = 6):
+async def api_search(q: str = "", limit: int = 8):
     """Live cybersecurity web search (for UI/debug)."""
     query = (q or "").strip()
     if not query:
         raise HTTPException(status_code=400, detail="Missing q")
     return await web_search(query, max_results=limit)
+
+
+class AssessRequest(BaseModel):
+    target: str = Field(min_length=1, max_length=253)
+    message: str = ""
+    authorized_target: bool = False
+
+
+@app.post("/api/assess")
+async def api_assess(req: AssessRequest):
+    """Light authorized/lab host assessment (private ranges or owned public with confirm)."""
+    if not settings.net_assess_enabled:
+        raise HTTPException(status_code=400, detail="Network assess disabled")
+    return await assess_from_request(
+        req.message or f"assess {req.target}",
+        target=req.target,
+        authorized=req.authorized_target,
+        allow_public=req.authorized_target,
+    )
+
+
+@app.get("/api/tools")
+async def api_tools():
+    """List built-in + PATH security tools and availability."""
+    status = list_tools_status()
+    status["enabled"] = settings.local_tools_enabled
+    status["auto"] = settings.local_tools_auto
+    status["allow_heavy"] = settings.local_tools_allow_heavy
+    return status
+
+
+class ToolsRunRequest(BaseModel):
+    target: str | None = Field(default=None, max_length=253)
+    message: str = ""
+    tools: list[str] | None = None
+    authorized_target: bool = False
+    auto: bool = False
+
+
+@app.post("/api/tools/run")
+async def api_tools_run(req: ToolsRunRequest):
+    """Run selected security tools against an authorized/lab target."""
+    if not settings.local_tools_enabled:
+        raise HTTPException(status_code=400, detail="Local tools disabled")
+    return await run_security_tools(
+        req.message or (f"run tools on {req.target}" if req.target else ""),
+        target=req.target,
+        tools=req.tools,
+        authorized=req.authorized_target,
+        allow_public=req.authorized_target,
+        auto=req.auto and not req.tools,
+        include_heavy=settings.local_tools_allow_heavy or bool(req.tools),
+    )
 
 
 @app.get("/api/finetune")
@@ -442,8 +650,46 @@ async def pull_ollama_model(req: ModelPullRequest):
 
 @app.post("/api/ingest")
 async def ingest_knowledge() -> IngestResponse:
-    count = rag_engine.ingest_directory()
+    count = rag_engine.ingest_directory(force=True)
     return IngestResponse(documents_ingested=count)
+
+
+@app.get("/api/realtime")
+async def realtime_feed():
+    """Server-Sent Events: live health + tools pulse for the ops dock."""
+
+    async def event_gen():
+        while True:
+            try:
+                snap = await health()
+                tools = list_tools_status()
+                payload = {
+                    "ts": asyncio.get_event_loop().time(),
+                    "backend": snap.get("backend"),
+                    "model": snap.get("model"),
+                    "backend_ready": snap.get("backend_ready"),
+                    "backend_status": snap.get("backend_status"),
+                    "rag_documents": snap.get("rag_documents"),
+                    "tools_available": tools.get("available_count"),
+                    "tools_total": tools.get("count"),
+                    "local_tools": settings.local_tools_enabled,
+                    "net_assess": settings.net_assess_enabled,
+                    "web_search": settings.web_search_enabled,
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
+            except Exception as exc:
+                yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            await asyncio.sleep(4)
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/api/chat")
@@ -454,20 +700,29 @@ async def chat(req: ChatRequest):
             yield guard.reason or "Request blocked."
         return StreamingResponse(refusal_stream(), media_type="text/plain; charset=utf-8")
 
-    messages = await _build_messages(req)
     response_headers: dict[str, str] = {}
 
     if settings.model_backend == "hermes":
         session_id = None if req.reset_hermes_session else (req.hermes_session_id or None)
 
         async def hermes_stream():
+            messages = None
+            yield "[[live:start]]"
+            async for kind, payload in _iter_build_messages(req):
+                if kind == "phase":
+                    yield f"[[live:{payload}]]"
+                elif kind == "messages":
+                    messages = payload
+            if not messages:
+                yield "[[live:error]]"
+                return
             async for token, sid in model_client.stream_chat_hermes(messages, session_id=session_id):
                 if sid:
                     response_headers["X-Hermes-Session-Id"] = sid
-                    # Also emit a machine marker the UI can parse if headers are opaque
                     yield f"[[hermes_session:{sid}]]"
                 if token:
                     yield token
+            yield "[[live:done]]"
 
         return StreamingResponse(
             hermes_stream(),
@@ -476,8 +731,19 @@ async def chat(req: ChatRequest):
         )
 
     async def event_stream():
+        messages = None
+        yield "[[live:start]]"
+        async for kind, payload in _iter_build_messages(req):
+            if kind == "phase":
+                yield f"[[live:{payload}]]"
+            elif kind == "messages":
+                messages = payload
+        if not messages:
+            yield "[[live:error]]"
+            return
         async for token in model_client.stream_chat(messages):
             yield token
+        yield "[[live:done]]"
 
     return StreamingResponse(event_stream(), media_type="text/plain; charset=utf-8")
 

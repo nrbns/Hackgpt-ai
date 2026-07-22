@@ -28,12 +28,18 @@ BLOCK_PATTERNS = [
 
 # Phrases that indicate authorized / educational context → never hard-block on dual-use wording
 ALLOW_CONTEXT = re.compile(
+    r"(?:"
     r"\b("
     r"lab|ctf|htb|hackthebox|tryhackme|thm|portswigger|dvwa|webgoat|juice\s*shop|"
     r"metasploitable|vulnhub|authorized|engagement|scope|pentest|red\s*team|"
-    r"blue\s*team|malware\s*analysis|sandbox|yara|sigma|detection|mitigation|"
-    r"lab\s*offensive|owned\s*vm|local\s*lab|owasp|cve-\d{4}|writeup|forensics|incident\s*response"
-    r")\b",
+    r"blue\s*team|purple\s*team|malware\s*analysis|sandbox|yara|sigma|detection|mitigation|"
+    r"lab\s*offensive|owned\s*vm|local\s*lab|owasp|cve-\d{4}|writeup|forensics|incident\s*response|"
+    r"vulnerabilit\w*|assessment|in[\s-]?scope|engagement\s*scope|"
+    r"ciso|awareness|phishing\s*simulat|gophish|knowbe4|tabletop|"
+    r"greenbone|openvas|burp|acunetix|zap|iso\s*27001|nist\s*csf|cis\s*control"
+    r")\b|"
+    r"\b(?:192\.168\.|10\.\d+\.|172\.(?:1[6-9]|2\d|3[0-1])\.)\d"
+    r")",
     re.IGNORECASE,
 )
 

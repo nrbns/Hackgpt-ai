@@ -61,28 +61,30 @@ RECOMMENDED_MODELS = [
 ]
 
 
-async def ollama_reachable() -> bool:
+async def fetch_ollama_tags(timeout_sec: float = 2.5) -> tuple[bool, list[str]]:
+    """Single /api/tags call → (reachable, model names)."""
     url = f"{settings.ollama_base_url.rstrip('/')}/api/tags"
-    timeout = httpx.Timeout(connect=1.5, read=2.0, write=2.0, pool=2.0)
+    timeout = httpx.Timeout(connect=min(1.5, timeout_sec), read=timeout_sec, write=2.0, pool=2.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            return (await client.get(url)).status_code == 200
+            response = await client.get(url)
+            if response.status_code != 200:
+                return False, []
+            data = response.json()
+            models = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+            return True, models
     except httpx.HTTPError:
-        return False
+        return False, []
+
+
+async def ollama_reachable() -> bool:
+    ok, _ = await fetch_ollama_tags()
+    return ok
 
 
 async def list_installed_models() -> list[str]:
-    url = f"{settings.ollama_base_url.rstrip('/')}/api/tags"
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(url)
-            if response.status_code != 200:
-                return []
-            data = response.json()
-            return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
-    except httpx.HTTPError:
-        return []
-
+    _, models = await fetch_ollama_tags(timeout_sec=8.0)
+    return models
 
 async def pull_model(model_name: str) -> AsyncIterator[str]:
     """Stream pull progress from Ollama."""
