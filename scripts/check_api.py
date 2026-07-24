@@ -1,4 +1,4 @@
-"""Verify all PentestGPT APIs load real data."""
+"""Verify all SecuraIQ APIs load real data."""
 
 from __future__ import annotations
 

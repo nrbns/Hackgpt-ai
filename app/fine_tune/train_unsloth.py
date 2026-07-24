@@ -1,5 +1,5 @@
 """
-Unsloth LoRA fine-tuning for PentestGPT (ethical security Q&A only).
+Unsloth LoRA fine-tuning for SecuraIQ (ethical security Q&A only).
 
 https://github.com/unslothai/unsloth
 
@@ -168,7 +168,7 @@ def run_unsloth_training(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Fine-tune PentestGPT with Unsloth")
+    parser = argparse.ArgumentParser(description="Fine-tune SecuraIQ with Unsloth")
     parser.add_argument("--model", default=None, help="Base model (Unsloth or HF id)")
     parser.add_argument("--output", default=None)
     parser.add_argument("--epochs", type=int, default=1)

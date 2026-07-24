@@ -242,6 +242,13 @@ AUTO_LIGHT_TOOLS = (
     "rustscan",
 )
 
+# Awareness / phishing mode — no port scanning; DNS + lure review only
+AWARENESS_AUTO_TOOLS = (
+    "phishing_url",
+    "email_auth",
+    "suite_guide",
+)
+
 
 def resolve_binary(spec: ToolSpec) -> str | None:
     if spec.kind == "builtin":
@@ -263,6 +270,12 @@ def is_available(tool_id: str) -> bool:
 
 
 def list_tools_status() -> dict:
+    import time
+
+    cache = getattr(list_tools_status, "_cache", None)
+    now = time.monotonic()
+    if cache and (now - cache["ts"]) < 45:
+        return cache["payload"]
     tools = []
     available = 0
     for tid, spec in TOOL_CATALOG.items():
@@ -282,9 +295,12 @@ def list_tools_status() -> dict:
                 "binary": resolve_binary(spec) if spec.kind == "external" else "builtin",
             }
         )
-    return {
+    payload = {
+        "tools": tools,
         "count": len(tools),
         "available_count": available,
-        "tools": tools,
         "auto_light": list(AUTO_LIGHT_TOOLS),
+        "auto_awareness": list(AWARENESS_AUTO_TOOLS),
     }
+    list_tools_status._cache = {"ts": now, "payload": payload}
+    return payload

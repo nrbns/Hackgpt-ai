@@ -1,0 +1,19 @@
+{
+  "id": "pci_dss",
+  "name": "PCI DSS v4.0 (control subset)",
+  "version": "4.0",
+  "controls": [
+    {"id": "1.2", "title": "Network security controls", "domain": "Network", "keywords": ["firewall", "network segmentation", "CDE", "DMZ"]},
+    {"id": "2.2", "title": "Secure configuration of system components", "domain": "Config", "keywords": ["hardening", "baseline", "default passwords", "CIS"]},
+    {"id": "3.5", "title": "Protect stored account data", "domain": "Data", "keywords": ["encryption at rest", "PAN", "cardholder", "key management"]},
+    {"id": "4.2", "title": "Protect PAN with strong cryptography during transmission", "domain": "Data", "keywords": ["TLS", "transmission", "encryption in transit"]},
+    {"id": "5.2", "title": "Malware protection", "domain": "Malware", "keywords": ["antivirus", "EDR", "malware", "endpoint"]},
+    {"id": "6.3", "title": "Secure software development", "domain": "AppSec", "keywords": ["SDLC", "code review", "OWASP", "secure coding"]},
+    {"id": "6.4", "title": "Public-facing web application protection", "domain": "AppSec", "keywords": ["WAF", "web application", "vulnerability scan"]},
+    {"id": "7.2", "title": "Access control — least privilege", "domain": "Access", "keywords": ["least privilege", "role based", "access review"]},
+    {"id": "8.3", "title": "Strong authentication for users and administrators", "domain": "Access", "keywords": ["MFA", "authentication", "password", "SSO"]},
+    {"id": "10.2", "title": "Audit logs", "domain": "Logging", "keywords": ["audit log", "logging", "SIEM", "retention"]},
+    {"id": "11.3", "title": "External and internal vulnerability scanning", "domain": "Vuln", "keywords": ["vulnerability scan", "ASV", "penetration test"]},
+    {"id": "12.1", "title": "Information security policy", "domain": "Policy", "keywords": ["security policy", "policy review", "acknowledged"]}
+  ]
+}

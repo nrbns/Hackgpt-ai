@@ -1,0 +1,19 @@
+{
+  "id": "soc2",
+  "name": "SOC 2 Trust Services Criteria (subset)",
+  "version": "2017",
+  "controls": [
+    {"id": "CC1.1", "title": "COSO principles — integrity and ethical values", "domain": "CC1", "keywords": ["ethics", "integrity", "code of conduct", "tone at the top"]},
+    {"id": "CC2.1", "title": "Information and communication", "domain": "CC2", "keywords": ["communication", "policies", "awareness", "reporting"]},
+    {"id": "CC3.1", "title": "Risk assessment process", "domain": "CC3", "keywords": ["risk assessment", "risk register", "threat", "likelihood"]},
+    {"id": "CC5.1", "title": "Control activities", "domain": "CC5", "keywords": ["control activities", "procedures", "approvals"]},
+    {"id": "CC6.1", "title": "Logical and physical access", "domain": "CC6", "keywords": ["access control", "MFA", "least privilege", "physical access"]},
+    {"id": "CC6.6", "title": "Security boundaries and encryption", "domain": "CC6", "keywords": ["encryption", "TLS", "network boundary", "firewall"]},
+    {"id": "CC7.1", "title": "System monitoring", "domain": "CC7", "keywords": ["monitoring", "SIEM", "alerting", "logging"]},
+    {"id": "CC7.2", "title": "Incident response", "domain": "CC7", "keywords": ["incident response", "IR plan", "containment"]},
+    {"id": "CC8.1", "title": "Change management", "domain": "CC8", "keywords": ["change management", "CAB", "deployment", "release"]},
+    {"id": "CC9.1", "title": "Risk mitigation — vendors", "domain": "CC9", "keywords": ["vendor", "third party", "supplier", "TPRM"]},
+    {"id": "A1.1", "title": "Availability commitments", "domain": "Availability", "keywords": ["availability", "uptime", "SLA", "capacity"]},
+    {"id": "C1.1", "title": "Confidentiality commitments", "domain": "Confidentiality", "keywords": ["confidentiality", "NDA", "data classification"]}
+  ]
+}

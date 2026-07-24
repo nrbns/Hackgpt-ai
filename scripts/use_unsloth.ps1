@@ -10,7 +10,7 @@ if ($content -notmatch "(?m)^UNSLOTH_MODEL=") {
     $content = $content.TrimEnd() + "`r`nUNSLOTH_MODEL=unsloth/Qwen2.5-0.5B-Instruct-bnb-4bit`r`n"
 }
 if ($content -notmatch "(?m)^UNSLOTH_ADAPTER_DIR=") {
-    $content = $content.TrimEnd() + "`r`nUNSLOTH_ADAPTER_DIR=./models/pentestgpt-unsloth`r`n"
+    $content = $content.TrimEnd() + "`r`nUNSLOTH_ADAPTER_DIR=./models/securaiq-unsloth`r`n"
 }
 if ($content -notmatch "(?m)^UNSLOTH_MAX_SEQ_LENGTH=") {
     $content = $content.TrimEnd() + "`r`nUNSLOTH_MAX_SEQ_LENGTH=2048`r`n"
@@ -23,7 +23,7 @@ if ($content -notmatch "(?m)^HF_TOKEN=") {
 }
 $content = $content -replace "(?m)^MODEL_BACKEND=.*", "MODEL_BACKEND=unsloth"
 $content = $content -replace "(?m)^UNSLOTH_MODEL=.*", "UNSLOTH_MODEL=unsloth/Qwen2.5-0.5B-Instruct-bnb-4bit"
-$content = $content -replace "(?m)^UNSLOTH_ADAPTER_DIR=.*", "UNSLOTH_ADAPTER_DIR=./models/pentestgpt-unsloth"
+$content = $content -replace "(?m)^UNSLOTH_ADAPTER_DIR=.*", "UNSLOTH_ADAPTER_DIR=./models/securaiq-unsloth"
 $content = $content -replace "(?m)^UNSLOTH_MAX_SEQ_LENGTH=.*", "UNSLOTH_MAX_SEQ_LENGTH=2048"
 $content = $content -replace "(?m)^UNSLOTH_LOAD_IN_4BIT=.*", "UNSLOTH_LOAD_IN_4BIT=true"
 Set-Content ".env" -Value $content -NoNewline

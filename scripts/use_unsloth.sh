@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 set_env_value MODEL_BACKEND unsloth
 set_env_value UNSLOTH_MODEL unsloth/Qwen2.5-0.5B-Instruct-bnb-4bit
-set_env_value UNSLOTH_ADAPTER_DIR ./models/pentestgpt-unsloth
+set_env_value UNSLOTH_ADAPTER_DIR ./models/securaiq-unsloth
 set_env_value UNSLOTH_MAX_SEQ_LENGTH 2048
 set_env_value UNSLOTH_LOAD_IN_4BIT true
 # Ensure key exists (blank = unset)

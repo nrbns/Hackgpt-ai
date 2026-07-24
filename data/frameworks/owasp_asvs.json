@@ -1,0 +1,19 @@
+{
+  "id": "owasp_asvs",
+  "name": "OWASP ASVS 4.0 (level 1 subset)",
+  "version": "4.0",
+  "controls": [
+    {"id": "V1.1", "title": "Secure software development lifecycle", "domain": "Architecture", "keywords": ["SDLC", "threat model", "security requirements"]},
+    {"id": "V2.1", "title": "Password security", "domain": "Authentication", "keywords": ["password", "hashing", "bcrypt", "argon2"]},
+    {"id": "V2.2", "title": "General authenticator security", "domain": "Authentication", "keywords": ["MFA", "authenticator", "OTP", "WebAuthn"]},
+    {"id": "V3.1", "title": "Session management", "domain": "Session", "keywords": ["session", "cookie", "timeout", "logout"]},
+    {"id": "V4.1", "title": "General access control", "domain": "Access", "keywords": ["authorization", "IDOR", "access control", "RBAC"]},
+    {"id": "V5.1", "title": "Input validation", "domain": "Validation", "keywords": ["input validation", "injection", "XSS", "sanitization"]},
+    {"id": "V5.3", "title": "Output encoding and injection prevention", "domain": "Validation", "keywords": ["output encoding", "SQL injection", "command injection"]},
+    {"id": "V7.1", "title": "Log content", "domain": "Logging", "keywords": ["security logging", "audit", "failed login"]},
+    {"id": "V8.1", "title": "General data protection", "domain": "Data", "keywords": ["PII", "data protection", "encryption", "retention"]},
+    {"id": "V9.1", "title": "Communications security", "domain": "Network", "keywords": ["TLS", "HTTPS", "certificate", "HSTS"]},
+    {"id": "V10.1", "title": "Malicious code detection", "domain": "Malware", "keywords": ["malware", "dependency scan", "SCA"]},
+    {"id": "V14.1", "title": "Build and configuration", "domain": "Config", "keywords": ["secure defaults", "hardening", "secrets management"]}
+  ]
+}

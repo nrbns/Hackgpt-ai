@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Ollama setup helper for PentestGPT (Linux/macOS)
+# Ollama setup helper for SecuraIQ (Linux/macOS)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/common.sh
 
-echo "PentestGPT Ollama Setup"
+echo "SecuraIQ Ollama Setup"
 echo ""
 
 if ! command -v ollama >/dev/null 2>&1; then
@@ -30,5 +30,5 @@ set_env_value OLLAMA_MODEL tinyllama
 echo ""
 echo "Configured .env for Ollama + tinyllama."
 echo "Optional larger models: ollama pull mistral | ollama pull llama3"
-echo "Start PentestGPT: bash scripts/start.sh"
+echo "Start SecuraIQ: bash scripts/start.sh"
 echo "Open: http://localhost:8080"

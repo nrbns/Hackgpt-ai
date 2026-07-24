@@ -69,11 +69,32 @@ async def probe_backends() -> dict[str, Any]:
         },
     }
 
-    # Prefer live remote/local servers, then local-in-process fallbacks
-    preference = ["ollama", "hermes", "openai_compat", "huggingface", "unsloth"]
+    from app.model_router import CLOUD_PROVIDERS, cloud_key_configured
+
+    for pid in CLOUD_PROVIDERS:
+        keyed = cloud_key_configured(pid)
+        backends[pid] = {
+            "ready": keyed,
+            "reachable": keyed,
+            "detail": "ready" if keyed else "needs_key",
+        }
+
+    # Prefer live remote/local servers, then keyed cloud, then in-process fallbacks
+    preference = [
+        "ollama",
+        "hermes",
+        "openai_compat",
+        "openrouter",
+        "openai",
+        "groq",
+        "together",
+        "fireworks",
+        "huggingface",
+        "unsloth",
+    ]
     recommended = None
     for name in preference:
-        if backends[name]["ready"]:
+        if backends.get(name, {}).get("ready"):
             recommended = name
             break
 

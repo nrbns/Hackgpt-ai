@@ -18,22 +18,30 @@ from app.config import settings
 from app.net_assess import extract_targets, resolve_and_authorize
 from app.tools.registry import (
     AUTO_LIGHT_TOOLS,
+    AWARENESS_AUTO_TOOLS,
     TOOL_CATALOG,
     is_available,
     resolve_binary,
 )
 
 _CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
+_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
+_DOMAIN_RE = re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b", re.I)
+_AWARENESS_HINT_RE = re.compile(
+    r"\b(phish(?:ing)?|awareness|lure|gophish|knowbe4|spf|dkim|dmarc|"
+    r"email\s*auth|simulation|vishing|smishing|red\s*flags?|spear.?phish)\b",
+    re.IGNORECASE,
+)
 _TOOL_WORD_RE = re.compile(
     r"\b(nmap|nikto|nuclei|whatweb|gobuster|ffuf|sslscan|sslyze|dig|whois|curl|"
     r"traceroute|tracert|ping|openssl|wafw00f|ports?|dns|tls|http|robots|tech|"
     r"cve_lookup|headers?(?:\s+security)?|zap|zaproxy|sqlmap|wpscan|masscan|"
     r"rustscan|openvas|greenbone|gvm|burp|acunetix|email_auth|phishing_url|suite_guide|"
-    r"spf|dmarc)\b",
+    r"spf|dmarc|dkim|phish(?:ing)?|awareness)\b",
     re.IGNORECASE,
 )
 _RUN_HINT_RE = re.compile(
-    r"\b(run|use|execute|launch|scan\s+with|probe\s+with|tools?\s*:)\b",
+    r"\b(run|use|execute|launch|scan\s+with|probe\s+with|tools?\s*:|review|check)\b",
     re.IGNORECASE,
 )
 
@@ -55,9 +63,12 @@ def parse_tool_request(
     explicit: list[str] | None = None,
     auto: bool = False,
     include_heavy: bool = False,
+    mode: str | None = None,
 ) -> list[str]:
     """Decide which tools to run from UI list, message instructions, or auto set."""
     selected: list[str] = []
+    mode_l = (mode or "").lower()
+    awareness_mode = mode_l in {"awareness", "ciso", "tabletop"}
 
     if explicit:
         for t in explicit:
@@ -90,6 +101,10 @@ def parse_tool_request(
             "acunetix": "suite_guide",
             "spf": "email_auth",
             "dmarc": "email_auth",
+            "dkim": "email_auth",
+            "phish": "phishing_url",
+            "phishing": "phishing_url",
+            "awareness": "phishing_url",
         }.get(raw, raw.replace(" ", "_"))
         if alias in TOOL_CATALOG:
             mentioned.append(alias)
@@ -103,11 +118,23 @@ def parse_tool_request(
         selected.extend(mentioned)
 
     if auto and not selected:
-        for tid in AUTO_LIGHT_TOOLS:
+        preset = AWARENESS_AUTO_TOOLS if awareness_mode else AUTO_LIGHT_TOOLS
+        for tid in preset:
             spec = TOOL_CATALOG[tid]
             if spec.heavy and not include_heavy:
                 continue
             selected.append(tid)
+
+    # Power awareness tools across every mode when the message clearly asks
+    if _URL_RE.search(message or "") and "phishing_url" not in selected:
+        selected.insert(0, "phishing_url")
+    if _AWARENESS_HINT_RE.search(message or ""):
+        if "phishing_url" not in selected:
+            selected.append("phishing_url")
+        if "email_auth" not in selected and (
+            _DOMAIN_RE.search(message or "") or awareness_mode
+        ):
+            selected.append("email_auth")
 
     # Always attach cve_lookup if CVEs present
     if _CVE_RE.search(message or "") and "cve_lookup" not in selected:
@@ -196,7 +223,7 @@ async def _http_get(url: str) -> tuple[httpx.Response | None, str]:
     timeout = httpx.Timeout(connect=1.0, read=4.0, write=2.0, pool=2.0)
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=False) as client:
-            r = await client.get(url, headers={"User-Agent": "HackGPT-Tools/1.0"})
+            r = await client.get(url, headers={"User-Agent": "SecuraIQ-Tools/1.0"})
             return r, ""
     except Exception as exc:
         return None, str(exc)
@@ -381,7 +408,7 @@ async def _tool_cve_lookup(message: str) -> dict[str, Any]:
                 r = await client.get(
                     "https://services.nvd.nist.gov/rest/json/cves/2.0",
                     params={"cveId": cve.upper()},
-                    headers={"User-Agent": "HackGPT-Tools/1.0"},
+                    headers={"User-Agent": "SecuraIQ-Tools/1.0"},
                 )
                 if r.status_code != 200:
                     lines.append(f"{cve}: HTTP {r.status_code}")
@@ -406,10 +433,6 @@ async def _tool_cve_lookup(message: str) -> dict[str, Any]:
             except Exception as exc:
                 lines.append(f"{cve}: {exc}")
     return {"ok": True, "output": "\n".join(lines)}
-
-
-_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
-_DOMAIN_RE = re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b", re.I)
 
 
 async def _tool_email_auth(target: str) -> dict[str, Any]:
@@ -619,7 +642,7 @@ async def _run_external(tool_id: str, target: str, ip: str, open_ports: list[int
 
 
 def _ensure_mini_wordlist() -> Path:
-    path = Path(settings.chroma_persist_dir).resolve().parent / "wordlists" / "hackgpt-mini.txt"
+    path = Path(settings.chroma_persist_dir).resolve().parent / "wordlists" / "securaiq-mini.txt"
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text("\n".join(_DIR_WORDS) + "\n", encoding="utf-8")
@@ -635,6 +658,7 @@ async def run_security_tools(
     allow_public: bool = False,
     auto: bool = False,
     include_heavy: bool = False,
+    mode: str | None = None,
 ) -> dict[str, Any]:
     if not settings.local_tools_enabled:
         return {"ok": False, "error": "Local tools disabled", "runs": []}
@@ -644,14 +668,27 @@ async def run_security_tools(
         explicit=tools,
         auto=auto,
         include_heavy=include_heavy,
+        mode=mode,
     )
     if not tool_ids:
         return {"ok": False, "error": "No tools selected", "runs": []}
 
+    awareness_only = all(
+        tid in {"phishing_url", "email_auth", "suite_guide", "cve_lookup"} for tid in tool_ids
+    )
     targets = extract_targets(message, target)
+    # Prefer domain from message for SPF/DMARC when no explicit IP target
+    if "email_auth" in tool_ids and not targets:
+        for m in _DOMAIN_RE.finditer(message or ""):
+            d = m.group(0).lower()
+            if d not in {"example.com", "localhost"} and not d.endswith(".local"):
+                targets = [d]
+                break
+    if target and not targets:
+        targets = [target.strip()]
+
     needs_target = any(TOOL_CATALOG[t].needs_target for t in tool_ids if t in TOOL_CATALOG)
     if needs_target and not targets:
-        # Allow CVE-only tools
         non_target = [t for t in tool_ids if t in TOOL_CATALOG and not TOOL_CATALOG[t].needs_target]
         if non_target:
             tool_ids = non_target
@@ -667,22 +704,39 @@ async def run_security_tools(
     runs: list[dict[str, Any]] = []
     open_ports: list[int] = []
 
-    # Host authorization (first target)
+    # Host authorization (first target) — skip for awareness-only DNS/URL tools on public domains
     meta = None
     ip = ""
     host = ""
     if targets:
         host = targets[0]
-        meta = resolve_and_authorize(host, authorized=authorized, allow_public=allow_public)
-        if not meta.get("ok"):
-            return {
-                "ok": False,
-                "error": meta.get("error") or "Target not authorized",
-                "runs": [],
-                "requested": tool_ids,
-                "target": host,
-            }
-        ip = meta["ip"]
+        if awareness_only and "email_auth" in tool_ids:
+            # Passive DNS TXT (SPF/DMARC) for awareness — no port scan auth required
+            meta = {"ok": True, "ip": "", "private": None}
+            ip = ""
+        else:
+            meta = resolve_and_authorize(
+                host,
+                authorized=authorized or awareness_only,
+                allow_public=allow_public or awareness_only,
+            )
+            if not meta.get("ok"):
+                # Still allow phishing_url / suite_guide without a live host
+                soft = [t for t in tool_ids if t in {"phishing_url", "suite_guide", "cve_lookup"}]
+                if soft and not any(TOOL_CATALOG[t].needs_target for t in soft):
+                    tool_ids = soft
+                    host = ""
+                    meta = None
+                else:
+                    return {
+                        "ok": False,
+                        "error": meta.get("error") or "Target not authorized",
+                        "runs": [],
+                        "requested": tool_ids,
+                        "target": host,
+                    }
+            else:
+                ip = meta.get("ip") or ""
 
     # Prefer ports first when present
     ordered = sorted(tool_ids, key=lambda t: 0 if t == "ports" else 1)
@@ -699,9 +753,12 @@ async def run_security_tools(
                 result = await _tool_phishing_url(message)
             elif tid == "suite_guide":
                 result = await _tool_suite_guide()
-            elif not ip and tid == "email_auth":
-                # allow domain in target field even if resolve failed earlier — handled below
-                result = {"ok": False, "error": "no target", "output": ""}
+            elif tid == "email_auth":
+                domain = host if host and not re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host) else ""
+                if not domain:
+                    m = _DOMAIN_RE.search(message or "")
+                    domain = m.group(0) if m else (target or "")
+                result = await _tool_email_auth(domain or host or "")
             elif not ip:
                 result = {"ok": False, "error": "no target", "output": ""}
             elif tid == "ports":
@@ -721,10 +778,6 @@ async def run_security_tools(
                 result = await _tool_tech(ip, open_ports)
             elif tid == "whois":
                 result = await _tool_whois(host, ip)
-            elif tid == "email_auth":
-                # Prefer hostname/domain if not an IP
-                domain = host if not re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host) else host
-                result = await _tool_email_auth(domain)
             elif spec.kind == "external":
                 if not is_available(tid):
                     result = {"ok": False, "error": "not installed on PATH", "output": ""}

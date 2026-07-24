@@ -1,9 +1,9 @@
-# One-command setup + start for PentestGPT (Windows)
+# One-command setup + start for SecuraIQ (Windows)
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location (Join-Path $root "..")
 
-Write-Host "PentestGPT setup" -ForegroundColor Cyan
+Write-Host "SecuraIQ setup" -ForegroundColor Cyan
 
 if (-not (Test-Path ".venv")) {
     Write-Host "Creating virtual environment..."
@@ -47,5 +47,5 @@ foreach ($conn in $portUsers) {
 }
 
 Write-Host ""
-Write-Host "Starting PentestGPT at http://localhost:8080" -ForegroundColor Green
+Write-Host "Starting SecuraIQ at http://localhost:8080" -ForegroundColor Green
 & .\.venv\Scripts\python run.py

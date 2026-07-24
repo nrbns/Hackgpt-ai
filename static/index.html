@@ -7,20 +7,20 @@
   <meta name="color-scheme" content="light dark" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <meta name="apple-mobile-web-app-title" content="HackGPT" />
+  <meta name="apple-mobile-web-app-title" content="SecuraIQ" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="description" content="HackGPT — local security AI for authorized pentesting, CTFs, and blue-team workflows." />
+  <meta name="description" content="SecuraIQ — AI Security Operating System for posture, compliance, risk, vulns, and authorized security workflows." />
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" href="/icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="/icon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
-  <title>HackGPT</title>
+  <title>SecuraIQ — AI Security OS</title>
   <script>
     (function () {
       try {
-        var key = "hackgpt.theme";
+        var key = "securaiq.theme";
         var t = localStorage.getItem(key);
         if (t !== "light" && t !== "dark") {
           t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -31,115 +31,156 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/style.css?v=17" />
+  <link rel="stylesheet" href="/style.css?v=51" />
   <script src="/vendor/marked.min.js"></script>
 </head>
 <body>
   <div class="shell">
-    <aside class="sidebar" id="sidebar" aria-label="Workspace">
+    <aside class="sidebar" id="sidebar" aria-label="Security command center">
       <div class="sidebar-brand">
-        <div class="brand-mark" aria-hidden="true"><span>H</span></div>
+        <div class="brand-mark" aria-hidden="true"><span>S</span></div>
         <div class="brand-copy">
-          <p class="brand-name">HackGPT</p>
-          <p class="brand-tag">Authorized security AI</p>
+          <p class="brand-name">SecuraIQ</p>
+          <p class="brand-tag">AI Security OS</p>
         </div>
       </div>
 
-      <button id="newChatBtn" type="button" class="btn-new-chat">
-        <span class="btn-new-chat-plus" aria-hidden="true">+</span>
-        New chat
-      </button>
+      <nav class="side-nav" aria-label="Primary">
+        <button type="button" class="nav-item active" data-view="command" id="navCommand">
+          <span class="nav-item-label">Mission Control</span>
+        </button>
+        <button type="button" class="nav-item" data-view="chat" id="navChat">
+          <span class="nav-item-label">AI Workspace</span>
+        </button>
+        <button id="newChatBtn" type="button" class="nav-subaction">+ New conversation</button>
+      </nav>
+
+      <nav class="side-nav nav-group" aria-label="Security" data-nav-group>
+        <button type="button" class="nav-group-toggle" aria-expanded="true">Security</button>
+        <div class="nav-group-body">
+          <button type="button" class="nav-link" id="assetBtn" data-workspace="assets">Assets</button>
+          <button type="button" class="nav-link" id="vulnBtn" data-workspace="vulns">Vulnerabilities</button>
+          <button type="button" class="nav-link" data-workspace="intel">Threat intel</button>
+          <button type="button" class="nav-link" data-workspace="soc">Incidents</button>
+          <button type="button" class="nav-link" id="playbookBtn" data-workspace="playbooks">Playbooks</button>
+          <button type="button" class="nav-link" id="campaignBtn" data-workspace="campaigns">Campaigns</button>
+        </div>
+      </nav>
+
+      <nav class="side-nav nav-group" aria-label="Compliance" data-nav-group>
+        <button type="button" class="nav-group-toggle" aria-expanded="true">Compliance</button>
+        <div class="nav-group-body">
+          <button type="button" class="nav-link" id="frameworksBtn" data-workspace="frameworks">Frameworks</button>
+          <button type="button" class="nav-link" id="gapBtn">Gap analysis</button>
+          <button type="button" class="nav-link" id="remBtn" data-workspace="remediations">Controls</button>
+          <button type="button" class="nav-link" id="navEvidence" data-workspace="evidence">Evidence</button>
+          <button type="button" class="nav-link" id="navPolicies" data-view="chat" data-mode="ciso" data-prompt="Draft an information security policy outline mapped to ISO 27001 with evidence checklist">Policies</button>
+        </div>
+      </nav>
+
+      <nav class="side-nav nav-group" aria-label="Risk" data-nav-group>
+        <button type="button" class="nav-group-toggle" aria-expanded="true">Risk</button>
+        <div class="nav-group-body">
+          <button type="button" class="nav-link" id="riskBtn" data-workspace="risks">Risk register</button>
+          <button type="button" class="nav-link" id="riskMatrixBtn" data-view="command" data-scroll="ccHeatMap">Risk matrix</button>
+          <button type="button" class="nav-link" data-workspace="graph">Knowledge graph</button>
+        </div>
+      </nav>
+
+      <nav class="side-nav nav-group" aria-label="Development" data-nav-group>
+        <button type="button" class="nav-group-toggle" aria-expanded="false">Development</button>
+        <div class="nav-group-body">
+          <button type="button" class="nav-link" data-view="chat" data-mode="appsec" data-prompt="Review attached or pasted code for OWASP Top 10 risks and cite concrete remediations">Code review</button>
+          <button type="button" class="nav-link" data-view="chat" data-mode="appsec" data-prompt="How do I scan our repo for secrets safely in CI?">Secrets</button>
+          <button type="button" class="nav-link" data-view="chat" data-mode="appsec" data-prompt="Dependency risk triage checklist for a Node/Python app">Dependencies</button>
+        </div>
+      </nav>
+
+      <nav class="side-nav nav-group" aria-label="Automation &amp; reports" data-nav-group>
+        <button type="button" class="nav-group-toggle" aria-expanded="false">Automation &amp; reports</button>
+        <div class="nav-group-body">
+          <button type="button" class="nav-link" data-view="chat" data-mode="ciso" data-prompt="Design an automation workflow: scan import -> AI triage -> assign owner -> export report">Workflows</button>
+          <button type="button" class="nav-link" id="reportsBtn" data-workspace="reports" title="Reports hub">Reports</button>
+          <button type="button" class="nav-link" id="exportMdBtn" title="Export current chat as Markdown">Export chat</button>
+          <button type="button" class="nav-link" id="dashboardBtn" data-view="command">Operations board</button>
+        </div>
+      </nav>
+
+      <nav class="side-nav nav-group" aria-label="Administration" data-nav-group>
+        <button type="button" class="nav-group-toggle" aria-expanded="false">Administration</button>
+        <div class="nav-group-body">
+          <button type="button" class="nav-link" id="orgsBtn" data-workspace="orgs">Organizations</button>
+          <button type="button" class="nav-link" data-workspace="integrations">Integrations</button>
+          <button type="button" class="nav-link" data-workspace="billing">Billing</button>
+          <button type="button" class="nav-link" id="settingsBtnNav" data-open-settings>Settings</button>
+          <button type="button" class="nav-link" id="authBtnNav" data-open-auth>Users / Account</button>
+          <button type="button" class="nav-link" id="uploadBtnNav" data-open-upload>Upload evidence</button>
+        </div>
+      </nav>
+
+      <div class="sidebar-section engagement-block">
+        <div class="section-head">
+          <p class="sidebar-label">Project</p>
+          <button id="newEngagementBtn" type="button" class="linkish" title="Create engagement">+ New</button>
+        </div>
+        <select id="engagementSelect" title="Engagement / project">
+          <option value="">Local workspace</option>
+        </select>
+      </div>
 
       <div class="sidebar-section chat-history-section">
-        <p class="sidebar-label">Chats</p>
+        <p class="sidebar-label">Recent AI chats</p>
         <div id="chatList" class="chat-list" role="list"></div>
       </div>
 
-      <div class="sidebar-section">
-        <p class="sidebar-label">Mode</p>
-        <select id="mode" title="Mode">
-          <option value="default">Default</option>
-          <option value="ctf">CTF Mode</option>
-          <option value="lab">Lab Mode</option>
-          <option value="redteam">Red Team Lab</option>
-          <option value="blueteam">Blue Team</option>
-          <option value="malware">Malware Analysis</option>
-          <option value="research">Research Search</option>
-          <option value="lab_offensive">Lab Offensive</option>
-          <option value="assess">Vuln Assessment</option>
-          <option value="ciso">CISO / GRC</option>
-          <option value="awareness">Awareness / Phishing</option>
-        </select>
-      </div>
-
-      <div class="sidebar-section" id="controls">
-        <p class="sidebar-label">Model</p>
-        <select id="backend" title="Model backend">
-          <option value="ollama">Ollama</option>
-          <option value="openai_compat">LM Studio</option>
-          <option value="hermes">Hermes Agent</option>
-          <option value="unsloth">Unsloth</option>
-          <option value="huggingface">Hugging Face</option>
-        </select>
-        <select id="model" title="Model">
-          <option value="">Loading models…</option>
-        </select>
-        <label class="field-label" for="targetIp">Target IP / host
-          <input type="text" id="targetIp" class="target-input" placeholder="192.168.56.101 or 10.10.10.x" autocomplete="off" spellcheck="false" />
-        </label>
-        <label class="toggle">
-          <input type="checkbox" id="useRag" checked />
-          Use RAG knowledge
-        </label>
-        <label class="toggle">
-          <input type="checkbox" id="useWebSearch" />
-          Live web search
-        </label>
-        <label class="toggle">
-          <input type="checkbox" id="useNetAssess" />
-          Probe target (lab/owned)
-        </label>
-        <label class="toggle">
-          <input type="checkbox" id="useLocalTools" checked />
-          Security tools (auto / on instruct)
-        </label>
-        <label class="toggle">
-          <input type="checkbox" id="authorizedTarget" />
-          I own / authorized this target
-        </label>
-        <p id="toolsStatus" class="tools-status" title="Built-in tools always work; PATH tools when installed">Tools: …</p>
-        <span id="status" class="status">Connecting…</span>
-      </div>
-
-      <div class="sidebar-actions">
-        <button id="themeToggle" type="button" class="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle theme">
-          <span class="theme-toggle-icon" aria-hidden="true"></span>
-          <span id="themeToggleLabel">Dark mode</span>
-        </button>
-        <button id="settingsBtn" type="button" class="btn-sidebar" title="API keys &amp; backend settings">Settings</button>
-        <button id="hermesNewSession" type="button" class="btn-sidebar hidden" title="Start a new Hermes Agent session">New Hermes</button>
-        <button id="ingestRag" type="button" class="btn-sidebar" title="Re-index knowledge base">Re-index RAG</button>
-        <button id="preloadModel" type="button" class="btn-sidebar hidden" title="Preload local model">Preload</button>
-        <button id="trainUnsloth" type="button" class="btn-sidebar hidden" title="Fine-tune with Unsloth">Train</button>
-        <button id="pullModel" type="button" class="btn-sidebar" title="Pull selected model via Ollama">Pull model</button>
+      <div class="sidebar-footer">
+        <div class="footer-row">
+          <button id="themeToggle" type="button" class="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle theme">
+            <span class="theme-toggle-icon" aria-hidden="true"></span>
+            <span id="themeToggleLabel">Dark mode</span>
+          </button>
+        </div>
+        <div class="footer-grid">
+          <button id="settingsBtn" type="button" class="btn-sidebar" title="Settings">Settings</button>
+          <button id="authBtn" type="button" class="btn-sidebar" title="Account">Account</button>
+          <button id="uploadBtn" type="button" class="btn-sidebar" title="Upload">Upload</button>
+        </div>
+        <input id="fileUploadInput" type="file" class="hidden" multiple accept=".md,.txt,.pdf,.json,.csv,.log,.xml,.html,.htm,.py,.js,.ts,.java,.go,.rs,.yml,.yaml,.toml,.png,.jpg,.jpeg,.gif,.webp,.svg,.zip,image/*,text/*" />
+        <p class="sidebar-refuse">Authorized labs &amp; GRC only - no crimeware modes.</p>
+        <p class="sidebar-legal">
+          <a href="/legal/" target="_blank" rel="noopener">Legal</a>
+          · <a href="/legal/privacy.html" target="_blank" rel="noopener">Privacy</a>
+          · <a href="/legal/ai-usage.html" target="_blank" rel="noopener">AI limits</a>
+        </p>
+        <p class="sidebar-alpha hint">Private alpha · not enterprise launch-ready</p>
       </div>
     </aside>
 
     <div class="main">
-      <header class="topbar">
+      <header class="topbar topbar-enterprise">
         <button id="menuToggle" type="button" class="icon-btn" aria-expanded="false" aria-controls="sidebar" title="Open menu">
           <span class="icon-menu" aria-hidden="true"></span>
         </button>
         <div class="topbar-brand">
-          <span class="topbar-name" id="topbarChatTitle">HackGPT</span>
-          <span id="topbarMode" class="topbar-mode">Default</span>
+          <span class="topbar-name" id="topbarChatTitle">Mission Control</span>
+          <span id="topbarMode" class="topbar-mode">Security OS</span>
         </div>
-        <button id="themeToggleTop" type="button" class="icon-btn theme-btn" title="Toggle theme" aria-label="Toggle theme">
-          <span class="theme-toggle-icon" aria-hidden="true"></span>
-        </button>
-        <button id="topSettingsBtn" type="button" class="icon-btn" title="Settings" aria-label="Settings">
-          <span class="icon-gear" aria-hidden="true"></span>
-        </button>
+        <div class="topbar-search-wrap">
+          <input id="globalSearch" type="search" class="topbar-search" placeholder="Search assets, CVEs, risks, controls..." autocomplete="off" />
+          <div id="searchResults" class="search-results hidden" role="listbox" aria-label="Search results"></div>
+        </div>
+        <nav class="topbar-enterprise-nav" aria-label="Enterprise">
+          <button type="button" class="topbar-pill" id="notifBtn" title="Incidents / SOC" data-workspace="soc">Incidents</button>
+          <button type="button" class="topbar-pill" data-workspace="orgs" title="Organizations">Orgs</button>
+          <button type="button" class="topbar-pill" id="topProjectsBtn" title="Projects">Projects</button>
+          <button type="button" class="topbar-pill" id="topHelpBtn" title="Help" data-view="chat" data-mode="ciso" data-prompt="Give me a product tour of SecuraIQ Mission Control for a CISO morning workflow">Help</button>
+          <button type="button" class="topbar-pill" id="topApiBtn" title="API" data-view="chat" data-prompt="Document SecuraIQ REST API endpoints for dashboard, gap, risks, vulns, and reports">API</button>
+          <button type="button" class="topbar-pill" id="topSettingsBtn" title="Settings">Settings</button>
+          <button type="button" class="topbar-pill" id="topProfileBtn" title="Profile">Profile</button>
+          <button id="themeToggleTop" type="button" class="icon-btn theme-btn" title="Toggle theme" aria-label="Toggle theme">
+            <span class="theme-toggle-icon" aria-hidden="true"></span>
+          </button>
+        </nav>
       </header>
 
       <section id="setupPanel" class="setup-panel hidden" data-tone="info">
@@ -154,37 +195,419 @@
       </section>
 
       <div class="stage">
-        <div id="emptyState" class="empty-state">
-          <div class="empty-mark" aria-hidden="true">H</div>
-          <p class="empty-brand">HackGPT</p>
-          <p class="empty-lead">Authorized pentesting, CTFs, and blue-team workflows — local and private.</p>
-          <p id="emptyMeta" class="empty-meta"></p>
-          <div id="quickPrompts" class="quick-prompts"></div>
-        </div>
-        <main id="chat" class="chat" aria-live="polite"></main>
+        <section id="viewCommand" class="workspace-view mc-is-empty" data-view-panel="command">
+          <div class="mc-context" id="mcContext">
+            <div class="mc-context-main">
+              <p class="mc-kicker">Organization</p>
+              <h1 class="mc-org" id="mcOrgName">Local workspace</h1>
+              <p class="mc-lead" id="mcTodaySummary">Empty by design — choose a path below when you’re ready.</p>
+            </div>
+            <dl class="mc-context-meta">
+              <div><dt>Security score</dt><dd id="mcSecurityScore">—</dd></div>
+              <div><dt>Last scan</dt><dd id="mcLastScan">—</dd></div>
+              <div><dt>Framework</dt><dd id="mcFramework">—</dd></div>
+              <div><dt>Environment</dt><dd id="mcEnvironment">—</dd></div>
+            </dl>
+          </div>
+
+          <section id="mcFirstRun" class="mc-first-run" aria-label="Quick start">
+            <div class="mc-first-run-head">
+              <div>
+                <p class="mc-kicker">Start empty</p>
+                <h2>Your workspace is ready</h2>
+                <p class="hint">Nothing is preloaded. Pick a path below when you’re ready.</p>
+              </div>
+              <div class="mc-first-run-actions">
+                <button type="button" class="btn-primary-cc" data-workspace="vulns">Import scan</button>
+                <button type="button" class="btn-secondary" data-workspace="integrations">Integrations</button>
+              </div>
+            </div>
+            <ol class="mc-checklist" id="mcChecklist">
+              <li data-step="org"><button type="button" class="mc-check-btn" data-workspace="orgs"><span>1</span> Organization</button></li>
+              <li data-step="assets"><button type="button" class="mc-check-btn" data-workspace="assets"><span>2</span> Assets</button></li>
+              <li data-step="scan"><button type="button" class="mc-check-btn" data-workspace="vulns"><span>3</span> Import scan</button></li>
+              <li data-step="gap"><button type="button" class="mc-check-btn" data-module="gap"><span>4</span> Gap analysis</button></li>
+              <li data-step="report"><button type="button" class="mc-check-btn" data-workspace="reports"><span>5</span> Reports</button></li>
+              <li data-step="integrations"><button type="button" class="mc-check-btn" data-workspace="integrations"><span>6</span> Connect tools</button></li>
+            </ol>
+          </section>
+
+          <div id="mcLiveDashboard" class="mc-live-dashboard" hidden>
+          <div class="mc-agent-row" aria-label="AI agents">
+            <button type="button" class="agent-chip" data-view="chat" data-mode="blueteam" data-prompt="Act as SOC Analyst: summarize open incidents and critical vulns, recommend next 3 actions">SOC Analyst</button>
+            <button type="button" class="agent-chip" data-view="chat" data-mode="ciso" data-prompt="Act as Compliance Officer: review framework gaps and evidence needed this week">Compliance</button>
+            <button type="button" class="agent-chip" data-view="chat" data-mode="threat_hunt" data-prompt="Act as Threat Hunter: prioritize hunts from our critical findings and intel watchlist">Threat Hunter</button>
+            <button type="button" class="agent-chip" data-view="chat" data-mode="ciso" data-prompt="Act as Executive Advisor: draft a board-ready security posture summary">Executive</button>
+          </div>
+
+          <div class="mc-workflow-row" aria-label="Quick actions">
+            <button type="button" class="cc-action" data-workspace="vulns" id="mcImportScanners">Import scan</button>
+            <button type="button" class="cc-action" data-module="gap">Gap analysis</button>
+            <button type="button" class="cc-action" data-workspace="evidence">Evidence</button>
+            <button type="button" class="cc-action" data-view="chat" data-mode="ciso" data-prompt="Draft a board update from Mission Control: score, top risks, compliance %, and this week’s remediations">Board update</button>
+          </div>
+
+          <div class="cc-kpi-grid mc-kpi-grid" id="ccKpis">
+            <button type="button" class="cc-kpi mc-kpi" data-workspace="reports">
+              <span class="mc-kpi-label">Security score</span>
+              <strong id="ccScore">--</strong>
+              <em class="mc-trend" id="ccScoreTrend">—</em>
+            </button>
+            <button type="button" class="cc-kpi mc-kpi" data-workspace="frameworks">
+              <span class="mc-kpi-label">Compliance</span>
+              <strong id="ccCompliance">--</strong>
+              <div class="cc-bar"><i id="ccComplianceBar"></i></div>
+              <em class="mc-trend" id="ccCompTrend">This month</em>
+            </button>
+            <button type="button" class="cc-kpi mc-kpi" data-workspace="vulns">
+              <span class="mc-kpi-label">Critical / high</span>
+              <strong id="ccCrit">--</strong>
+              <em class="mc-trend" id="ccCritTrend">Open vulns</em>
+            </button>
+            <button type="button" class="cc-kpi mc-kpi" data-workspace="risks">
+              <span class="mc-kpi-label">Open risks</span>
+              <strong id="ccRisks">--</strong>
+              <em class="mc-trend" id="ccRiskTrend">Register</em>
+            </button>
+            <button type="button" class="cc-kpi mc-kpi" data-workspace="remediations">
+              <span class="mc-kpi-label">Open actions</span>
+              <strong id="ccRems">--</strong>
+              <em class="mc-trend" id="ccRemTrend">Work queue</em>
+            </button>
+            <button type="button" class="cc-kpi mc-kpi" data-workspace="assets">
+              <span class="mc-kpi-label">Assets</span>
+              <strong id="ccAssets">--</strong>
+              <em class="mc-trend" id="ccAssetTrend">Inventory</em>
+            </button>
+          </div>
+
+          <div class="mc-grid-main">
+            <section class="cc-panel mc-work-queue">
+              <header>
+                <h2>Work queue</h2>
+                <span class="hint">Prioritized · human review</span>
+              </header>
+              <div id="ccWorkQueue" class="work-queue"><p class="hint">No items yet</p></div>
+            </section>
+            <section class="cc-panel">
+              <header><h2>Today</h2></header>
+              <ul id="ccTodayList" class="cc-list mc-today"><li class="hint">—</li></ul>
+              <header style="margin-top:1rem"><h2>Recommended</h2></header>
+              <div id="ccRecommendedToday" class="mc-recommended"><p class="hint">—</p></div>
+            </section>
+          </div>
+
+          <div class="cc-panels mc-secondary">
+            <section class="cc-panel">
+              <header>
+                <h2>Pending approvals</h2>
+                <button type="button" class="btn-secondary" data-workspace="remediations">Open</button>
+              </header>
+              <ul id="ccApprovals" class="cc-list"><li class="hint">None</li></ul>
+            </section>
+            <section class="cc-panel">
+              <header>
+                <h2>Threat intelligence</h2>
+                <button type="button" class="btn-secondary" data-workspace="intel">Open</button>
+              </header>
+              <ul id="ccIntel" class="cc-list"><li class="hint">None</li></ul>
+            </section>
+            <section class="cc-panel">
+              <header><h2>Framework status</h2></header>
+              <ul id="ccFrameworks" class="cc-list"><li class="hint">—</li></ul>
+            </section>
+            <section class="cc-panel">
+              <header><h2>Assets</h2></header>
+              <div id="ccAssetBreakdown" class="asset-breakdown"><p class="hint">—</p></div>
+            </section>
+            <section class="cc-panel">
+              <header><h2>Recent activity</h2></header>
+              <ul id="ccTimeline" class="cc-list timeline-list"><li class="hint">—</li></ul>
+            </section>
+            <section class="cc-panel">
+              <header><h2>MITRE coverage</h2></header>
+              <div id="ccMitre" class="mitre-bars"><p class="hint">—</p></div>
+            </section>
+          </div>
+
+          <section class="cc-panel cc-heatmap-panel" id="ccHeatMap">
+            <header>
+              <h2>Risk matrix</h2>
+              <button type="button" class="btn-secondary" data-workspace="risks">Open register</button>
+            </header>
+            <div id="ccRiskHeat" class="risk-heat" aria-label="Risk heat map"></div>
+          </section>
+
+          <div class="cc-panels mc-tops" style="margin-top:0.5rem">
+            <section class="cc-panel">
+              <header><h2>Top risks</h2></header>
+              <ul id="ccTopRisks" class="cc-list"><li class="hint">—</li></ul>
+            </section>
+            <section class="cc-panel">
+              <header><h2>Critical findings</h2></header>
+              <ul id="ccTopVulns" class="cc-list"><li class="hint">—</li></ul>
+            </section>
+          </div>
+          <p id="ccMeta" class="empty-meta cc-meta"></p>
+          </div>
+        </section>
+
+        <section id="viewChat" class="workspace-view hidden" data-view-panel="chat">
+          <div class="ai-tabs" role="tablist" aria-label="AI workspace">
+            <button type="button" class="ai-tab active" data-ai-tab="chat">Assistant</button>
+            <button type="button" class="ai-tab" data-ai-tab="files">Files</button>
+            <button type="button" class="ai-tab" data-ai-tab="tools">Tools</button>
+            <button type="button" class="ai-tab" data-ai-tab="memory">Memory</button>
+            <button type="button" class="ai-tab" data-ai-tab="tasks">Tasks</button>
+            <button type="button" class="ai-tab" data-workspace-tab="evidence">Evidence</button>
+            <button type="button" class="ai-tab" data-workspace-tab="reports">Reports</button>
+          </div>
+          <div id="aiTab-chat" class="ai-tab-panel">
+            <div id="emptyState" class="empty-state">
+              <p class="empty-brand">SecuraIQ</p>
+              <p class="empty-lead" id="emptyLead">Ask anything about your authorized security work — or open a module from the sidebar.</p>
+              <div class="empty-suite" id="emptySuite">
+                <button type="button" class="suite-chip" data-view="command">Mission Control</button>
+                <button type="button" class="suite-chip" data-workspace="vulns">Import scan</button>
+                <button type="button" class="suite-chip" data-module="gap">Gap analysis</button>
+              </div>
+              <div id="quickPrompts" class="quick-prompts hidden" aria-hidden="true"></div>
+            </div>
+            <main id="chat" class="chat" aria-live="polite"></main>
+          </div>
+          <div id="aiTab-files" class="ai-tab-panel hidden page-pad"></div>
+          <div id="aiTab-tools" class="ai-tab-panel hidden page-pad"></div>
+          <div id="aiTab-memory" class="ai-tab-panel hidden page-pad"></div>
+          <div id="aiTab-tasks" class="ai-tab-panel hidden page-pad"></div>
+        </section>
+
+        <section id="viewAssets" class="workspace-view hidden" data-module-page data-view-panel="assets">
+          <div class="page-head"><h1>Asset inventory</h1><button type="button" class="btn-primary-cc" id="assetsOpenCreate">Add asset</button></div>
+          <div id="assetsPageBody"></div>
+        </section>
+        <section id="viewRisks" class="workspace-view hidden" data-module-page data-view-panel="risks">
+          <div class="page-head"><h1>Risk register</h1><button type="button" class="btn-primary-cc" id="risksOpenCreate">Add risk</button></div>
+          <div id="risksPageBody"></div>
+        </section>
+        <section id="viewVulns" class="workspace-view hidden" data-module-page data-view-panel="vulns">
+          <div class="page-head"><h1>Vulnerabilities</h1>
+              <div class="page-head-actions">
+              <button type="button" class="btn-secondary" id="vulnsOpenImport">Import scan</button>
+              <details class="lab-fixtures">
+                <summary class="btn-secondary" title="Optional authorized lab fixtures">Lab fixtures</summary>
+                <div class="lab-fixtures-menu">
+                  <button type="button" class="btn-secondary" id="vulnsSampleTrivy">Trivy</button>
+                  <button type="button" class="btn-secondary" id="vulnsSampleSemgrep">Semgrep</button>
+                  <button type="button" class="btn-secondary" id="vulnsSampleGitleaks">Gitleaks</button>
+                  <button type="button" class="btn-secondary" id="vulnsSampleGrype">Grype</button>
+                  <button type="button" class="btn-secondary" id="vulnsSampleCheckov">Checkov</button>
+                  <button type="button" class="btn-secondary" id="vulnsSampleSonar">Sonar</button>
+                  <button type="button" class="btn-secondary" id="vulnsSampleZap">ZAP</button>
+                </div>
+              </details>
+              <button type="button" class="btn-secondary" id="vulnsOpenExport">Export</button>
+            </div>
+          </div>
+          <div id="vulnsPageBody"></div>
+        </section>
+        <section id="viewRemediations" class="workspace-view hidden" data-module-page data-view-panel="remediations">
+          <div class="page-head"><h1>Remediation tracker</h1><button type="button" class="btn-secondary" id="remsOpenGap">Run gap analysis</button></div>
+          <div id="remsPageBody"></div>
+        </section>
+        <section id="viewPlaybooksPage" class="workspace-view hidden" data-module-page data-view-panel="playbooks">
+          <div class="page-head"><h1>IR playbooks</h1><button type="button" class="btn-primary-cc" id="playbooksOpenCreate">Add playbook</button></div>
+          <div id="playbooksPageBody"></div>
+        </section>
+        <section id="viewCampaignsPage" class="workspace-view hidden" data-module-page data-view-panel="campaigns">
+          <div class="page-head"><h1>Awareness campaigns</h1><button type="button" class="btn-primary-cc" id="campaignsOpenCreate">Add campaign</button></div>
+          <div id="campaignsPageBody"></div>
+        </section>
+        <section id="viewIntel" class="workspace-view hidden" data-module-page data-view-panel="intel">
+          <div class="page-head"><h1>Threat intelligence</h1></div>
+          <div id="intelPageBody"></div>
+        </section>
+        <section id="viewReports" class="workspace-view hidden" data-module-page data-view-panel="reports">
+          <div class="page-head"><h1>Reports</h1></div>
+          <div id="reportsPageBody"></div>
+        </section>
+        <section id="viewSoc" class="workspace-view hidden" data-module-page data-view-panel="soc">
+          <div class="page-head"><h1>Security operations</h1></div>
+          <div id="socPageBody"></div>
+        </section>
+        <section id="viewEvidence" class="workspace-view hidden" data-module-page data-view-panel="evidence">
+          <div class="page-head"><h1>Evidence locker</h1><button type="button" class="btn-secondary" id="evidenceUploadBtn">Upload</button></div>
+          <div id="evidencePageBody"></div>
+        </section>
+        <section id="viewOrgs" class="workspace-view hidden" data-module-page data-view-panel="orgs">
+          <div class="page-head"><h1>Organizations</h1></div>
+          <div id="orgsPageBody"></div>
+        </section>
+        <section id="viewFrameworks" class="workspace-view hidden" data-module-page data-view-panel="frameworks">
+          <div class="page-head">
+            <h1>Compliance frameworks</h1>
+            <button type="button" class="btn-primary-cc" id="frameworksRunGap">Run gap analysis</button>
+          </div>
+          <p class="page-intro hint">Control libraries for gap analysis, evidence mapping, and remediation tracking. AI recommends; humans approve.</p>
+          <div id="frameworksPageBody"></div>
+        </section>
+        <section id="viewIntegrations" class="workspace-view hidden" data-module-page data-view-panel="integrations">
+          <div class="page-head"><h1>Integrations</h1></div>
+          <div id="integrationsPageBody"></div>
+        </section>
+        <section id="viewBilling" class="workspace-view hidden" data-module-page data-view-panel="billing">
+          <div class="page-head"><h1>Billing</h1></div>
+          <div id="billingPageBody"></div>
+        </section>
+        <section id="viewGraph" class="workspace-view hidden" data-module-page data-view-panel="graph">
+          <div class="page-head"><h1>Knowledge graph</h1></div>
+          <p class="page-intro hint">Assets · vulns · risks · controls · evidence · incidents — correlated for AI orchestration.</p>
+          <div id="graphPageBody"></div>
+        </section>
+
       </div>
 
-      <footer class="composer-wrap">
+      <footer class="composer-wrap" id="composerWrap">
         <div id="liveBar" class="live-bar" aria-live="polite">
           <span class="live-dot" id="liveDot" aria-hidden="true"></span>
-          <span id="livePhase" class="live-phase">Connecting…</span>
+          <span id="livePhase" class="live-phase">Connecting...</span>
           <span id="liveMeta" class="live-meta"></span>
           <span id="liveActivity" class="live-activity"></span>
         </div>
-        <div class="composer">
-          <textarea
-            id="input"
-            rows="1"
-            enterkeyhint="send"
-            autocomplete="off"
-            autocapitalize="sentences"
-            placeholder="Message HackGPT…"
-          ></textarea>
-          <button id="send" type="button" aria-label="Send">
-            <span class="icon-send" aria-hidden="true"></span>
-          </button>
+
+        <div class="composer" id="composer">
+          <div id="attachChips" class="attach-chips hidden" aria-live="polite"></div>
+          <div class="intent-row" id="intentRow" role="group" aria-label="AI actions">
+            <button type="button" class="intent-chip" data-intent="intel" data-mode="research" data-prompt="Summarize the latest critical CVEs and KEV items relevant to Windows and cloud this week">Threat intel</button>
+            <button type="button" class="intent-chip" data-intent="code" data-mode="appsec" data-prompt="Review the attached or pasted code for OWASP risks and give fix guidance">Review code</button>
+            <button type="button" class="intent-chip" data-intent="compliance" data-mode="ciso" data-prompt="Map our current controls narrative to ISO 27001 gaps">Compliance</button>
+          </div>
+
+          <div id="toolsPalette" class="tools-palette hidden" aria-label="Cyber tools palette">
+            <div class="tools-palette-head">
+              <strong>Cyber tools suite</strong>
+              <span class="hint" id="toolsPaletteHint">Select tools · set Auth + target · Run or chat with them</span>
+              <button type="button" class="btn-ghost" id="toolsPaletteClose" aria-label="Close tools">Close</button>
+            </div>
+            <div id="toolsPaletteGrid" class="tools-palette-grid"></div>
+            <div class="tools-palette-actions">
+              <button type="button" class="btn-secondary" id="toolsPaletteClear">Clear</button>
+              <button type="button" class="btn-secondary" id="toolsPaletteUseChat">Use in chat</button>
+              <button type="button" class="btn-primary-cc" id="toolsPaletteRun">Run selected</button>
+            </div>
+            <pre id="toolsPaletteOut" class="tools-palette-out hidden"></pre>
+          </div>
+
+          <div class="composer-shell">
+            <textarea
+              id="input"
+              rows="1"
+              enterkeyhint="send"
+              autocomplete="off"
+              autocapitalize="sentences"
+              placeholder="Ask SecuraIQ..."
+            ></textarea>
+
+            <div class="composer-bottom">
+              <div class="composer-bottom-left">
+                <button id="attachBtn" type="button" class="attach-btn" title="Attach files" aria-label="Attach files">
+                  <span class="icon-attach" aria-hidden="true"></span>
+                </button>
+                <div class="composer-chips" id="controls" role="group" aria-label="Tools">
+                  <label class="chip-toggle" title="Live web search">
+                    <input type="checkbox" id="useWebSearch" />
+                    <span>Search</span>
+                  </label>
+                  <label class="chip-toggle" title="RAG knowledge (slower first use)">
+                    <input type="checkbox" id="useRag" />
+                    <span>RAG</span>
+                  </label>
+                  <label class="chip-toggle" title="Security tools (on demand)">
+                    <input type="checkbox" id="useLocalTools" />
+                    <span>Tools</span>
+                  </label>
+                  <label class="chip-toggle" title="Probe target (lab/owned)">
+                    <input type="checkbox" id="useNetAssess" />
+                    <span>Probe</span>
+                  </label>
+                  <label class="chip-toggle" title="Authorized target">
+                    <input type="checkbox" id="authorizedTarget" />
+                    <span>Auth</span>
+                  </label>
+                </div>
+              </div>
+              <button id="send" type="button" aria-label="Send">
+                <span class="icon-send" aria-hidden="true"></span>
+              </button>
+            </div>
+          </div>
+
+          <div class="composer-options">
+            <select id="mode" class="composer-select composer-select-mode" title="Role / mode">
+              <optgroup label="Roles">
+                <option value="blueteam">SOC Analyst</option>
+                <option value="ir">Incident Responder</option>
+                <option value="threat_hunt">Threat Hunter</option>
+                <option value="ciso">Compliance / Executive</option>
+                <option value="assess">Risk Manager</option>
+                <option value="cloud">Cloud Security</option>
+                <option value="appsec">Developer / AppSec</option>
+                <option value="malware">Malware Analyst</option>
+                <option value="awareness">Awareness Lead</option>
+                <option value="tabletop">Tabletop Facilitator</option>
+              </optgroup>
+              <optgroup label="Labs &amp; research">
+                <option value="default" selected>General security</option>
+                <option value="research">Threat Intel Research</option>
+                <option value="purple">Purple Team</option>
+                <option value="redteam">Red Team</option>
+                <option value="lab">Lab</option>
+                <option value="lab_offensive">Lab Offensive</option>
+                <option value="ctf">CTF</option>
+              </optgroup>
+            </select>
+            <select id="backend" class="composer-select" title="Model backend">
+              <optgroup label="Local">
+                <option value="ollama">Ollama</option>
+                <option value="openai_compat">LM Studio</option>
+                <option value="hermes">Hermes</option>
+                <option value="unsloth">Unsloth</option>
+                <option value="huggingface">Hugging Face</option>
+              </optgroup>
+              <optgroup label="Cloud (API keys)">
+                <option value="openai">OpenAI</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="groq">Groq</option>
+                <option value="together">Together</option>
+                <option value="fireworks">Fireworks</option>
+              </optgroup>
+            </select>
+            <select id="model" class="composer-select composer-select-grow" title="Model">
+              <option value="">Loading models...</option>
+            </select>
+            <input type="text" id="targetIp" class="target-input composer-target" placeholder="Target IP (lab)" autocomplete="off" spellcheck="false" />
+            <span id="status" class="status composer-status visually-hidden" aria-live="polite">Connecting...</span>
+          </div>
+
+          <div class="composer-meta-row">
+            <p id="toolsStatus" class="tools-status visually-hidden" title="Built-in tools always work; PATH tools when installed">Tools: ...</p>
+            <div class="composer-meta-actions">
+              <button id="pullModel" type="button" class="meta-link" title="Pull selected model via Ollama">Pull</button>
+              <button id="ingestRag" type="button" class="meta-link" title="Re-index knowledge base">Re-index</button>
+              <button id="preloadModel" type="button" class="meta-link hidden" title="Preload local model">Preload</button>
+              <button id="trainUnsloth" type="button" class="meta-link hidden" title="Fine-tune with Unsloth">Train Unsloth</button>
+              <button id="hermesNewSession" type="button" class="meta-link hidden" title="Start a new Hermes Agent session">New Hermes</button>
+            </div>
+          </div>
+
+          <input
+            id="chatAttachInput"
+            type="file"
+            class="hidden"
+            multiple
+            accept=".md,.txt,.pdf,.json,.csv,.log,.xml,.html,.htm,.py,.js,.jsx,.ts,.tsx,.java,.go,.rs,.rb,.php,.cs,.c,.cpp,.h,.kt,.swift,.sql,.sh,.ps1,.yml,.yaml,.toml,.ini,.css,.scss,.vue,.ipynb,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.zip,image/*,text/*"
+          />
         </div>
-        <p class="composer-hint">HackGPT · authorized &amp; defensive security only · Shift+Enter for new line</p>
+        <p class="composer-hint visually-hidden">Authorized labs and owned systems only.</p>
       </footer>
     </div>
 
@@ -228,6 +651,24 @@
             <input type="text" id="setSearxngUrl" inputmode="url" autocomplete="off" placeholder="http://127.0.0.1:8088" />
           </label>
           <p class="hint">Prefer SearXNG when set. Otherwise DuckDuckGo + NVD are used.</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Jira (remediation tickets)</legend>
+          <label>Base URL
+            <input type="text" id="setJiraUrl" inputmode="url" autocomplete="off" placeholder="https://your-domain.atlassian.net" />
+          </label>
+          <label>Email
+            <input type="email" id="setJiraEmail" autocomplete="username" placeholder="you@company.com" />
+          </label>
+          <label>API token
+            <input type="password" id="setJiraToken" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="jiraTokenHint">Not set</p>
+          <label>Project key
+            <input type="text" id="setJiraProject" autocomplete="off" placeholder="SEC" />
+          </label>
+          <p class="hint">Creates issues from the Remediations page when configured.</p>
         </fieldset>
 
         <fieldset>
@@ -326,6 +767,47 @@
         </fieldset>
 
         <fieldset>
+          <legend>AI Router / Cloud providers</legend>
+          <label class="toggle">
+            <input type="checkbox" id="setRouterEnabled" checked />
+            Enable intent router (code · compliance · intel · reports)
+          </label>
+          <p class="hint">Routes each question to the best lane/agent. Cloud keys optional — without them, stays on your local backend.</p>
+          <label>OpenAI API key
+            <input type="password" id="setOpenaiKey" autocomplete="off" placeholder="sk-… (leave blank to keep)" />
+          </label>
+          <p class="hint" id="openaiKeyHint">Not set</p>
+          <label>OpenAI model
+            <input type="text" id="setOpenaiModel" autocomplete="off" placeholder="gpt-4o-mini" />
+          </label>
+          <label>OpenRouter API key
+            <input type="password" id="setOpenrouterKey" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="openrouterKeyHint">Not set</p>
+          <label>OpenRouter model
+            <input type="text" id="setOpenrouterModel" autocomplete="off" placeholder="openai/gpt-4o-mini" />
+          </label>
+          <label>Groq API key
+            <input type="password" id="setGroqKey" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="groqKeyHint">Not set</p>
+          <label>Groq model
+            <input type="text" id="setGroqModel" autocomplete="off" placeholder="llama-3.3-70b-versatile" />
+          </label>
+          <label>Together API key
+            <input type="password" id="setTogetherKey" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="togetherKeyHint">Not set</p>
+          <label>Fireworks API key
+            <input type="password" id="setFireworksKey" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="fireworksKeyHint">Not set</p>
+          <label>Ollama coder model (optional)
+            <input type="text" id="setOllamaCoder" autocomplete="off" placeholder="qwen2.5-coder:7b" />
+          </label>
+        </fieldset>
+
+        <fieldset>
           <legend>LM Studio / OpenAI-compat</legend>
           <label>Base URL
             <input type="text" id="setCompatUrl" inputmode="url" autocomplete="off" />
@@ -346,6 +828,285 @@
     </div>
   </div>
 
-  <script src="/app.js?v=17"></script>
+  <div id="authModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="authHeading">
+    <div class="modal-backdrop" data-close-auth></div>
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="authHeading">Account</h2>
+        <button type="button" class="btn-secondary" data-close-auth>Close</button>
+      </div>
+      <p class="hint" id="authStatusHint">Checking auth…</p>
+      <form id="authForm" class="settings-form">
+        <label>Username
+          <input type="text" id="authUser" autocomplete="username" />
+        </label>
+        <label>Password
+          <input type="password" id="authPass" autocomplete="current-password" />
+        </label>
+        <div class="settings-row">
+          <button type="submit" id="authLoginBtn">Login</button>
+          <button type="button" id="authRegisterBtn" class="btn-secondary">Register</button>
+          <button type="button" id="authLogoutBtn" class="btn-secondary">Logout</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="gapModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="gapHeading">
+    <div class="modal-backdrop" data-close-gap></div>
+    <div class="modal-card modal-card-wide">
+      <div class="modal-header">
+        <h2 id="gapHeading">Gap analysis</h2>
+        <button type="button" class="btn-secondary" data-close-gap>Close</button>
+      </div>
+      <p class="hint">Paste policies, interview notes, or evidence. Maps ISO 27001 / NIST CSF / CIS Controls into a score + 30/60/90 roadmap.</p>
+      <form id="gapForm" class="settings-form">
+        <label>Framework
+          <select id="gapFramework">
+            <option value="iso27001">ISO/IEC 27001:2022 Annex A</option>
+            <option value="nist_csf">NIST CSF 2.0</option>
+            <option value="cis_controls">CIS Controls v8 (IG1)</option>
+          </select>
+        </label>
+        <label>Assessment title
+          <input type="text" id="gapTitle" value="Client gap assessment" />
+        </label>
+        <label>Evidence / notes
+          <textarea id="gapEvidence" rows="10" placeholder="Example: information security policy approved by management, MFA, EDR, vulnerability scanning, backups with restore tests, incident response playbook, phishing awareness training…"></textarea>
+        </label>
+        <div class="modal-footer">
+          <button type="submit" id="gapRunBtn">Run gap analysis</button>
+        </div>
+      </form>
+      <div id="gapResult" class="gap-result hidden"></div>
+    </div>
+  </div>
+
+  <div id="dashModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="dashHeading">
+    <div class="modal-backdrop" data-close-dash></div>
+    <div class="modal-card modal-card-wide">
+      <div class="modal-header">
+        <h2 id="dashHeading">Operations dashboard</h2>
+        <button type="button" class="btn-secondary" data-close-dash>Close</button>
+      </div>
+      <div id="dashBody" class="dash-body">
+        <p class="hint">Run gap analysis, add risks, or import vulns to populate live scores.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="riskModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="riskHeading">
+    <div class="modal-backdrop" data-close-risk></div>
+    <div class="modal-card modal-card-wide">
+      <div class="modal-header">
+        <h2 id="riskHeading">Risk register</h2>
+        <button type="button" class="btn-secondary" data-close-risk>Close</button>
+      </div>
+      <form id="riskForm" class="settings-form">
+        <label>Threat
+          <input type="text" id="riskThreat" required placeholder="Ransomware via phishing" />
+        </label>
+        <label>Vulnerability / weakness
+          <input type="text" id="riskVuln" placeholder="No MFA on email" />
+        </label>
+        <label>Asset
+          <input type="text" id="riskAsset" placeholder="Exchange / M365" />
+        </label>
+        <div class="settings-row">
+          <label>Impact (1–5)
+            <input type="number" id="riskImpact" min="1" max="5" value="3" />
+          </label>
+          <label>Likelihood (1–5)
+            <input type="number" id="riskLikelihood" min="1" max="5" value="3" />
+          </label>
+        </div>
+        <label>Owner
+          <input type="text" id="riskOwner" placeholder="IT Security" />
+        </label>
+        <label>Mitigation
+          <textarea id="riskMitigation" rows="3" placeholder="Enable MFA, phishing awareness, EDR…"></textarea>
+        </label>
+        <div class="modal-footer">
+          <button type="submit">Add risk</button>
+          <button type="button" class="btn-secondary" id="riskExportBtn">Export Markdown</button>
+        </div>
+      </form>
+      <div id="riskList" class="gap-result"></div>
+    </div>
+  </div>
+
+  <div id="vulnModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="vulnHeading">
+    <div class="modal-backdrop" data-close-vuln></div>
+    <div class="modal-card modal-card-wide">
+      <div class="modal-header">
+        <h2 id="vulnHeading">Vulnerability management</h2>
+        <button type="button" class="btn-secondary" data-close-vuln>Close</button>
+      </div>
+      <p class="hint">Import scanner output (CSV / JSON / XML). Track CVE, severity, owner, and status in the database.</p>
+      <div class="settings-row">
+        <button type="button" id="vulnImportBtn" class="btn-sidebar">Import scan file</button>
+        <button type="button" id="vulnExportBtn" class="btn-secondary">Export Markdown</button>
+        <input id="vulnFileInput" type="file" class="hidden" accept=".csv,.json,.xml,.txt" />
+      </div>
+      <div id="vulnList" class="gap-result"></div>
+    </div>
+  </div>
+
+  <div id="assetModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="assetHeading">
+    <div class="modal-backdrop" data-close-asset></div>
+    <div class="modal-card modal-card-wide">
+      <div class="modal-header">
+        <h2 id="assetHeading">Asset inventory</h2>
+        <button type="button" class="btn-secondary" data-close-asset>Close</button>
+      </div>
+      <p class="hint">Track servers, apps, cloud accounts, and people-owned systems for risk/vuln mapping.</p>
+      <form id="assetForm" class="settings-form">
+        <label>Name
+          <input type="text" id="assetName" required placeholder="Finance file server" />
+        </label>
+        <div class="settings-row">
+          <label>Type
+            <select id="assetType">
+              <option value="server">Server</option>
+              <option value="endpoint">Endpoint</option>
+              <option value="app">Application</option>
+              <option value="cloud">Cloud account</option>
+              <option value="network">Network</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+          <label>Criticality
+            <select id="assetCriticality">
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium" selected>Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+        </div>
+        <label>Owner
+          <input type="text" id="assetOwner" placeholder="IT Ops" />
+        </label>
+        <label>Notes
+          <textarea id="assetNotes" rows="2" placeholder="IP, environment, data class…"></textarea>
+        </label>
+        <div class="modal-footer">
+          <button type="submit">Add asset</button>
+        </div>
+      </form>
+      <div id="assetList" class="gap-result"></div>
+    </div>
+  </div>
+
+  <div id="remModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="remHeading">
+    <div class="modal-backdrop" data-close-rem></div>
+    <div class="modal-card modal-card-wide">
+      <div class="modal-header">
+        <h2 id="remHeading">Remediation tracker</h2>
+        <button type="button" class="btn-secondary" data-close-rem>Close</button>
+      </div>
+      <p class="hint">Control gaps from gap analysis become trackable tasks. Assign owners and mark done.</p>
+      <div class="settings-row">
+        <button type="button" id="remRefreshBtn" class="btn-sidebar">Refresh</button>
+      </div>
+      <div id="remBoard" class="gap-result"></div>
+    </div>
+  </div>
+
+  <div id="playbookModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="playbookHeading">
+    <div class="modal-backdrop" data-close-playbook></div>
+    <div class="modal-card modal-card-wide">
+      <div class="modal-header">
+        <h2 id="playbookHeading">IR playbooks</h2>
+        <button type="button" class="btn-secondary" data-close-playbook>Close</button>
+      </div>
+      <p class="hint">Authorized incident response playbooks. Starts empty — add playbooks for your org.</p>
+      <form id="playbookForm" class="settings-form">
+        <label>Title
+          <input type="text" id="playbookTitle" required placeholder="Ransomware containment" />
+        </label>
+        <div class="settings-row">
+          <label>Category
+            <select id="playbookCategory">
+              <option value="ir">Incident response</option>
+              <option value="tabletop">Tabletop</option>
+              <option value="cloud">Cloud</option>
+              <option value="appsec">AppSec</option>
+            </select>
+          </label>
+          <label>Severity
+            <select id="playbookSeverity">
+              <option value="critical">Critical</option>
+              <option value="high" selected>High</option>
+              <option value="medium">Medium</option>
+            </select>
+          </label>
+        </div>
+        <label>Steps
+          <textarea id="playbookSteps" rows="4" placeholder="1. Contain&#10;2. Eradicate&#10;3. Recover"></textarea>
+        </label>
+        <div class="modal-footer">
+          <button type="submit">Add playbook</button>
+        </div>
+      </form>
+      <div id="playbookList" class="gap-result"></div>
+    </div>
+  </div>
+
+  <div id="campaignModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="campaignHeading">
+    <div class="modal-backdrop" data-close-campaign></div>
+    <div class="modal-card modal-card-wide">
+      <div class="modal-header">
+        <h2 id="campaignHeading">Awareness campaigns</h2>
+        <button type="button" class="btn-secondary" data-close-campaign>Close</button>
+      </div>
+      <p class="hint">Track authorized phishing simulations and training metrics (click / report rates).</p>
+      <form id="campaignForm" class="settings-form">
+        <label>Campaign name
+          <input type="text" id="campaignName" required placeholder="Q3 MFA fatigue sim" />
+        </label>
+        <div class="settings-row">
+          <label>Type
+            <select id="campaignType">
+              <option value="phishing_sim">Phishing simulation</option>
+              <option value="tabletop">Tabletop</option>
+              <option value="training">Training module</option>
+            </select>
+          </label>
+          <label>Status
+            <select id="campaignStatus">
+              <option value="planned">Planned</option>
+              <option value="running">Running</option>
+              <option value="closed">Closed</option>
+            </select>
+          </label>
+        </div>
+        <label>Audience
+          <input type="text" id="campaignAudience" placeholder="Finance + HR (consenting)" />
+        </label>
+        <div class="settings-row">
+          <label>Sent
+            <input type="number" id="campaignSent" min="0" value="0" />
+          </label>
+          <label>Clicks
+            <input type="number" id="campaignClicks" min="0" value="0" />
+          </label>
+          <label>Reports
+            <input type="number" id="campaignReports" min="0" value="0" />
+          </label>
+        </div>
+        <label>Notes
+          <textarea id="campaignNotes" rows="2" placeholder="TRAINING / SIMULATION banners required"></textarea>
+        </label>
+        <div class="modal-footer">
+          <button type="submit">Add campaign</button>
+        </div>
+      </form>
+      <div id="campaignList" class="gap-result"></div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=51"></script>
+  <script src="/workspace.js?v=51"></script>
 </body>
 </html>

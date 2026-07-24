@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# One-command setup + start for PentestGPT (Linux/macOS)
+# One-command setup + start for SecuraIQ (Linux/macOS)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/common.sh
 
-echo "PentestGPT setup"
+echo "SecuraIQ setup"
 ensure_venv
 
 echo "Installing dependencies..."
@@ -33,5 +33,5 @@ python scripts/ingest_rag.py
 stop_port_8080
 
 echo ""
-echo "Starting PentestGPT at http://localhost:8080"
+echo "Starting SecuraIQ at http://localhost:8080"
 python run.py

@@ -1,11 +1,11 @@
-# Ollama setup helper for PentestGPT (Windows PowerShell)
+# Ollama setup helper for SecuraIQ (Windows PowerShell)
 # Usage: .\scripts\setup_ollama.ps1
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location (Join-Path $root "..")
 
-Write-Host "PentestGPT Ollama Setup" -ForegroundColor Green
+Write-Host "SecuraIQ Ollama Setup" -ForegroundColor Green
 Write-Host ""
 
 if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
@@ -36,5 +36,5 @@ $content | Set-Content ".env"
 Write-Host ""
 Write-Host "Configured .env for Ollama + tinyllama."
 Write-Host "Optional larger models: ollama pull mistral | ollama pull llama3"
-Write-Host "Start PentestGPT: .\scripts\start.ps1"
+Write-Host "Start SecuraIQ: .\scripts\start.ps1"
 Write-Host "Open: http://localhost:8080"

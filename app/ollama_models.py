@@ -50,7 +50,7 @@ RECOMMENDED_MODELS = [
         "id": "dolphin-llama3",
         "name": "Dolphin Llama 3 (research)",
         "pull": "dolphin-llama3",
-        "description": "Less-refusal local model for authorized security research / Research Search mode.",
+        "description": "Strong local instruct model for authorized security research / Research Search mode.",
     },
     {
         "id": "dolphin-mistral",

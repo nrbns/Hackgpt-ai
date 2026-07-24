@@ -1,4 +1,4 @@
-"""Full integration check for PentestGPT UI + backend wiring."""
+"""Full integration check for SecuraIQ UI + backend wiring."""
 
 from __future__ import annotations
 
@@ -41,6 +41,25 @@ REQUIRED_HTML_IDS = [
     "lanTip",
     "trainUnsloth",
     "preloadModel",
+    "gapBtn",
+    "assetBtn",
+    "remBtn",
+    "playbookBtn",
+    "campaignBtn",
+    "riskBtn",
+    "vulnBtn",
+    "dashboardBtn",
+    "intentRow",
+    "globalSearch",
+    "viewCommand",
+    "navChat",
+    "navCommand",
+    "engagementSelect",
+    "useLocalTools",
+    "attachBtn",
+    "composer",
+    "newEngagementBtn",
+    "authBtn",
 ]
 BACKENDS = ["ollama", "openai_compat", "hermes", "unsloth", "huggingface"]
 

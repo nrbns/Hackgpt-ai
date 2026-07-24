@@ -1,0 +1,38 @@
+services:
+  securaiq:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8080"
+      AUTH_ENABLED: "true"
+      AUTH_ALLOW_REGISTER: "false"
+      BOOTSTRAP_ADMIN_USERNAME: "admin"
+      BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:-changeme-change-me}"
+      MODEL_BACKEND: "ollama"
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      DATA_DIR: "/data"
+      CHROMA_PERSIST_DIR: "/data/chroma"
+      # Optional Qdrant (compose profile `vectors`): QDRANT_URL=http://qdrant:6333
+      QDRANT_URL: "${QDRANT_URL:-}"
+      QDRANT_COLLECTION: "securaiq_knowledge"
+    volumes:
+      - securaiq-data:/data
+    restart: unless-stopped
+
+  # Optional vector DB — docker compose --profile vectors up
+  # Then set QDRANT_URL=http://qdrant:6333 for the app (same compose network).
+  qdrant:
+    image: qdrant/qdrant:v1.13.2
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    restart: unless-stopped
+    profiles: ["vectors"]
+
+volumes:
+  securaiq-data:
+  qdrant-data:

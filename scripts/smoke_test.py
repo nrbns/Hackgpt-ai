@@ -1,4 +1,4 @@
-"""Smoke test for PentestGPT API."""
+"""Smoke test for SecuraIQ API."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import httpx
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="PentestGPT smoke test")
+    parser = argparse.ArgumentParser(description="SecuraIQ smoke test")
     parser.add_argument(
         "--chat",
         action="store_true",

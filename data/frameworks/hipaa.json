@@ -1,0 +1,16 @@
+{
+  "id": "hipaa",
+  "name": "HIPAA Security Rule (subset)",
+  "version": "demo-subset",
+  "description": "Illustrative HIPAA Security Rule themes for authorized healthcare labs — not a certification checklist.",
+  "controls": [
+    {"id": "H.1", "title": "Security management process", "description": "Risk analysis and risk management for ePHI."},
+    {"id": "H.2", "title": "Assigned security responsibility", "description": "Named security official."},
+    {"id": "H.3", "title": "Workforce security", "description": "Authorization and termination procedures."},
+    {"id": "H.4", "title": "Access control", "description": "Unique user IDs, emergency access, automatic logoff, encryption where reasonable."},
+    {"id": "H.5", "title": "Audit controls", "description": "Record and examine activity in systems with ePHI."},
+    {"id": "H.6", "title": "Integrity", "description": "Protect ePHI from improper alteration or destruction."},
+    {"id": "H.7", "title": "Transmission security", "description": "Guard against unauthorized access during transmission."},
+    {"id": "H.8", "title": "Contingency plan", "description": "Data backup, disaster recovery, emergency mode operations."}
+  ]
+}

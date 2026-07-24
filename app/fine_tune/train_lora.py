@@ -1,5 +1,5 @@
 """
-LoRA fine-tuning script for PentestGPT (ethical security Q&A only).
+LoRA fine-tuning script for SecuraIQ (ethical security Q&A only).
 
 Requirements:
   pip install torch transformers datasets accelerate peft trl bitsandbytes
@@ -21,7 +21,7 @@ DATASET_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "ethical
 
 def format_example(example: dict) -> dict:
     text = (
-        f"<|system|>You are PentestGPT. Authorized security testing only.<|end|>\n"
+        f"<|system|>You are SecuraIQ. Authorized security testing only.<|end|>\n"
         f"<|user|>{example['instruction']}<|end|>\n"
         f"<|assistant|>{example['response']}<|end|>"
     )
@@ -29,9 +29,9 @@ def format_example(example: dict) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Fine-tune PentestGPT with LoRA")
+    parser = argparse.ArgumentParser(description="Fine-tune SecuraIQ with LoRA")
     parser.add_argument("--model", default="microsoft/Phi-3-mini-4k-instruct")
-    parser.add_argument("--output", default="./models/pentestgpt-lora")
+    parser.add_argument("--output", default="./models/securaiq-lora")
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=2)
     args = parser.parse_args()

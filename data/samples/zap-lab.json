@@ -1,0 +1,23 @@
+{
+  "site": [
+    {
+      "@name": "http://dvwa.lab.local",
+      "alerts": [
+        {
+          "pluginid": "40012",
+          "name": "Cross Site Scripting (Reflected) — lab fixture",
+          "riskcode": "3",
+          "riskdesc": "High",
+          "instances": [{ "uri": "http://dvwa.lab.local/vulnerabilities/xss_r/" }]
+        },
+        {
+          "pluginid": "40018",
+          "name": "SQL Injection — lab fixture",
+          "riskcode": "3",
+          "riskdesc": "High",
+          "instances": [{ "uri": "http://dvwa.lab.local/vulnerabilities/sqli/" }]
+        }
+      ]
+    }
+  ]
+}

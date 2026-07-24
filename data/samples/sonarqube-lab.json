@@ -1,0 +1,20 @@
+{
+  "issues": [
+    {
+      "key": "lab-1",
+      "rule": "squid:S5131",
+      "severity": "CRITICAL",
+      "component": "src/LoginController.java",
+      "message": "Lab fixture — reflected XSS risk in user-controlled output",
+      "type": "VULNERABILITY"
+    },
+    {
+      "key": "lab-2",
+      "rule": "python:S2068",
+      "severity": "BLOCKER",
+      "component": "app/settings.py",
+      "message": "Lab fixture — hard-coded credentials",
+      "type": "VULNERABILITY"
+    }
+  ]
+}

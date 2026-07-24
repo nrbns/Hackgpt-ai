@@ -1,0 +1,20 @@
+{
+  "results": {
+    "failed_checks": [
+      {
+        "check_id": "CKV_AWS_41",
+        "check_name": "Ensure no hard-coded AWS access key in IaC (lab fixture)",
+        "file_path": "terraform/main.tf",
+        "severity": "HIGH",
+        "resource": "aws_provider.default"
+      },
+      {
+        "check_id": "CKV_K8S_21",
+        "check_name": "Default namespace should not be used (lab fixture)",
+        "file_path": "k8s/deploy.yaml",
+        "severity": "MEDIUM",
+        "resource": "Deployment.default.app"
+      }
+    ]
+  }
+}

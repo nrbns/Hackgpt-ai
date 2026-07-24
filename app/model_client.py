@@ -100,24 +100,44 @@ class ModelClient:
         self._unsloth_source = source
         return tokenizer, model
 
-    async def stream_chat(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
-        if settings.model_backend == "ollama":
-            async for chunk in self._stream_ollama(messages):
+    async def stream_chat(self, messages: list[dict[str, str]], *, route: dict | None = None) -> AsyncIterator[str]:
+        backend = settings.model_backend
+        override_model = ""
+        if route and settings.router_enabled:
+            rec = route.get("recommended_backend") or backend
+            if rec in {
+                "openai",
+                "openrouter",
+                "groq",
+                "together",
+                "fireworks",
+                "openai_compat",
+                "ollama",
+                "hermes",
+                "huggingface",
+                "unsloth",
+            }:
+                backend = rec
+            override_model = (route.get("recommended_model") or "").strip()
+
+        if backend == "ollama":
+            model = override_model or settings.ollama_model
+            async for chunk in self._stream_ollama(messages, model=model):
                 yield chunk
-        elif settings.model_backend == "openai_compat":
-            async for chunk in self._stream_openai_compat(messages):
+        elif backend in {"openai_compat", "openai", "openrouter", "groq", "together", "fireworks"}:
+            async for chunk in self._stream_openai_compat(messages, backend=backend, model=override_model or None):
                 yield chunk
-        elif settings.model_backend == "hermes":
+        elif backend == "hermes":
             async for chunk in self._stream_hermes(messages):
                 yield chunk
-        elif settings.model_backend == "unsloth":
+        elif backend == "unsloth":
             async for chunk in self._stream_unsloth(messages):
                 yield chunk
-        elif settings.model_backend == "huggingface":
+        elif backend == "huggingface":
             async for chunk in self._stream_huggingface(messages):
                 yield chunk
         else:
-            yield f"Unknown MODEL_BACKEND: {settings.model_backend}"
+            yield f"Unknown MODEL_BACKEND: {backend}"
 
     async def stream_chat_hermes(
         self,
@@ -137,10 +157,13 @@ class ModelClient:
                 continue
             yield text, sid
 
-    async def _stream_ollama(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
+    async def _stream_ollama(
+        self, messages: list[dict[str, str]], *, model: str | None = None
+    ) -> AsyncIterator[str]:
         url = f"{settings.ollama_base_url.rstrip('/')}/api/chat"
+        use_model = (model or settings.ollama_model).strip() or settings.ollama_model
         payload = {
-            "model": settings.ollama_model,
+            "model": use_model,
             "messages": messages,
             "stream": True,
         }
@@ -152,8 +175,8 @@ class ModelClient:
                         body = await response.aread()
                         yield (
                             f"**Ollama error** ({response.status_code}): {body.decode()}\n\n"
-                            f"Make sure Ollama is running and model `{settings.ollama_model}` is pulled:\n"
-                            f"`ollama pull {settings.ollama_model}`"
+                            f"Make sure Ollama is running and model `{use_model}` is pulled:\n"
+                            f"`ollama pull {use_model}`"
                         )
                         return
                     async for line in response.aiter_lines():
@@ -170,37 +193,56 @@ class ModelClient:
             yield (
                 "**Cannot connect to Ollama.**\n\n"
                 "1. Install Ollama: https://ollama.com\n"
-                f"2. Run: `ollama pull {settings.ollama_model}`\n"
+                f"2. Run: `ollama pull {use_model}`\n"
                 "3. Start Ollama, then refresh this page."
             )
         except httpx.ReadTimeout:
             yield (
-                f"**Ollama timed out** waiting for `{settings.ollama_model}`.\n\n"
+                f"**Ollama timed out** waiting for `{use_model}`.\n\n"
                 "Try a smaller model (`tinyllama`) in the model dropdown, or disable RAG for faster replies."
             )
 
-    async def _stream_openai_compat(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
-        url = f"{settings.openai_compat_base_url.rstrip('/')}/chat/completions"
+    async def _stream_openai_compat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        backend: str | None = None,
+        model: str | None = None,
+    ) -> AsyncIterator[str]:
+        from app.model_router import CLOUD_PROVIDERS, resolve_openai_compat_endpoint
+
+        b = backend or settings.model_backend
+        base_url, api_key, default_model = resolve_openai_compat_endpoint(b)
+        use_model = (model or default_model).strip() or default_model
+        url = f"{base_url.rstrip('/')}/chat/completions"
         payload = {
-            "model": settings.openai_compat_model,
+            "model": use_model,
             "messages": messages,
             "stream": True,
             "temperature": 0.7,
         }
         headers = {
-            "Authorization": f"Bearer {settings.openai_compat_api_key}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
+        if b == "openrouter":
+            headers["HTTP-Referer"] = "https://github.com/nrbns/SecuraIQ-ai"
+            headers["X-Title"] = "SecuraIQ"
+        label = CLOUD_PROVIDERS.get(b, {}).get("label") or "OpenAI-compatible"
+        if b in CLOUD_PROVIDERS and not api_key:
+            yield (
+                f"**{label} API key not set.**\n\n"
+                f"Add the key in Settings → AI Router / Cloud providers, then retry."
+            )
+            return
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 async with client.stream("POST", url, json=payload, headers=headers) as response:
                     if response.status_code != 200:
                         body = await response.aread()
                         yield (
-                            f"**OpenAI-compatible backend error** ({response.status_code}): {body.decode()}\n\n"
-                            "If you are using LM Studio, make sure the local server is running on "
-                            f"`{settings.openai_compat_base_url}` and the loaded model name matches "
-                            f"`{settings.openai_compat_model}`."
+                            f"**{label} error** ({response.status_code}): {body.decode()}\n\n"
+                            f"Check URL `{base_url}` and model `{use_model}`."
                         )
                         return
 
@@ -220,10 +262,9 @@ class ModelClient:
                             yield content
         except httpx.ConnectError:
             yield (
-                "**Cannot connect to the OpenAI-compatible local server.**\n\n"
-                "1. Start LM Studio or another OpenAI-compatible local endpoint\n"
-                f"2. Confirm the server URL is `{settings.openai_compat_base_url}`\n"
-                f"3. Set `OPENAI_COMPAT_MODEL` to the loaded local model name in `.env`"
+                f"**Cannot connect to {label}.**\n\n"
+                f"1. Confirm the server URL is `{base_url}`\n"
+                f"2. Confirm API key and model `{use_model}` in Settings"
             )
 
     async def _stream_hermes(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
@@ -263,7 +304,7 @@ class ModelClient:
         tokenizer, model = self._load_hf_model()
         prompt = self._hf_build_prompt(tokenizer, messages)
 
-        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=3072)
+        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=2048)
         if torch.cuda.is_available():
             inputs = {k: v.cuda() for k, v in inputs.items()}
         else:
@@ -273,9 +314,11 @@ class ModelClient:
         generation_kwargs = dict(
             **inputs,
             streamer=streamer,
-            max_new_tokens=512,
+            max_new_tokens=320,
             do_sample=True,
-            temperature=0.7,
+            temperature=0.6,
+            top_p=0.9,
+            use_cache=True,
         )
 
         def generate() -> None:

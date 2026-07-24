@@ -1,0 +1,16 @@
+{
+  "id": "gdpr",
+  "name": "GDPR (core articles subset)",
+  "version": "demo-subset",
+  "description": "Core GDPR themes for gap analysis demos. Not legal advice; expand with counsel for production.",
+  "controls": [
+    {"id": "G.5", "title": "Principles (Art. 5)", "description": "Lawfulness, fairness, transparency, purpose limitation, minimization, accuracy, storage limitation, integrity/confidentiality, accountability."},
+    {"id": "G.6", "title": "Lawfulness of processing (Art. 6)", "description": "Documented lawful basis for each processing activity."},
+    {"id": "G.12", "title": "Transparent information (Art. 12–14)", "description": "Privacy notices and response to data subject requests."},
+    {"id": "G.25", "title": "Data protection by design (Art. 25)", "description": "Technical and organisational measures from design time."},
+    {"id": "G.30", "title": "Records of processing (Art. 30)", "description": "Maintain RoPA for controller/processor activities."},
+    {"id": "G.32", "title": "Security of processing (Art. 32)", "description": "Appropriate security including encryption, resilience, testing."},
+    {"id": "G.33", "title": "Breach notification (Art. 33–34)", "description": "72-hour regulator notice and data-subject notice when required."},
+    {"id": "G.35", "title": "DPIA (Art. 35)", "description": "Data protection impact assessments for high-risk processing."}
+  ]
+}

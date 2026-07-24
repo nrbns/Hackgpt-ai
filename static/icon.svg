@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="HackGPT">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="SecuraIQ">
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#1aa39a"/>
@@ -8,5 +8,5 @@
   </defs>
   <rect width="128" height="128" rx="32" fill="#0f161c"/>
   <rect x="8" y="8" width="112" height="112" rx="26" fill="url(#g)"/>
-  <text x="64" y="82" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="54" font-weight="800" fill="#f4faf9">H</text>
+  <text x="64" y="82" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="54" font-weight="800" fill="#f4faf9">S</text>
 </svg>

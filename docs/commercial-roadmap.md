@@ -1,0 +1,169 @@
+# SecuraIQ — AI Security Operating System
+
+**Positioning (do not market as a chatbot):**
+
+> An **AI Security Operating System** that helps organizations understand posture, track compliance, manage risk, review code, analyze findings, generate reports, and coordinate remediation — with AI as the orchestration layer over structured workflows.
+
+**Not** “ChatGPT for cyber.” **Not** a SIEM/EDR/GRC replacement.  
+**Yes** an orchestration layer that connects tools → unified analysis → reports · tasks · compliance · AI.
+
+```
+Security Tools / Evidence / Scans
+              │
+              ▼
+     SecuraIQ AI Platform
+              │
+              ▼
+        Unified Analysis
+              │
+              ▼
+ Reports · Tasks · Compliance · AI
+```
+
+---
+
+## World-class bar (every release)
+
+1. **Workflow-first** — each module completes a real security/compliance job end-to-end  
+2. **Evidence-based AI** — ground answers in uploads, frameworks, and register data; humans override  
+3. **Enterprise readiness** — orgs, RBAC, audit, integrations, reporting  
+4. **Open integration** — connect existing tools (Jira, scanners, cloud, SIEM later)  
+5. **Trust & transparency** — show evidence, confidence, and leave critical decisions to reviewers  
+
+---
+
+## Capability matrix (code-backed, Jul 2026)
+
+| Module | Status | Notes |
+|--------|--------|--------|
+| Document AI / RAG | Shipped ★★★ | Chroma default; Qdrant optional profile |
+| Gap Analysis | Shipped ★★★★ | ISO · NIST · CIS · SOC2 · PCI · ASVS |
+| Risk Register | Shipped ★★★ | Scored CRUD + export + heat map |
+| Vulnerability Mgmt | Shipped ★★★★ | CSV/JSON/XML + Trivy/Semgrep/Gitleaks/Grype/Checkov/Bandit/Sonar/ZAP |
+| Compliance hub | Shipped ★★★ | Frameworks + evidence + control center (+ ISO 27701 / HIPAA / GDPR subsets) |
+| Asset Inventory | Shipped ★★★ | CRUD + Ask AI |
+| Threat Intel | Shipped ★★★ | Watchlist + CISA KEV + NVD |
+| Knowledge Graph | Shipped ★★★ | `/api/graph` entity correlation |
+| Incident Mgmt | Shipped ★★★ | SOC desk + playbooks |
+| Executive Dashboard | Shipped ★★★★ | Mission Control KPIs + heat map |
+| Reports | Shipped ★★★★ | PDF · DOCX · XLSX · Markdown |
+| Workflow Automation | Shipped ★★★ | Jira + outbound webhooks |
+| Organizations / RBAC | Shipped ★★★ | Invite by username; MFA/SSO later |
+| Billing / SaaS metering | Not started | Month 3 |
+
+Differentiator workflows to deepen next:
+
+1. **AI Evidence Mapper** — upload → map controls → missing evidence  
+2. **AI Risk Engine** — scans + docs → register + roadmap  
+3. **AI Executive Reports** — one-click board / compliance / technical PDFs  
+4. **Security Knowledge Graph** — assets ↔ risks ↔ vulns ↔ controls ↔ evidence ↔ incidents  
+
+---
+
+## Suggested product IA (implemented in UI)
+
+```
+Dashboard (Command Center)
+AI Assistant
+Security → Assets · Vulnerabilities · Threat Intel · Incidents · Playbooks · Campaigns
+Compliance → Frameworks · Gap Analysis · Controls/Remediations · Evidence · Policies
+Risk → Risk Register (matrix on Dashboard)
+Development → Code Review · Secrets · Dependencies
+Automation · Reports
+Administration → Orgs · Settings · Account
+```
+
+---
+
+## 90-day roadmap
+
+### Month 1 — Trust the workflow (in progress / shipped core)
+
+- [x] Dashboard / Command Center → **Mission Control**
+- [x] Organizations + RBAC (basic)
+- [x] AI Workspace (agents + tools + files + memory + tasks)
+- [x] Gap Analysis + remediations
+- [x] Reports (Markdown + PDF)
+- [x] AI Work Queue (priority, owner, due, one-click task)
+- [x] Org context header + enterprise top nav + collapsible sidebar
+- [x] Evidence Mapper UX polish (control detail drawer)  
+- [x] Framework control center (Evidence · Owner · Risk · Status)
+- [x] Integrations catalog (Jira live; others planned)
+- [x] Billing placeholder (local / SaaS roadmap)
+
+### Month 2 — Depth
+
+- [x] Expand frameworks: SOC 2, PCI DSS, OWASP ASVS (subsets)  
+- [x] Risk register + heat map  
+- [x] Asset + vulnerability modules  
+- [x] Knowledge-graph style entity links in UI (`/api/graph`)  
+- [x] Scanner adapters: Trivy · Semgrep · Gitleaks · Grype · Checkov · Bandit · SonarQube · ZAP  
+- [x] Enterprise integrations catalog (`/api/integrations/catalog`)  
+- [x] Intel feeds: CISA KEV sync + NVD CVE lookup  
+- [x] Office reports: DOCX + XLSX (plus existing PDF/MD)  
+- [x] Optional Qdrant compose profile  
+- [x] Webhooks automation stub (n8n/Temporal bridges)  
+- [ ] Stronger executive trend charts  
+- [ ] Wazuh / TheHive connectors (Month 3+)  
+
+See also: [open-source-architecture.md](./open-source-architecture.md) · [enterprise-integrations.md](./enterprise-integrations.md) · [ai-router.md](./ai-router.md)
+
+### Month 3 — Enterprise & GTM
+
+- [ ] MFA (TOTP) + SSO (OIDC)  
+- [ ] More integrations (ServiceNow, Slack/Teams, cloud posture read-only)  
+- [ ] Billing / subscription / usage  
+- [ ] Help center + monitoring + backups docs  
+
+---
+
+## SaaS readiness checklist
+
+| Item | Status |
+|------|--------|
+| Authentication | Done (optional locally) |
+| Multi-tenant orgs | Done (basic) |
+| Billing | Todo |
+| Subscription management | Todo |
+| Usage tracking | Todo |
+| Notifications | Partial (SOC alerts nav) |
+| Help center / docs | Partial (README + roadmap) |
+| Backups | Todo (scripts) |
+| Monitoring / error reporting | Todo |
+| Audit logs | Done (basic) |
+| API keys | Done |
+
+---
+
+## Editions
+
+| Edition | Audience |
+|---------|----------|
+| Community | Individuals / students (local) |
+| Professional | Consultants (Swana Techno default) |
+| Business | SMB teams + collaboration |
+| Enterprise | SSO, RBAC, SLA, annual |
+| On-premises | Regulated / air-gapped |
+
+**GTM:** build → use on Swana engagements → refine → convert clients to subscribers.
+
+**Launch readiness:** see [launch-readiness.md](./launch-readiness.md) — current estimate **~5.5/10** (private alpha, not enterprise public). Target **9.5+** before public launch.
+
+### Suggested stages
+
+1. **Private Alpha** — internal dogfood (now)  
+2. **Closed Beta** — design partners + MFA/monitoring  
+3. **Public** — docs, billing, status, TLS/DR  
+4. **Enterprise** — SSO/SCIM/SLA  
+
+---
+
+## Explicit non-goals (near term)
+
+- Replacing SIEM / EDR / full GRC suites  
+- Crimeware / unauthorized access workflows  
+- Claiming SecuraIQ’s own SOC 2 / ISO certification before dogfooding  
+- Marketing “guaranteed compliance” or “100% secure”  
+- Shipping every AI agent before workflows are solid  
+
+Legal draft pages (counsel required): `/legal/`

@@ -1,0 +1,16 @@
+{
+  "id": "iso27701",
+  "name": "ISO/IEC 27701 (PIMS subset)",
+  "version": "2019-subset",
+  "description": "Privacy Information Management — subset for gap analysis demos. Expand with full Annex controls for production.",
+  "controls": [
+    {"id": "P.1", "title": "Privacy policy", "description": "Documented privacy policy aligned with processing purposes."},
+    {"id": "P.2", "title": "Lawful basis inventory", "description": "Record lawful bases and purposes for personal data processing."},
+    {"id": "P.3", "title": "Data subject rights", "description": "Process for access, erasure, portability, and objection requests."},
+    {"id": "P.4", "title": "Processor agreements", "description": "Contracts with processors include privacy and security obligations."},
+    {"id": "P.5", "title": "Breach notification", "description": "Privacy incident playbook with regulator/data-subject timelines."},
+    {"id": "P.6", "title": "Privacy by design", "description": "DPIA / privacy review for high-risk processing."},
+    {"id": "P.7", "title": "Retention & disposal", "description": "Retention schedules and secure disposal of personal data."},
+    {"id": "P.8", "title": "Cross-border transfers", "description": "Transfer mechanisms documented for international flows."}
+  ]
+}

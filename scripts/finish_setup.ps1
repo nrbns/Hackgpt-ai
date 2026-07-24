@@ -1,11 +1,11 @@
-# Finish PentestGPT setup (Windows)
+# Finish SecuraIQ setup (Windows)
 # Usage: .\scripts\finish_setup.ps1
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location (Join-Path $root "..")
 
-Write-Host "PentestGPT Finish Setup" -ForegroundColor Green
+Write-Host "SecuraIQ Finish Setup" -ForegroundColor Green
 
 if (-not (Test-Path ".venv")) {
     Write-Host "Creating virtual environment..."

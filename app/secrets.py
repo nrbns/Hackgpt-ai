@@ -22,9 +22,15 @@ _MASK_PLACEHOLDERS = {
 _SECRET_SUFFIXES = ("_api_key", "_token", "_secret", "_password")
 _SECRET_EXACT = {
     "hf_token",
+    "jira_api_token",
     "openai_compat_api_key",
     "hermes_api_key",
     "hermes_session_key",
+    "openai_api_key",
+    "openrouter_api_key",
+    "groq_api_key",
+    "together_api_key",
+    "fireworks_api_key",
 }
 
 # Redact common secret shapes if they appear in logs/errors.

@@ -1,0 +1,24 @@
+{
+  "Results": [
+    {
+      "Target": "lab-web:8080 (authorized DVWA lab)",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2021-44228",
+          "PkgName": "log4j-core",
+          "Title": "Apache Log4j2 JNDI injection (lab sample)",
+          "Severity": "CRITICAL",
+          "InstalledVersion": "2.14.1",
+          "FixedVersion": "2.17.1"
+        },
+        {
+          "VulnerabilityID": "CVE-2023-44487",
+          "PkgName": "golang.org/x/net",
+          "Title": "HTTP/2 Rapid Reset (lab sample)",
+          "Severity": "HIGH",
+          "InstalledVersion": "0.10.0"
+        }
+      ]
+    }
+  ]
+}

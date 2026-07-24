@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 .env
 data/chroma/
+data/*.db
+data/*.db-*
+data/uploads/
 tools/ollama/
 chat_test_output.txt
 *.log
@@ -10,3 +13,4 @@ chat_test_output.txt
 Thumbs.db
 .idea/
 .vscode/*.local.json
+scripts/_patch_cc_js.py

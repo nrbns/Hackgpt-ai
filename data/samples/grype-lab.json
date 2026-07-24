@@ -1,0 +1,28 @@
+{
+  "matches": [
+    {
+      "vulnerability": {
+        "id": "CVE-2024-21626",
+        "severity": "High",
+        "description": "Lab fixture — runc container breakout (authorized demo only)"
+      },
+      "artifact": {
+        "name": "runc",
+        "version": "1.1.11",
+        "type": "apk"
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "CVE-2023-44487",
+        "severity": "Medium",
+        "description": "Lab fixture — HTTP/2 Rapid Reset"
+      },
+      "artifact": {
+        "name": "golang.org/x/net",
+        "version": "0.15.0",
+        "type": "go-module"
+      }
+    }
+  ]
+}

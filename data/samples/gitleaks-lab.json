@@ -1,0 +1,16 @@
+[
+  {
+    "RuleID": "generic-api-key",
+    "Description": "Generic API key (authorized lab sample — fake)",
+    "File": "lab_app/config.env",
+    "StartLine": 3,
+    "Match": "API_KEY=lab-sample-not-real"
+  },
+  {
+    "RuleID": "aws-access-key",
+    "Description": "AWS Access Key ID (authorized lab sample — fake)",
+    "File": "lab_app/terraform/main.tf",
+    "StartLine": 12,
+    "Match": "AKIAEXAMPLELABONLY000"
+  }
+]

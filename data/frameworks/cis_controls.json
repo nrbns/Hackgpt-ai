@@ -1,0 +1,25 @@
+{
+  "id": "cis_controls",
+  "name": "CIS Controls v8 (IG1 essentials)",
+  "version": "8",
+  "controls": [
+    {"id": "CIS-1", "title": "Inventory and Control of Enterprise Assets", "domain": "IG1", "keywords": ["asset inventory", "hardware inventory", "discovered assets"]},
+    {"id": "CIS-2", "title": "Inventory and Control of Software Assets", "domain": "IG1", "keywords": ["software inventory", "unauthorized software", "allowlist"]},
+    {"id": "CIS-3", "title": "Data Protection", "domain": "IG1", "keywords": ["data classification", "encryption", "DLP", "sensitive data"]},
+    {"id": "CIS-4", "title": "Secure Configuration of Enterprise Assets and Software", "domain": "IG1", "keywords": ["hardening", "secure configuration", "CIS benchmark"]},
+    {"id": "CIS-5", "title": "Account Management", "domain": "IG1", "keywords": ["account management", "disable unused", "JML", "identity"]},
+    {"id": "CIS-6", "title": "Access Control Management", "domain": "IG1", "keywords": ["MFA", "access control", "privileged access", "SSO"]},
+    {"id": "CIS-7", "title": "Continuous Vulnerability Management", "domain": "IG1", "keywords": ["vulnerability", "patch", "scan", "CVE"]},
+    {"id": "CIS-8", "title": "Audit Log Management", "domain": "IG1", "keywords": ["audit log", "logging", "log retention", "SIEM"]},
+    {"id": "CIS-9", "title": "Email and Web Browser Protections", "domain": "IG1", "keywords": ["email security", "SPF", "DMARC", "web filtering", "phishing"]},
+    {"id": "CIS-10", "title": "Malware Defenses", "domain": "IG1", "keywords": ["anti-malware", "EDR", "antivirus"]},
+    {"id": "CIS-11", "title": "Data Recovery", "domain": "IG1", "keywords": ["backup", "restore test", "recovery"]},
+    {"id": "CIS-12", "title": "Network Infrastructure Management", "domain": "IG1", "keywords": ["firewall", "network", "segmentation", "secure admin"]},
+    {"id": "CIS-13", "title": "Network Monitoring and Defense", "domain": "IG1", "keywords": ["network monitoring", "IDS", "detection"]},
+    {"id": "CIS-14", "title": "Security Awareness and Skills Training", "domain": "IG1", "keywords": ["awareness", "training", "phishing simulation"]},
+    {"id": "CIS-15", "title": "Service Provider Management", "domain": "IG1", "keywords": ["vendor", "service provider", "third party", "SLA"]},
+    {"id": "CIS-16", "title": "Application Software Security", "domain": "IG1", "keywords": ["AppSec", "secure coding", "SAST", "OWASP"]},
+    {"id": "CIS-17", "title": "Incident Response Management", "domain": "IG1", "keywords": ["incident response", "IR plan", "contacts", "playbook"]},
+    {"id": "CIS-18", "title": "Penetration Testing", "domain": "IG1", "keywords": ["penetration test", "red team", "security assessment"]}
+  ]
+}
