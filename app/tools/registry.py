@@ -223,23 +223,12 @@ TOOL_CATALOG: dict[str, ToolSpec] = {
 }
 
 
-# Default auto set for assess / when tools enabled with a target
+# Default auto set — lightweight builtins only (fast). External/heavy tools need explicit ask.
 AUTO_LIGHT_TOOLS = (
     "dns",
     "ports",
     "http",
-    "tls",
-    "tech",
     "headers_security",
-    "robots",
-    "email_auth",
-    "nmap",
-    "dig",
-    "curl",
-    "whatweb",
-    "sslscan",
-    "ping",
-    "rustscan",
 )
 
 # Awareness / phishing mode — no port scanning; DNS + lure review only

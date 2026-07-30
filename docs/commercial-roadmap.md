@@ -49,7 +49,7 @@ Security Tools / Evidence / Scans
 | Reports | Shipped ★★★★ | PDF · DOCX · XLSX · Markdown |
 | Workflow Automation | Shipped ★★★ | Jira + outbound webhooks |
 | Organizations / RBAC | Shipped ★★★ | Invite by username; MFA/SSO later |
-| Billing / SaaS metering | Not started | Month 3 |
+| Billing / SaaS metering | Usage metering + plan model shipped (`app/billing.py`); live Stripe payment processing still requires a real Stripe account (`app/billing_stripe.py` is wired but inert without keys) | Month 3 |
 
 Differentiator workflows to deepen next:
 
@@ -89,7 +89,7 @@ Administration → Orgs · Settings · Account
 - [x] Evidence Mapper UX polish (control detail drawer)  
 - [x] Framework control center (Evidence · Owner · Risk · Status)
 - [x] Integrations catalog (Jira live; others planned)
-- [x] Billing placeholder (local / SaaS roadmap)
+- [x] Usage metering + plan model (`app/billing.py`, `GET /api/billing/usage`) — this line previously claimed a "billing placeholder" existed when no billing code was actually in the repo; corrected here
 
 ### Month 2 — Depth
 
@@ -112,7 +112,7 @@ See also: [open-source-architecture.md](./open-source-architecture.md) · [enter
 
 - [ ] MFA (TOTP) + SSO (OIDC)  
 - [ ] More integrations (ServiceNow, Slack/Teams, cloud posture read-only)  
-- [ ] Billing / subscription / usage  
+- [~] Billing / subscription / usage — usage metering + plans shipped; live Stripe payment collection needs your Stripe account + pricing decisions
 - [ ] Help center + monitoring + backups docs  
 
 ---
@@ -123,13 +123,13 @@ See also: [open-source-architecture.md](./open-source-architecture.md) · [enter
 |------|--------|
 | Authentication | Done (optional locally) |
 | Multi-tenant orgs | Done (basic) |
-| Billing | Todo |
+| Billing | Usage metering done; live payment processing todo (needs a Stripe account) |
 | Subscription management | Todo |
 | Usage tracking | Todo |
-| Notifications | Partial (SOC alerts nav) |
-| Help center / docs | Partial (README + roadmap) |
-| Backups | Todo (scripts) |
-| Monitoring / error reporting | Todo |
+| Notifications | Done — in-app feed + email (`app/notifications.py`) |
+| Help center / docs | Done — FAQ + support triage process (`docs/help-center.md`), plus existing in-app manual |
+| Backups | Done — `scripts/backup.sh`/`.ps1` + `scripts/restore.sh`, runbook in `docs/backup-dr.md` |
+| Monitoring / error reporting | Done — `GET /api/metrics` (Prometheus format) + optional Sentry (`docs/monitoring.md`) |
 | Audit logs | Done (basic) |
 | API keys | Done |
 

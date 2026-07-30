@@ -8,26 +8,81 @@ from typing import Any
 from app.db import audit, get_conn, new_id, now, row_to_dict
 
 
-def create_engagement(user_id: str, name: str, scope_notes: str = "") -> dict[str, Any]:
+ENGAGEMENT_STATUSES = ("draft", "active", "on_hold", "completed", "archived")
+
+# Multi-project lifecycle: what status an engagement may move to next.
+# "partial" engagements live in on_hold (paused mid-way) rather than being
+# force-closed or force-active.
+ENGAGEMENT_TRANSITIONS: dict[str, set[str]] = {
+    "draft": {"active", "archived"},
+    "active": {"on_hold", "completed", "archived"},
+    "on_hold": {"active", "completed", "archived"},
+    "completed": {"archived"},
+    "archived": set(),
+}
+
+
+def create_engagement(
+    user_id: str,
+    name: str,
+    scope_notes: str = "",
+    status: str = "active",
+) -> dict[str, Any]:
+    if status not in ENGAGEMENT_STATUSES:
+        status = "active"
     eid = new_id()
     t = now()
     c = get_conn()
     c.execute(
-        "INSERT INTO engagements (id, user_id, name, scope_notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (eid, user_id, (name or "Engagement").strip(), scope_notes or "", t, t),
+        "INSERT INTO engagements (id, user_id, name, scope_notes, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (eid, user_id, (name or "Engagement").strip(), scope_notes or "", status, t, t),
     )
     c.commit()
-    audit("engagement_create", user_id, {"id": eid, "name": name})
+    audit("engagement_create", user_id, {"id": eid, "name": name, "status": status})
     return get_engagement(user_id, eid)  # type: ignore[return-value]
 
 
-def list_engagements(user_id: str) -> list[dict[str, Any]]:
+def list_engagements(user_id: str, status: str | None = None) -> list[dict[str, Any]]:
     c = get_conn()
-    rows = c.execute(
-        "SELECT * FROM engagements WHERE user_id = ? ORDER BY updated_at DESC",
-        (user_id,),
-    ).fetchall()
+    if status:
+        rows = c.execute(
+            "SELECT * FROM engagements WHERE user_id = ? AND status = ? ORDER BY updated_at DESC",
+            (user_id, status),
+        ).fetchall()
+    else:
+        rows = c.execute(
+            "SELECT * FROM engagements WHERE user_id = ? ORDER BY updated_at DESC",
+            (user_id,),
+        ).fetchall()
     return [dict(r) for r in rows]
+
+
+def transition_engagement_status(user_id: str, engagement_id: str, new_status: str) -> dict[str, Any]:
+    """Move an engagement to a new lifecycle stage, enforcing valid transitions
+    so a completed/archived engagement can't be silently reopened by accident.
+    """
+    eng = get_engagement(user_id, engagement_id)
+    if not eng:
+        raise LookupError("Engagement not found")
+    if new_status not in ENGAGEMENT_STATUSES:
+        raise ValueError(f"Unknown status '{new_status}'. Must be one of: {', '.join(ENGAGEMENT_STATUSES)}")
+    current = eng.get("status") or "active"
+    if new_status == current:
+        return eng
+    allowed = ENGAGEMENT_TRANSITIONS.get(current, set())
+    if new_status not in allowed:
+        raise ValueError(
+            f"Cannot move engagement from '{current}' to '{new_status}'. "
+            f"Allowed from '{current}': {sorted(allowed) or 'none (terminal state)'}"
+        )
+    c = get_conn()
+    c.execute(
+        "UPDATE engagements SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+        (new_status, now(), engagement_id, user_id),
+    )
+    c.commit()
+    audit("engagement_status_change", user_id, {"id": engagement_id, "from": current, "to": new_status})
+    return get_engagement(user_id, engagement_id)  # type: ignore[return-value]
 
 
 def get_engagement(user_id: str, engagement_id: str) -> dict[str, Any] | None:

@@ -13,4 +13,3 @@ chat_test_output.txt
 Thumbs.db
 .idea/
 .vscode/*.local.json
-scripts/_patch_cc_js.py

@@ -26,12 +26,12 @@ MVP_STACK: list[dict[str, str]] = [
     {"category": "SIEM", "tool": "Wazuh", "status": "planned"},
     {"category": "Automation", "tool": "n8n via webhooks", "status": "shipped"},
     {"category": "Case mgmt", "tool": "TheHive", "status": "planned"},
-    {"category": "Identity", "tool": "Keycloak / Authentik", "status": "planned"},
+    {"category": "Identity", "tool": "Keycloak / Authentik (OIDC)", "status": "shipped"},
     {"category": "Database", "tool": "SQLite now → PostgreSQL", "status": "partial"},
     {"category": "Vector DB", "tool": "Chroma + Qdrant profile", "status": "shipped"},
     {"category": "Storage", "tool": "Local data/ → MinIO", "status": "partial"},
     {"category": "Backend", "tool": "FastAPI", "status": "shipped"},
-    {"category": "Frontend", "tool": "Mission Control (Next.js later)", "status": "shipped"},
+    {"category": "Frontend", "tool": "Mission Control (static SPA)", "status": "shipped"},
 ]
 
 
@@ -44,6 +44,7 @@ CATALOG: list[dict[str, Any]] = [
     {"id": "openrouter", "name": "OpenRouter", "category": "ai", "status": "shipped", "hint": "Many models, one key"},
     {"id": "together", "name": "Together AI", "category": "ai", "status": "shipped"},
     {"id": "fireworks", "name": "Fireworks AI", "category": "ai", "status": "shipped"},
+    {"id": "huggingface_api", "name": "Hugging Face Inference Providers", "category": "ai", "status": "shipped"},
     {"id": "ollama", "name": "Ollama (Qwen/Llama/Mistral/DeepSeek/Gemma)", "category": "ai", "status": "shipped"},
     # SAST
     {"id": "sonarqube", "name": "SonarQube", "category": "sast", "status": "import", "hint": "Import issues JSON export"},
@@ -90,10 +91,19 @@ CATALOG: list[dict[str, Any]] = [
     {"id": "nvd", "name": "NVD", "category": "intel", "status": "shipped"},
     {"id": "cwe", "name": "CWE", "category": "intel", "status": "partial"},
     {"id": "capec", "name": "CAPEC", "category": "intel", "status": "planned"},
-    {"id": "otx", "name": "AlienVault OTX", "category": "intel", "status": "planned"},
-    {"id": "virustotal", "name": "VirusTotal", "category": "intel", "status": "commercial"},
-    {"id": "abuseipdb", "name": "AbuseIPDB", "category": "intel", "status": "planned"},
-    {"id": "shodan", "name": "Shodan", "category": "intel", "status": "commercial"},
+    {"id": "otx", "name": "AlienVault OTX", "category": "intel", "status": "shipped", "hint": "GET /api/intel/lookup"},
+    {"id": "greynoise", "name": "GreyNoise", "category": "intel", "status": "shipped", "hint": "Community IP lookup"},
+    {"id": "urlscan", "name": "URLScan.io", "category": "intel", "status": "shipped"},
+    {"id": "msrc", "name": "Microsoft MSRC", "category": "intel", "status": "shipped"},
+    {"id": "filterlists", "name": "FilterLists", "category": "intel", "status": "shipped"},
+    {"id": "phishstats", "name": "PhishStats", "category": "intel", "status": "shipped"},
+    {"id": "free_apis_security", "name": "Free APIs (Security)", "category": "intel", "status": "shipped", "hint": "GET /api/intel/free/catalog"},
+    {"id": "virustotal", "name": "VirusTotal", "category": "intel", "status": "partial", "hint": "Set VIRUSTOTAL_API_KEY"},
+    {"id": "abuseipdb", "name": "AbuseIPDB", "category": "intel", "status": "partial", "hint": "Set ABUSEIPDB_API_KEY"},
+    {"id": "shodan", "name": "Shodan", "category": "intel", "status": "partial", "hint": "Set SHODAN_API_KEY"},
+    {"id": "hibp", "name": "Have I Been Pwned", "category": "intel", "status": "partial", "hint": "Set HIBP_API_KEY"},
+    {"id": "urlhaus", "name": "URLhaus", "category": "intel", "status": "partial", "hint": "Set URLHAUS_API_KEY"},
+    {"id": "emailrep", "name": "EmailRep", "category": "intel", "status": "partial", "hint": "Set EMAILREP_API_KEY"},
     # SIEM / SOAR / IR / EDR
     {"id": "wazuh", "name": "Wazuh", "category": "siem", "status": "planned"},
     {"id": "elastic", "name": "Elastic Stack", "category": "siem", "status": "planned"},
@@ -122,8 +132,8 @@ CATALOG: list[dict[str, Any]] = [
     {"id": "gdpr", "name": "GDPR", "category": "compliance", "status": "shipped"},
     {"id": "asvs", "name": "OWASP ASVS", "category": "compliance", "status": "shipped"},
     # Identity / platform
-    {"id": "keycloak", "name": "Keycloak", "category": "identity", "status": "planned"},
-    {"id": "authentik", "name": "Authentik", "category": "identity", "status": "planned"},
+    {"id": "keycloak", "name": "Keycloak", "category": "identity", "status": "shipped", "hint": "OIDC via /api/auth/oidc/*"},
+    {"id": "authentik", "name": "Authentik", "category": "identity", "status": "shipped", "hint": "OIDC via /api/auth/oidc/*"},
     {"id": "authelia", "name": "Authelia", "category": "identity", "status": "planned"},
     {"id": "qdrant", "name": "Qdrant", "category": "vectors", "status": "shipped"},
     {"id": "weaviate", "name": "Weaviate", "category": "vectors", "status": "planned"},
@@ -142,18 +152,19 @@ CATALOG: list[dict[str, Any]] = [
     {"id": "otel", "name": "OpenTelemetry", "category": "observability", "status": "planned"},
     {"id": "sentry", "name": "Sentry", "category": "observability", "status": "planned"},
     # SCM / PM / Comms
-    {"id": "github", "name": "GitHub", "category": "scm", "status": "planned"},
+    {"id": "github", "name": "GitHub (webhook)", "category": "scm", "status": "shipped", "hint": "POST /api/integrations/github/webhook"},
     {"id": "gitlab", "name": "GitLab", "category": "scm", "status": "planned"},
     {"id": "azure_devops", "name": "Azure DevOps", "category": "scm", "status": "planned"},
     {"id": "bitbucket", "name": "Bitbucket", "category": "scm", "status": "planned"},
     {"id": "jira", "name": "Jira", "category": "pm", "status": "shipped"},
+    {"id": "servicenow", "name": "ServiceNow", "category": "itsm", "status": "shipped", "hint": "Set SERVICENOW_INSTANCE_URL/USERNAME/PASSWORD — POST /api/integrations/servicenow/incident"},
     {"id": "linear", "name": "Linear", "category": "pm", "status": "planned"},
     {"id": "azure_boards", "name": "Azure Boards", "category": "pm", "status": "planned"},
     {"id": "trello", "name": "Trello", "category": "pm", "status": "planned"},
-    {"id": "slack", "name": "Slack", "category": "comms", "status": "planned", "hint": "Use webhook bridge today"},
-    {"id": "teams", "name": "Microsoft Teams", "category": "comms", "status": "planned"},
+    {"id": "slack", "name": "Slack (webhook)", "category": "comms", "status": "shipped", "hint": "Set SLACK_WEBHOOK_URL — auto-alerts on critical vulns/incidents, not a native OAuth app"},
+    {"id": "teams", "name": "Microsoft Teams", "category": "comms", "status": "shipped", "hint": "Set TEAMS_WEBHOOK_URL (Incoming Webhook connector)"},
     {"id": "discord", "name": "Discord", "category": "comms", "status": "planned"},
-    {"id": "smtp", "name": "Email (SMTP)", "category": "comms", "status": "planned"},
+    {"id": "smtp", "name": "Email (SMTP)", "category": "comms", "status": "shipped", "hint": "Set SMTP_HOST/SMTP_FROM — see app/notifications.py"},
     # Docs
     {"id": "pdf", "name": "PDF parsing / export", "category": "documents", "status": "shipped"},
     {"id": "docx", "name": "DOCX", "category": "documents", "status": "shipped"},
@@ -208,7 +219,7 @@ SCANNER_IDS = frozenset(
         "openvas",
     }
 )
-AI_IDS = frozenset({"openai", "groq", "openrouter", "together", "fireworks", "ollama"})
+AI_IDS = frozenset({"openai", "groq", "openrouter", "together", "fireworks", "huggingface_api", "ollama"})
 INTEL_IDS = frozenset({"mitre_attack", "cisa_kev", "nvd", "cwe"})
 DOC_IDS = frozenset({"pdf", "docx", "xlsx", "markdown"})
 WEBHOOK_IDS = frozenset({"n8n", "slack"})
@@ -257,7 +268,11 @@ def resolve_enterprise_action(feat: dict[str, Any]) -> dict[str, str]:
     if fid in {"webhooks", "automation"}:
         return {"kind": "webhooks", "label": "Webhooks"}
     if fid in {"api_keys", "audit"}:
-        return {"kind": "settings", "label": "Settings", "focus": "api"}
+        return {
+            "kind": "settings",
+            "label": "Open" if fid == "api_keys" else "View audit",
+            "focus": "keys" if fid == "api_keys" else "audit",
+        }
     return {"kind": "info", "label": "Available"}
 
 
@@ -284,8 +299,8 @@ def catalog_payload() -> dict[str, Any]:
         for f in (
             {"id": "multi_tenancy", "name": "Multi-tenancy", "status": "shipped"},
             {"id": "rbac", "name": "RBAC", "status": "shipped"},
-            {"id": "sso", "name": "SSO", "status": "planned"},
-            {"id": "mfa", "name": "MFA", "status": "planned"},
+            {"id": "sso", "name": "SSO (OIDC)", "status": "shipped"},
+            {"id": "mfa", "name": "MFA (TOTP)", "status": "shipped"},
             {"id": "audit", "name": "Audit logs", "status": "shipped"},
             {"id": "api_keys", "name": "API keys", "status": "shipped"},
             {"id": "webhooks", "name": "Webhooks", "status": "shipped"},

@@ -77,7 +77,15 @@ REQUIRED_JS_PATHS = [
     "/api/search",
     "/api/intel/watch",
     "/api/engagements",
-    "/api/auth/status",
+    "/api/billing/plans",
+    "/api/billing/usage",
+    "/api/integrations/servicenow/incident",
+    "/api/frameworks/",
+    "/api/dashboard/brief",
+    "/api/auth/mfa/verify",
+    "/api/integrations/github/status",
+    "/api/audit/export",
+    "/api/vulnerabilities/samples",
     "/api/files",
     "/api/orgs",
     "/api/evidence",
@@ -86,6 +94,8 @@ REQUIRED_JS_PATHS = [
     "/api/tools/run",
     "/api/graph",
     "/api/intel/kev",
+    "/api/intel/free/catalog",
+    "/api/intel/lookup",
     "/api/webhooks",
 ]
 
@@ -115,7 +125,50 @@ def main() -> int:
         auth = c.get(f"{BASE}/api/auth/status").json()
         if "auth_enabled" not in auth:
             fail(f"auth status {auth}")
-        print("OK auth/status enabled=", auth.get("auth_enabled"))
+        for key in ("oidc_enabled", "mfa"):
+            if key not in auth:
+                fail(f"auth status missing {key}: {auth}")
+        print("OK auth/status enabled=", auth.get("auth_enabled"), "oidc=", auth.get("oidc_enabled"))
+
+        gh = c.get(f"{BASE}/api/integrations/github/status")
+        if gh.status_code != 200:
+            fail(f"github status {gh.status_code} {gh.text}")
+        ghj = gh.json()
+        if "configured" not in ghj or "webhook_path" not in ghj:
+            fail(f"github status payload {ghj}")
+        print("OK github/status configured=", ghj.get("configured"))
+
+        samples = c.get(f"{BASE}/api/vulnerabilities/samples")
+        if samples.status_code != 200:
+            fail(f"vuln samples {samples.status_code} {samples.text}")
+        sampj = samples.json()
+        if "samples" not in sampj:
+            fail(f"vuln samples payload {sampj}")
+        print("OK vulnerabilities/samples count=", len(sampj.get("samples") or []))
+
+        settings = c.get(f"{BASE}/api/settings").json()
+        marker_url = "https://integration-searxng.test"
+        marker_issuer = "https://issuer.integration.test/realms/securaiq"
+        patch = c.post(
+            f"{BASE}/api/settings",
+            json={
+                "searxng_url": marker_url,
+                "oidc_issuer": marker_issuer,
+                "together_model": "meta-llama/Llama-3.1-8B-Instruct-Turbo",
+                "huggingface_api_model": settings.get("huggingface_api_model") or "meta-llama/Llama-3.1-8B-Instruct",
+            },
+        )
+        if patch.status_code != 200:
+            fail(f"settings enterprise patch {patch.status_code} {patch.text}")
+        s2 = c.get(f"{BASE}/api/settings").json()
+        if s2.get("searxng_url") != marker_url or s2.get("oidc_issuer") != marker_issuer:
+            fail(f"settings round-trip failed: {s2.get('searxng_url')} {s2.get('oidc_issuer')}")
+        print("OK settings round-trip intel/oidc/models")
+
+        audit_csv = c.get(f"{BASE}/api/audit/export")
+        if audit_csv.status_code != 200 or "action" not in audit_csv.text:
+            fail(f"audit export {audit_csv.status_code} {audit_csv.text[:120]!r}")
+        print("OK audit/export csv rows=", audit_csv.text.count("\n"))
 
         # Engagement
         eng = c.post(

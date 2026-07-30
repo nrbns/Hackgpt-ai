@@ -84,7 +84,10 @@ def register_user(username: str, password: str, role: str = "user") -> AuthUser:
     return AuthUser(id=uid, username=username, role=role)
 
 
-def login(username: str, password: str) -> tuple[AuthUser, str]:
+def login(username: str, password: str, *, totp: str | None = None) -> tuple[AuthUser, str] | dict[str, Any]:
+    """Return (user, token) or {mfa_required, mfa_token} when MFA step-up needed."""
+    from app.mfa import create_mfa_pending, verify_totp
+
     c = get_conn()
     row = c.execute(
         "SELECT * FROM users WHERE username = ?",
@@ -92,6 +95,15 @@ def login(username: str, password: str) -> tuple[AuthUser, str]:
     ).fetchone()
     if not row or not verify_password(password, row["password_hash"]):
         raise ValueError("Invalid username or password")
+
+    mfa_on = bool(row["mfa_enabled"])
+    if mfa_on:
+        if not totp:
+            pending = create_mfa_pending(row["id"])
+            return {"mfa_required": True, "mfa_token": pending}
+        if not verify_totp(row["mfa_secret"] or "", totp):
+            raise ValueError("Invalid authenticator code")
+
     token = secrets.token_urlsafe(32)
     expires = now() + SESSION_DAYS * 86400
     c.execute(
@@ -100,6 +112,29 @@ def login(username: str, password: str) -> tuple[AuthUser, str]:
     )
     c.commit()
     audit("login", row["id"], {"username": row["username"]})
+    return AuthUser(id=row["id"], username=row["username"], role=row["role"]), token
+
+
+def complete_mfa_login(mfa_token: str, totp: str) -> tuple[AuthUser, str]:
+    from app.mfa import consume_mfa_pending, verify_totp
+
+    user_id = consume_mfa_pending(mfa_token)
+    if not user_id:
+        raise ValueError("MFA session expired — log in again")
+    row = get_conn().execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not row:
+        raise ValueError("User not found")
+    if not verify_totp(row["mfa_secret"] or "", totp):
+        raise ValueError("Invalid authenticator code")
+    token = secrets.token_urlsafe(32)
+    expires = now() + SESSION_DAYS * 86400
+    c = get_conn()
+    c.execute(
+        "INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
+        (hash_token(token), row["id"], expires, now()),
+    )
+    c.commit()
+    audit("login", row["id"], {"username": row["username"], "mfa": True})
     return AuthUser(id=row["id"], username=row["username"], role=row["role"]), token
 
 
@@ -112,7 +147,7 @@ def logout(token: str | None) -> None:
 
 
 def create_api_key(user_id: str, name: str = "default") -> tuple[str, dict[str, Any]]:
-    raw = "hg_" + secrets.token_urlsafe(28)
+    raw = "sq_" + secrets.token_urlsafe(28)
     kid = new_id()
     c = get_conn()
     c.execute(
@@ -122,6 +157,25 @@ def create_api_key(user_id: str, name: str = "default") -> tuple[str, dict[str, 
     c.commit()
     audit("api_key_create", user_id, {"name": name, "prefix": raw[:10]})
     return raw, {"id": kid, "name": name, "key_prefix": raw[:10]}
+
+
+def list_api_keys(user_id: str) -> list[dict[str, Any]]:
+    rows = get_conn().execute(
+        "SELECT id, name, key_prefix, created_at FROM api_keys WHERE user_id = ? ORDER BY created_at DESC",
+        (user_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def revoke_api_key(user_id: str, key_id: str) -> bool:
+    cur = get_conn().execute(
+        "DELETE FROM api_keys WHERE id = ? AND user_id = ?", (key_id, user_id)
+    )
+    get_conn().commit()
+    if cur.rowcount:
+        audit("api_key_revoke", user_id, {"id": key_id})
+        return True
+    return False
 
 
 def resolve_user(authorization: str | None, api_key_header: str | None = None) -> AuthUser | None:

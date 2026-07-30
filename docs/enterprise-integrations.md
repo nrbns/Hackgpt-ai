@@ -40,7 +40,7 @@ Each catalog item includes a `ui_action` so Mission Control can **Connect** to t
 | Containers / SCA | Trivy + Grype | **import** |
 | IaC | Checkov | **import** |
 | DAST | OWASP ZAP + Nuclei | PATH + ZAP **import** |
-| Threat intel | MITRE + NVD + CISA KEV | Shipped |
+| Threat intel | MITRE + NVD + CISA KEV + Free APIs Security | Shipped (`/api/intel/*`) |
 | SIEM | Wazuh | Planned (webhook ingest later) |
 | Automation | n8n | Webhooks shipped |
 | Case mgmt | TheHive | Planned |
@@ -49,7 +49,7 @@ Each catalog item includes a `ui_action` so Mission Control can **Connect** to t
 | Vectors | Qdrant | Optional compose profile |
 | Storage | Local → MinIO | Local shipped |
 | Backend | FastAPI | Shipped |
-| Frontend | Mission Control (Next.js later) | Shipped |
+| Frontend | Mission Control (static SPA) | Shipped |
 
 ---
 
@@ -77,6 +77,24 @@ AI interprets findings and drafts remediations — it does **not** invent scan r
 Shipped catalogs (subsets for gap analysis): ISO 27001 · ISO 27701 · NIST CSF · CIS · SOC 2 · PCI DSS · HIPAA · GDPR · OWASP ASVS.
 
 Planned depth: NIST SP 800-53 full mapping.
+
+---
+
+## Free Security APIs
+
+Full catalog from [Free APIs — Security](https://free-apis.github.io/#/categories/Security) (plus Anti-Malware):
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/intel/free/catalog` | Every listed API with live / keyed / catalog / skipped status |
+| `GET /api/intel/lookup?q=` | Unified IOC/CVE lookup (GreyNoise, OTX, URLScan, PhishStats, NVD, …) |
+| `GET /api/intel/greynoise/{ip}` | GreyNoise community |
+| `GET /api/intel/msrc` | Microsoft security updates |
+| `GET /api/intel/filterlists` | Blocklist directory |
+
+Optional keys (Settings / `.env`): AbuseIPDB, VirusTotal, Shodan, OTX, URLScan, HIBP, GreyNoise, Pulsedive, MalwareBazaar, EmailRep, URLhaus.
+
+Skipped on purpose: criminal background checks, Privacy.com banking, hash-cracking APIs.
 
 ---
 

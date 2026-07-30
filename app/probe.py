@@ -89,6 +89,7 @@ async def probe_backends() -> dict[str, Any]:
         "groq",
         "together",
         "fireworks",
+        "huggingface_api",
         "huggingface",
         "unsloth",
     ]

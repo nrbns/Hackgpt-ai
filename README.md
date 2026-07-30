@@ -28,6 +28,8 @@ bash scripts/start.sh
 
 Open **http://127.0.0.1:8080** (default bind is localhost for safety).
 
+**User manual:** [`docs/user-manual.md`](docs/user-manual.md) · in-app [/manual/](http://127.0.0.1:8080/manual/)
+
 ### Docker
 
 ```bash
@@ -65,7 +67,7 @@ Architecture: see [`docs/open-source-architecture.md`](docs/open-source-architec
 | **Playbooks** | `/api/playbooks` — IR / tabletop playbooks |
 | **Campaigns** | `/api/campaigns` — awareness simulation metrics |
 | **SOC / Incidents** | `/api/soc`, `/api/incidents` — alerts + case tracking |
-| **Threat intel** | `/api/intel/watch` — CVE/IOC watchlist |
+| **Threat intel** | CISA KEV, NVD, Free APIs Security catalog + unified IOC lookup (`/api/intel/lookup`) |
 | **Reports hub** | `/api/reports` — Markdown + PDF catalog |
 | **PDF exports** | `/api/reports/executive.pdf`, `risks.pdf`, `vulns.pdf` |
 | **Evidence links** | `/api/evidence` — attach files to remediations |
@@ -73,6 +75,7 @@ Architecture: see [`docs/open-source-architecture.md`](docs/open-source-architec
 | **Jira** | `POST /api/integrations/jira/issue` — optional Settings / env |
 | **Global search** | `/api/search?q=` — assets, risks, vulns, controls |
 | **Dashboard** | `GET /api/dashboard` — live compliance / risks / vulns / campaigns |
+| **Morning brief** | `GET /api/dashboard/brief` — Mission Control greeting + attention + top tasks |
 | Audit log | `GET /api/audit` (admin) |
 | Model router | `POST /api/router` — suggests backend for the task |
 | Report export | `GET /api/chats/{id}/export` — Markdown |

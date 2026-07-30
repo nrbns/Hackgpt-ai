@@ -50,6 +50,9 @@ _COMMON_PORTS = [
     1433, 3306, 3389, 5432, 5985, 6379, 8080, 8443, 9200,
 ]
 
+# Fast default probe set (lightweight realtime UX)
+_LIGHT_PORTS = [22, 80, 443, 445, 3389, 8080, 8443, 3306, 5432, 6379]
+
 _DIR_WORDS = [
     "admin", "login", "api", "robots.txt", "sitemap.xml", ".git", ".env",
     "backup", "wp-admin", "wp-login.php", "phpmyadmin", "console", "swagger",
@@ -184,7 +187,7 @@ async def _run_cmd(argv: list[str], timeout: float = 25.0) -> dict[str, Any]:
         return {"ok": False, "error": str(exc), "output": ""}
 
 
-async def _probe_port(ip: str, port: int, timeout: float = 0.35) -> bool:
+async def _probe_port(ip: str, port: int, timeout: float = 0.22) -> bool:
     try:
         _r, w = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=timeout)
         w.close()
@@ -197,10 +200,16 @@ async def _probe_port(ip: str, port: int, timeout: float = 0.35) -> bool:
         return False
 
 
-async def _tool_ports(ip: str) -> dict[str, Any]:
-    flags = await asyncio.gather(*[_probe_port(ip, p) for p in _COMMON_PORTS])
-    open_ports = [p for p, ok in zip(_COMMON_PORTS, flags) if ok]
-    return {"ok": True, "open_ports": open_ports, "output": f"Open: {open_ports or 'none'}"}
+async def _tool_ports(ip: str, *, light: bool = True) -> dict[str, Any]:
+    ports = _LIGHT_PORTS if light else _COMMON_PORTS
+    flags = await asyncio.gather(*[_probe_port(ip, p) for p in ports])
+    open_ports = [p for p, ok in zip(ports, flags) if ok]
+    label = "light probe" if light else "full probe"
+    return {
+        "ok": True,
+        "open_ports": open_ports,
+        "output": f"Open ({label}): {open_ports or 'none'} · checked {len(ports)} ports",
+    }
 
 
 async def _tool_dns(target: str, ip: str) -> dict[str, Any]:
@@ -649,7 +658,7 @@ def _ensure_mini_wordlist() -> Path:
     return path
 
 
-async def run_security_tools(
+async def iter_security_tools(
     message: str,
     *,
     target: str | None = None,
@@ -659,9 +668,11 @@ async def run_security_tools(
     auto: bool = False,
     include_heavy: bool = False,
     mode: str | None = None,
-) -> dict[str, Any]:
+):
+    """Yield realtime progress events; light builtins run in parallel."""
     if not settings.local_tools_enabled:
-        return {"ok": False, "error": "Local tools disabled", "runs": []}
+        yield {"event": "done", "payload": {"ok": False, "error": "Local tools disabled", "runs": []}}
+        return
 
     tool_ids = parse_tool_request(
         message,
@@ -671,13 +682,13 @@ async def run_security_tools(
         mode=mode,
     )
     if not tool_ids:
-        return {"ok": False, "error": "No tools selected", "runs": []}
+        yield {"event": "done", "payload": {"ok": False, "error": "No tools selected", "runs": []}}
+        return
 
     awareness_only = all(
         tid in {"phishing_url", "email_auth", "suite_guide", "cve_lookup"} for tid in tool_ids
     )
     targets = extract_targets(message, target)
-    # Prefer domain from message for SPF/DMARC when no explicit IP target
     if "email_auth" in tool_ids and not targets:
         for m in _DOMAIN_RE.finditer(message or ""):
             d = m.group(0).lower()
@@ -694,24 +705,25 @@ async def run_security_tools(
             tool_ids = non_target
             targets = []
         else:
-            return {
-                "ok": False,
-                "error": "No target IP/host — set Target IP or include an address in the message",
-                "runs": [],
-                "requested": tool_ids,
+            yield {
+                "event": "done",
+                "payload": {
+                    "ok": False,
+                    "error": "No target IP/host — set Target IP or include an address in the message",
+                    "runs": [],
+                    "requested": tool_ids,
+                },
             }
+            return
 
     runs: list[dict[str, Any]] = []
     open_ports: list[int] = []
-
-    # Host authorization (first target) — skip for awareness-only DNS/URL tools on public domains
     meta = None
     ip = ""
     host = ""
     if targets:
         host = targets[0]
         if awareness_only and "email_auth" in tool_ids:
-            # Passive DNS TXT (SPF/DMARC) for awareness — no port scan auth required
             meta = {"ok": True, "ip": "", "private": None}
             ip = ""
         else:
@@ -721,31 +733,34 @@ async def run_security_tools(
                 allow_public=allow_public or awareness_only,
             )
             if not meta.get("ok"):
-                # Still allow phishing_url / suite_guide without a live host
                 soft = [t for t in tool_ids if t in {"phishing_url", "suite_guide", "cve_lookup"}]
                 if soft and not any(TOOL_CATALOG[t].needs_target for t in soft):
                     tool_ids = soft
                     host = ""
                     meta = None
                 else:
-                    return {
-                        "ok": False,
-                        "error": meta.get("error") or "Target not authorized",
-                        "runs": [],
-                        "requested": tool_ids,
-                        "target": host,
+                    yield {
+                        "event": "done",
+                        "payload": {
+                            "ok": False,
+                            "error": meta.get("error") or "Target not authorized",
+                            "runs": [],
+                            "requested": tool_ids,
+                            "target": host,
+                        },
                     }
+                    return
             else:
                 ip = meta.get("ip") or ""
 
-    # Prefer ports first when present
     ordered = sorted(tool_ids, key=lambda t: 0 if t == "ports" else 1)
+    light_mode = not include_heavy
 
-    for tid in ordered:
+    async def _execute(tid: str, ports_hint: list[int]) -> dict[str, Any]:
         spec = TOOL_CATALOG.get(tid)
         if not spec:
-            continue
-        entry: dict[str, Any] = {"tool": tid, "name": spec.name, "kind": spec.kind}
+            return {"tool": tid, "name": tid, "ok": False, "error": "unknown tool", "output": ""}
+        entry: dict[str, Any] = {"tool": tid, "name": spec.name, "kind": spec.kind, "heavy": spec.heavy}
         try:
             if tid == "cve_lookup":
                 result = await _tool_cve_lookup(message)
@@ -759,49 +774,136 @@ async def run_security_tools(
                     m = _DOMAIN_RE.search(message or "")
                     domain = m.group(0) if m else (target or "")
                 result = await _tool_email_auth(domain or host or "")
-            elif not ip:
+            elif not ip and spec.needs_target:
                 result = {"ok": False, "error": "no target", "output": ""}
             elif tid == "ports":
-                result = await _tool_ports(ip)
-                open_ports = result.get("open_ports") or open_ports
+                result = await _tool_ports(ip, light=light_mode)
             elif tid == "dns":
                 result = await _tool_dns(host, ip)
             elif tid == "http":
-                result = await _tool_http(ip, open_ports)
+                result = await _tool_http(ip, ports_hint)
             elif tid == "headers_security":
-                result = await _tool_headers_security(ip, open_ports)
+                result = await _tool_headers_security(ip, ports_hint)
             elif tid == "tls":
-                result = await _tool_tls(ip, open_ports)
+                result = await _tool_tls(ip, ports_hint)
             elif tid == "robots":
-                result = await _tool_robots(ip, open_ports)
+                result = await _tool_robots(ip, ports_hint)
             elif tid == "tech":
-                result = await _tool_tech(ip, open_ports)
+                result = await _tool_tech(ip, ports_hint)
             elif tid == "whois":
                 result = await _tool_whois(host, ip)
             elif spec.kind == "external":
                 if not is_available(tid):
                     result = {"ok": False, "error": "not installed on PATH", "output": ""}
                 else:
-                    result = await _run_external(tid, host, ip, open_ports)
+                    result = await _run_external(tid, host, ip, ports_hint)
             else:
                 result = {"ok": False, "error": "unknown tool", "output": ""}
         except Exception as exc:
             result = {"ok": False, "error": str(exc), "output": ""}
-
+        if isinstance(result.get("output"), str) and len(result["output"]) > 2500:
+            result["output"] = result["output"][:2500] + "\n…(truncated)"
         entry.update(result)
-        runs.append(entry)
+        return entry
 
-    ok_any = any(r.get("ok") for r in runs)
-    return {
-        "ok": ok_any,
+    yield {
+        "event": "start",
         "target": host or None,
         "ip": ip or None,
-        "private": (meta or {}).get("private"),
-        "requested": tool_ids,
-        "open_ports": open_ports,
-        "runs": runs,
-        "fingerprint": hashlib.sha1(f"{host}:{ip}:{','.join(tool_ids)}".encode()).hexdigest()[:10],
+        "tools": ordered,
+        "light": light_mode,
     }
+
+    rest = list(ordered)
+    if "ports" in rest and ip:
+        rest = [t for t in rest if t != "ports"]
+        yield {"event": "tool_start", "tool": "ports", "name": "Port probe"}
+        entry = await _execute("ports", open_ports)
+        open_ports = entry.get("open_ports") or open_ports
+        runs.append(entry)
+        yield {"event": "tool_done", "run": entry}
+
+    light_ids = [
+        t
+        for t in rest
+        if t in TOOL_CATALOG and TOOL_CATALOG[t].kind == "builtin" and not TOOL_CATALOG[t].heavy
+    ]
+    heavy_ids = [t for t in rest if t not in light_ids]
+    sem = asyncio.Semaphore(4)
+
+    async def _guarded(tid: str) -> dict[str, Any]:
+        async with sem:
+            return await _execute(tid, open_ports)
+
+    if light_ids:
+        for tid in light_ids:
+            yield {
+                "event": "tool_start",
+                "tool": tid,
+                "name": TOOL_CATALOG[tid].name if tid in TOOL_CATALOG else tid,
+            }
+        tasks = [asyncio.create_task(_guarded(tid)) for tid in light_ids]
+        for fut in asyncio.as_completed(tasks):
+            entry = await fut
+            runs.append(entry)
+            yield {"event": "tool_done", "run": entry}
+
+    for tid in heavy_ids:
+        yield {
+            "event": "tool_start",
+            "tool": tid,
+            "name": TOOL_CATALOG[tid].name if tid in TOOL_CATALOG else tid,
+        }
+        entry = await _execute(tid, open_ports)
+        if tid == "ports":
+            open_ports = entry.get("open_ports") or open_ports
+        runs.append(entry)
+        yield {"event": "tool_done", "run": entry}
+
+    ok_any = any(r.get("ok") for r in runs)
+    fp = hashlib.sha1(f"{host}:{ip}:{','.join(tool_ids)}".encode()).hexdigest()[:10]
+    yield {
+        "event": "done",
+        "payload": {
+            "ok": ok_any,
+            "target": host or None,
+            "ip": ip or None,
+            "private": (meta or {}).get("private"),
+            "requested": tool_ids,
+            "open_ports": open_ports,
+            "runs": runs,
+            "light": light_mode,
+            "fingerprint": fp,
+        },
+    }
+
+
+async def run_security_tools(
+    message: str,
+    *,
+    target: str | None = None,
+    tools: list[str] | None = None,
+    authorized: bool = False,
+    allow_public: bool = False,
+    auto: bool = False,
+    include_heavy: bool = False,
+    mode: str | None = None,
+) -> dict[str, Any]:
+    final: dict[str, Any] | None = None
+    async for ev in iter_security_tools(
+        message,
+        target=target,
+        tools=tools,
+        authorized=authorized,
+        allow_public=allow_public,
+        auto=auto,
+        include_heavy=include_heavy,
+        mode=mode,
+    ):
+        if ev.get("event") == "done":
+            final = ev.get("payload")
+    return final or {"ok": False, "error": "No tool output", "runs": []}
+
 
 
 def format_tools_context(payload: dict[str, Any]) -> str:

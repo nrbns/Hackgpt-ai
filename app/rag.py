@@ -102,6 +102,15 @@ class RAGEngine:
         return sorted({m.get("source", "") for m in metas if m.get("source")})
 
     def query(self, question: str, top_k: int = 3) -> list[str]:
+        return [r["text"] for r in self.query_with_sources(question, top_k=top_k)]
+
+    def query_with_sources(self, question: str, top_k: int = 3) -> list[dict]:
+        """Like query(), but keeps the source filename + a similarity score per
+        chunk instead of throwing them away — this is what the citations UI /
+        confidence indicators need. Previously `query()` discarded chroma's
+        metadatas/distances entirely, which is why no citation ever made it
+        past this layer.
+        """
         self._ensure_ready()
         assert self._embedder is not None
         assert self._collection is not None
@@ -116,16 +125,56 @@ class RAGEngine:
         results = self._collection.query(
             query_embeddings=embedding,
             n_results=min(top_k, self._collection.count()),
+            include=["documents", "metadatas", "distances"],
         )
         documents = results.get("documents", [[]])[0]
-        return [doc for doc in documents if doc]
+        metadatas = results.get("metadatas", [[]])[0]
+        distances = results.get("distances", [[]])[0]
 
-    def build_context(self, question: str, top_k: int = 3) -> str:
-        chunks = self.query(question, top_k=top_k)
+        out = []
+        for i, doc in enumerate(documents):
+            if not doc:
+                continue
+            meta = metadatas[i] if i < len(metadatas) else {}
+            dist = distances[i] if i < len(distances) else None
+            # Cosine distance -> similarity in [0, 1]; clamp for safety since
+            # this is an approximate confidence signal, not a calibrated one.
+            score = max(0.0, min(1.0, 1.0 - dist)) if isinstance(dist, (int, float)) else None
+            out.append(
+                {
+                    "text": doc,
+                    "source": (meta or {}).get("source", "unknown"),
+                    "score": round(score, 3) if score is not None else None,
+                }
+            )
+        return out
+
+    def build_context(self, question: str, top_k: int = 3) -> tuple[str, list[dict]]:
+        """Returns (context_text_for_the_model, sources_for_the_ui).
+
+        Each retrieved chunk is tagged with a [S1]/[S2]/... marker in the
+        context text and the model is instructed to cite them, so a citation
+        the model emits can be matched back to `sources` by index.
+        """
+        chunks = self.query_with_sources(question, top_k=top_k)
         if not chunks:
-            return ""
-        joined = "\n\n---\n\n".join(chunks)
-        return f"## Retrieved security knowledge\n\n{joined}"
+            return "", []
+
+        parts = []
+        sources = []
+        for i, c in enumerate(chunks, start=1):
+            pct = f"{round(c['score'] * 100)}%" if c["score"] is not None else "n/a"
+            parts.append(f"[S{i}] (source: {c['source']}, relevance: {pct})\n{c['text']}")
+            sources.append({"id": f"S{i}", "source": c["source"], "relevance": c["score"]})
+
+        joined = "\n\n---\n\n".join(parts)
+        context = (
+            "## Retrieved security knowledge\n"
+            "Cite these using their [S1]/[S2]/... tags inline when you use them; "
+            "don't present retrieved content as certain if its relevance score is low.\n\n"
+            f"{joined}"
+        )
+        return context, sources
 
 
 rag_engine = RAGEngine()

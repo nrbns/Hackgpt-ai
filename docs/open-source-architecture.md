@@ -34,7 +34,7 @@ See the full tool catalog and MVP matrix: [enterprise-integrations.md](./enterpr
 | Cache | Redis (SaaS later) | Planned |
 | Object storage | Local `data/`; MinIO later | Local shipped |
 | Auth | Built-in; Keycloak / Authentik for SSO | Built-in; SSO Month 3 |
-| Frontend | FastAPI static Mission Control | Shipped (Next.js deferred) |
+| Frontend | FastAPI static Mission Control | Shipped |
 | Intel | CISA KEV + NVD (ToS-aware) | Shipped sync |
 | Scanners | Trivy · Semgrep · Gitleaks · Grype · Checkov · Bandit · SonarQube · ZAP | Shipped adapters |
 | Compliance | ISO 27001/27701, NIST CSF, CIS, SOC 2, PCI, HIPAA, GDPR, ASVS | Shipped catalogs |

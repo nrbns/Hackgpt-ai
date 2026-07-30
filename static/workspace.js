@@ -18,17 +18,78 @@
       .replace(/"/g, "&quot;");
   }
 
+  async function createServiceNowIncident({ summary, description, remediationId }, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      const res = await fetch("/api/integrations/servicenow/incident", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          short_description: summary,
+          description: description || "",
+          remediation_id: remediationId || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      const msg = data.url
+        ? `**ServiceNow:** [${data.number || data.sys_id || "incident"}](${data.url})`
+        : `**ServiceNow:** ${data.number || data.sys_id || "created"}`;
+      if (typeof notifyUser === "function") notifyUser(msg);
+      else if (typeof appendMessage === "function") appendMessage("assistant", renderMarkdown(msg), true);
+      return data;
+    } catch (err) {
+      const msg = `**ServiceNow failed:** ${err.message}`;
+      if (typeof notifyUser === "function") notifyUser(msg);
+      else if (typeof appendMessage === "function") appendMessage("assistant", renderMarkdown(msg), true);
+      else alert(err.message);
+      return null;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function downloadApiExport(url, filename) {
+    const res = await fetch(url, { headers: authHeaders() });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || `HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
   function hideAllViews() {
     document.querySelectorAll(".workspace-view").forEach((el) => el.classList.add("hidden"));
   }
 
   function setComposerMode(view) {
     const wrap = qs("composerWrap");
+    const fab = qs("aiFab");
     if (!wrap) return;
-    // Command Center: slim ask bar. Chat: full SaaS composer. Pages: tools+target still available.
-    wrap.classList.toggle("is-command", view === "command");
-    wrap.classList.toggle("is-page", view !== "chat" && view !== "command");
-    wrap.classList.toggle("is-chat", view === "chat");
+    const isChat = view === "chat";
+    const isCommand = view === "command";
+    const isPage = !isChat && !isCommand;
+    wrap.classList.toggle("is-command", isCommand);
+    wrap.classList.toggle("is-page", isPage);
+    wrap.classList.toggle("is-chat", isChat);
+    wrap.classList.toggle("is-floating", !isChat);
+    if (isChat) {
+      wrap.classList.remove("is-open");
+      fab?.classList.add("hidden");
+      fab?.setAttribute("aria-expanded", "false");
+    } else {
+      // Docked footer becomes FAB + floating panel so modules keep full canvas.
+      if (!wrap.classList.contains("is-open")) fab?.classList.remove("hidden");
+    }
+  }
+
+  function openFloatingAssistant() {
+    if (typeof window.openAiAssistant === "function") window.openAiAssistant();
   }
 
   function wireAskAiButtons(rootId) {
@@ -95,6 +156,7 @@
       integrations: "viewIntegrations",
       billing: "viewBilling",
       graph: "viewGraph",
+      automation: "viewAutomation",
     };
     const id = map[view] || "viewCommand";
     const panel = qs(id);
@@ -131,6 +193,7 @@
         integrations: "Integrations",
         billing: "Billing",
         graph: "Knowledge Graph",
+        automation: "Automation",
       };
       title.textContent = labels[view] || "SecuraIQ";
     }
@@ -151,6 +214,7 @@
     if (view === "integrations") renderIntegrationsPage();
     if (view === "billing") renderBillingPage();
     if (view === "graph") renderGraphPage();
+    if (view === "automation") renderAutomationPage();
     if (typeof closeSidebar === "function") closeSidebar();
   };
 
@@ -177,7 +241,34 @@
   async function renderAssetsPage() {
     const res = await fetch("/api/assets", { headers: authHeaders() });
     const data = await res.json();
-    const rows = (data.assets || [])
+    const assets = data.assets || [];
+    const typeBuckets = {
+      server: 0,
+      endpoint: 0,
+      container: 0,
+      cloud: 0,
+      repository: 0,
+      database: 0,
+      application: 0,
+      domain: 0,
+      api: 0,
+      other: 0,
+    };
+    assets.forEach((a) => {
+      const t = String(a.asset_type || "other").toLowerCase();
+      if (t in typeBuckets) typeBuckets[t] += 1;
+      else if (/host|vm|server/.test(t)) typeBuckets.server += 1;
+      else if (/endpoint|laptop|workstation/.test(t)) typeBuckets.endpoint += 1;
+      else if (/container|k8s|pod/.test(t)) typeBuckets.container += 1;
+      else if (/aws|azure|gcp|cloud/.test(t)) typeBuckets.cloud += 1;
+      else if (/repo|git/.test(t)) typeBuckets.repository += 1;
+      else if (/db|sql|postgres|mongo/.test(t)) typeBuckets.database += 1;
+      else if (/app|service/.test(t)) typeBuckets.application += 1;
+      else if (/domain|dns/.test(t)) typeBuckets.domain += 1;
+      else if (/api/.test(t)) typeBuckets.api += 1;
+      else typeBuckets.other += 1;
+    });
+    const rows = assets
       .map(
         (a) => `<tr>
         <td><strong>${escapeHtml(a.name)}</strong></td>
@@ -188,13 +279,43 @@
           <button type="button" class="btn-secondary ws-ask-ai" data-kind="asset" data-json="${escapeHtml(
             JSON.stringify({ id: a.id, name: a.name, asset_type: a.asset_type, criticality: a.criticality })
           )}">Ask AI</button>
+          <button type="button" class="btn-secondary ws-edit-asset" data-id="${a.id}" data-name="${escapeHtml(a.name)}" data-owner="${escapeHtml(a.owner || "")}" data-crit="${escapeHtml(a.criticality)}">Edit</button>
           <button type="button" class="btn-secondary ws-del-asset" data-id="${a.id}">Delete</button>
         </td>
       </tr>`
       )
       .join("");
-    await renderTable("assetsPageBody", ["Name", "Type", "Criticality", "Owner", ""], rows, "No assets yet");
+    const el = qs("assetsPageBody");
+    if (!el) return;
+    const core = ["server", "endpoint", "container", "cloud", "repository", "database", "application", "domain", "api"];
+    const tileHtml = core
+      .map((k) => `<div class="asset-type-tile"><span>${escapeHtml(k)}</span><strong>${typeBuckets[k] || 0}</strong></div>`)
+      .join("");
+    el.innerHTML = `
+      <div class="asset-type-grid" aria-label="Asset classes">${tileHtml}</div>
+      ${
+        rows
+          ? `<div class="data-table-wrap"><table class="data-table"><thead><tr>
+              <th>Name</th><th>Type</th><th>Criticality</th><th>Owner</th><th></th>
+            </tr></thead><tbody>${rows}</tbody></table></div>`
+          : `<div class="page-empty"><p class="page-empty-title">No assets yet</p>
+             <p class="hint">Add servers, repos, cloud accounts, and APIs to map attack surface.</p></div>`
+      }`;
     wireAskAiButtons("assetsPageBody");
+    qs("assetsPageBody")?.querySelectorAll(".ws-edit-asset").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const name = prompt("Asset name:", btn.getAttribute("data-name") || "");
+        if (!name?.trim()) return;
+        const owner = prompt("Owner:", btn.getAttribute("data-owner") || "") ?? "";
+        const criticality = prompt("Criticality (low/medium/high/critical):", btn.getAttribute("data-crit") || "medium") ?? "medium";
+        await fetch(`/api/assets/${btn.getAttribute("data-id")}`, {
+          method: "PATCH",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ name: name.trim(), owner, criticality }),
+        });
+        renderAssetsPage();
+      });
+    });
     qs("assetsPageBody")?.querySelectorAll(".ws-del-asset").forEach((btn) => {
       btn.addEventListener("click", async () => {
         await fetch(`/api/assets/${btn.getAttribute("data-id")}`, { method: "DELETE", headers: authHeaders() });
@@ -228,6 +349,7 @@
             })
           )}">Ask AI</button>
           <button type="button" class="btn-secondary ws-mitigate" data-id="${r.id}">Mitigate</button>
+          <button type="button" class="btn-secondary ws-del-risk" data-id="${r.id}">Delete</button>
         </td>
       </tr>`
       )
@@ -250,49 +372,180 @@
         if (typeof loadCommandCenter === "function") loadCommandCenter();
       });
     });
+    qs("risksPageBody")?.querySelectorAll(".ws-del-risk").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this risk?")) return;
+        await fetch(`/api/risks/${btn.getAttribute("data-id")}`, { method: "DELETE", headers: authHeaders() });
+        renderRisksPage();
+        if (typeof loadCommandCenter === "function") loadCommandCenter();
+      });
+    });
+  }
+  let _vulnFilters = { q: "", severity: "", status: "", source: "", owner: "" };
+  let _vulnSelectedId = "";
+
+  function vulnAgeDays(v) {
+    const raw = v.created_at || v.updated_at || "";
+    if (!raw) return null;
+    const t = Date.parse(raw);
+    if (Number.isNaN(t)) return null;
+    return Math.max(0, Math.floor((Date.now() - t) / 86400000));
   }
 
-  async function renderVulnsPage() {
-    const res = await fetch("/api/vulnerabilities", { headers: authHeaders() });
-    const data = await res.json();
-    const rows = (data.vulnerabilities || [])
-      .slice(0, 100)
-      .map(
-        (v) => `<tr>
-        <td>${escapeHtml(v.cve || "—")}</td>
-        <td><span class="sev sev-${escapeHtml(v.severity)}">${escapeHtml(v.severity)}</span></td>
-        <td>${escapeHtml(v.title)}</td>
-        <td>${escapeHtml(v.asset_name || "—")}</td>
-        <td>${escapeHtml(v.owner || "—")}</td>
-        <td>${escapeHtml(v.status)}</td>
-        <td>${escapeHtml((v.source || "").split(":")[0] || "—")}</td>
-        <td class="ws-actions">
-          <button type="button" class="btn-secondary ws-ask-ai" data-kind="vuln" data-json="${escapeHtml(
+  function renderVulnDetail(v) {
+    const panel = qs("vulnDetailPanel");
+    if (!panel) return;
+    if (!v) {
+      panel.innerHTML = `<p class="hint">Select a finding to see AI summary, patch guidance, and evidence.</p>`;
+      return;
+    }
+    const age = vulnAgeDays(v);
+    const src = (v.source || "").split(":")[0] || "import";
+    const refs = [];
+    if (v.cve) refs.push(`https://nvd.nist.gov/vuln/detail/${encodeURIComponent(v.cve)}`);
+    panel.innerHTML = `
+      <header class="entity-detail-head">
+        <p class="sev sev-${escapeHtml(v.severity)}">${escapeHtml(v.severity || "—")}</p>
+        <h2>${escapeHtml(v.cve || "Finding")}</h2>
+        <p class="entity-detail-title">${escapeHtml(v.title || "")}</p>
+      </header>
+      <dl class="entity-meta">
+        <div><dt>CVSS</dt><dd>${escapeHtml(v.cvss != null ? v.cvss : "—")}</dd></div>
+        <div><dt>Asset</dt><dd>${escapeHtml(v.asset_name || "—")}</dd></div>
+        <div><dt>Owner</dt><dd>${escapeHtml(v.owner || "Unassigned")}</dd></div>
+        <div><dt>Status</dt><dd>${escapeHtml(v.status || "open")}</dd></div>
+        <div><dt>SLA</dt><dd>${escapeHtml(v.sla_due || "—")}</dd></div>
+        <div><dt>Age</dt><dd>${age == null ? "—" : age + "d"}</dd></div>
+        <div><dt>Scanner</dt><dd>${escapeHtml(src)}</dd></div>
+        <div><dt>Exploit</dt><dd>${v.cve ? "Check KEV / advisory" : "—"}</dd></div>
+      </dl>
+      <section class="entity-section">
+        <h3>AI Summary</h3>
+        <p class="hint">Use the assistant for root cause, attack path, and suggested fix without leaving this page.</p>
+        <div class="cc-action-row">
+          <button type="button" class="btn-primary-cc ws-ask-ai" data-kind="vuln" data-json="${escapeHtml(
             JSON.stringify({
               id: v.id,
               cve: v.cve,
               title: v.title,
               severity: v.severity,
               asset_name: v.asset_name,
+              cvss: v.cvss,
             })
           )}">Ask AI</button>
-          <button type="button" class="btn-secondary ws-close-vuln" data-id="${v.id}">Close</button>
-        </td>
-      </tr>`
-      )
-      .join("");
-    await renderTable(
-      "vulnsPageBody",
-      ["CVE", "Severity", "Title", "Asset", "Owner", "Status", "Source", ""],
-      rows,
-      "No vulnerabilities — import a scan"
-    );
-    qs("vulnsPageBody")?.insertAdjacentHTML(
-      "afterbegin",
-      `<p class="hint">Import CSV/JSON/XML or scanner JSON: <strong>Trivy</strong> · <strong>Semgrep</strong> · <strong>Gitleaks</strong></p>`
-    );
-    wireAskAiButtons("vulnsPageBody");
-    qs("vulnsPageBody")?.querySelectorAll(".ws-close-vuln").forEach((btn) => {
+          <button type="button" class="btn-secondary ws-vuln-ai" data-prompt="root">Root cause</button>
+          <button type="button" class="btn-secondary ws-vuln-ai" data-prompt="patch">Suggest fix</button>
+          <button type="button" class="btn-secondary ws-vuln-ai" data-prompt="ticket">Generate ticket</button>
+        </div>
+      </section>
+      <section class="entity-section">
+        <h3>References</h3>
+        <ul class="entity-refs">
+          ${
+            refs.length
+              ? refs.map((u) => `<li><a href="${escapeHtml(u)}" target="_blank" rel="noopener">${escapeHtml(u)}</a></li>`).join("")
+              : "<li class='hint'>No CVE reference</li>"
+          }
+        </ul>
+      </section>
+      <section class="entity-section">
+        <h3>MITRE / Evidence / Timeline</h3>
+        <p class="hint">Map techniques via Knowledge Graph · attach evidence on triage · SLA ${escapeHtml(
+          v.sla_due || "unset"
+        )} · updated ${escapeHtml(v.updated_at || v.created_at || "—")}</p>
+      </section>
+      <div class="cc-action-row">
+        <button type="button" class="btn-primary-cc ws-triage-vuln" data-id="${escapeHtml(v.id)}" data-jira="0">Triage</button>
+        <button type="button" class="btn-secondary ws-triage-vuln" data-id="${escapeHtml(v.id)}" data-jira="1">Triage+Jira</button>
+        <button type="button" class="btn-secondary ws-vuln-jira" data-id="${escapeHtml(v.id)}">Jira</button>
+        <button type="button" class="btn-secondary ws-vuln-sn" data-id="${escapeHtml(v.id)}" data-title="${escapeHtml(v.title || v.cve || "")}">ServiceNow</button>
+        <button type="button" class="btn-secondary ws-close-vuln" data-id="${escapeHtml(v.id)}">Close</button>
+      </div>`;
+    wireAskAiButtons("vulnDetailPanel");
+    wireVulnActionButtons(panel);
+    panel.querySelectorAll(".ws-vuln-ai").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const kind = btn.getAttribute("data-prompt");
+        const prompts = {
+          root: `Root-cause analysis for ${v.cve || ""} — ${v.title || v.id} on asset ${v.asset_name || "?"}. Include contributing config issues and blast radius.`,
+          patch: `Suggest fix and verify steps for ${v.cve || ""} — ${v.title || v.id} (severity=${v.severity}, CVSS=${v.cvss ?? "?"}).`,
+          ticket: `Draft a Jira-ready remediation ticket for ${v.cve || ""} — ${v.title || v.id} with acceptance criteria and SLA.`,
+        };
+        if (typeof window.runNavPrompt === "function") {
+          window.runNavPrompt("blueteam", prompts[kind] || prompts.patch, { stay: true });
+        }
+      });
+    });
+  }
+
+  function wireVulnActionButtons(root) {
+    root?.querySelectorAll(".ws-triage-vuln").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        const withJira = btn.getAttribute("data-jira") === "1";
+        try {
+          const res = await fetch(`/api/vulnerabilities/${btn.getAttribute("data-id")}/triage`, {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ owner: "SecOps", create_jira: withJira }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.detail || res.status);
+          if (typeof notifyUser === "function") {
+            let msg = `**Triaged** → risk \`${(data.risk || {}).risk_score ?? "?"}\` · remediation created.`;
+            if (withJira) {
+              if (data.jira?.key) {
+                msg += data.jira.url
+                  ? ` Jira: [${data.jira.key}](${data.jira.url}).`
+                  : ` Jira: \`${data.jira.key}\`.`;
+              } else if (data.jira_error) {
+                msg += ` Jira failed: ${data.jira_error}`;
+              }
+            }
+            notifyUser(msg);
+          }
+          renderVulnsPage();
+      loadVulnSampleButtons();
+          if (typeof loadCommandCenter === "function") loadCommandCenter();
+        } catch (err) {
+          if (typeof notifyUser === "function") notifyUser(`**Triage failed:** ${err.message}`);
+          else alert(err.message);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+    root?.querySelectorAll(".ws-vuln-jira").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          const res = await fetch(`/api/vulnerabilities/${btn.getAttribute("data-id")}/jira`, {
+            method: "POST",
+            headers: authHeaders(),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.detail || res.status);
+          if (typeof notifyUser === "function") {
+            notifyUser(data.url ? `**Jira:** [${data.key}](${data.url})` : `**Jira:** ${data.key || "created"}`);
+          }
+        } catch (err) {
+          if (typeof notifyUser === "function") notifyUser(`**Jira failed:** ${err.message}`);
+          else alert(err.message);
+        }
+      });
+    });
+    root?.querySelectorAll(".ws-vuln-sn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const title = btn.getAttribute("data-title") || "Vulnerability";
+        await createServiceNowIncident(
+          {
+            summary: `[SecuraIQ] ${title}`.slice(0, 160),
+            description: `Vulnerability ${btn.getAttribute("data-id")} from SecuraIQ register.`,
+          },
+          btn
+        );
+      });
+    });
+    root?.querySelectorAll(".ws-close-vuln").forEach((btn) => {
       btn.addEventListener("click", async () => {
         await fetch(`/api/vulnerabilities/${btn.getAttribute("data-id")}`, {
           method: "PATCH",
@@ -300,9 +553,157 @@
           body: JSON.stringify({ status: "closed" }),
         });
         renderVulnsPage();
+      loadVulnSampleButtons();
         if (typeof loadCommandCenter === "function") loadCommandCenter();
       });
     });
+  }
+
+  function filteredVulns() {
+    const f = _vulnFilters;
+    const q = (f.q || "").trim().toLowerCase();
+    return _vulnCache.filter((v) => {
+      if (f.severity && (v.severity || "").toLowerCase() !== f.severity) return false;
+      if (f.status && (v.status || "").toLowerCase() !== f.status) return false;
+      if (f.source) {
+        const src = ((v.source || "").split(":")[0] || "").toLowerCase();
+        if (src !== f.source) return false;
+      }
+      if (f.owner && !(v.owner || "").toLowerCase().includes(f.owner.toLowerCase())) return false;
+      if (q) {
+        const blob = `${v.cve || ""} ${v.title || ""} ${v.asset_name || ""} ${v.owner || ""}`.toLowerCase();
+        if (!blob.includes(q)) return false;
+      }
+      return true;
+    });
+  }
+
+  function paintVulnTable() {
+    const list = filteredVulns().slice(0, 200);
+    const rows = list
+      .map((v) => {
+        const age = vulnAgeDays(v);
+        const src = (v.source || "").split(":")[0] || "—";
+        const selected = v.id === _vulnSelectedId ? " is-selected" : "";
+        return `<tr class="vuln-row${selected}" data-id="${escapeHtml(v.id)}" tabindex="0">
+        <td>${escapeHtml(v.cve || "—")}</td>
+        <td><span class="sev sev-${escapeHtml(v.severity)}">${escapeHtml(v.severity)}</span></td>
+        <td>${escapeHtml(v.cvss != null ? v.cvss : "—")}</td>
+        <td>${escapeHtml(v.asset_name || "—")}</td>
+        <td>${escapeHtml(v.owner || "—")}</td>
+        <td>${escapeHtml(v.status)}</td>
+        <td>${escapeHtml(v.sla_due || "—")}</td>
+        <td>${age == null ? "—" : age + "d"}</td>
+        <td>${escapeHtml(src)}</td>
+      </tr>`;
+      })
+      .join("");
+    const el = qs("vulnsPageBody");
+    if (!el) return;
+    if (!rows) {
+      el.innerHTML = `<div class="page-empty">
+        <p class="page-empty-title">No matching vulnerabilities</p>
+        <p class="hint">Adjust filters or import a scanner export (Trivy, Semgrep, ZAP, …).</p>
+      </div>`;
+      renderVulnDetail(null);
+      return;
+    }
+    el.innerHTML = `
+      <p class="hint"><strong>Golden path:</strong> Import → select finding → Triage → Jira → verify → Close. Showing ${list.length} of ${_vulnCache.length}.</p>
+      <div class="data-table-wrap">
+        <table class="data-table vuln-table">
+          <thead><tr>
+            <th>CVE</th><th>Severity</th><th>CVSS</th><th>Asset</th><th>Owner</th>
+            <th>Status</th><th>SLA</th><th>Age</th><th>Scanner</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+    el.querySelectorAll(".vuln-row").forEach((row) => {
+      const open = () => {
+        _vulnSelectedId = row.getAttribute("data-id") || "";
+        const v = _vulnCache.find((x) => x.id === _vulnSelectedId);
+        el.querySelectorAll(".vuln-row").forEach((r) => r.classList.toggle("is-selected", r === row));
+        renderVulnDetail(v || null);
+      };
+      row.addEventListener("click", open);
+      row.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
+      });
+    });
+    if (_vulnSelectedId) {
+      const still = list.find((v) => v.id === _vulnSelectedId) || list[0];
+      _vulnSelectedId = still?.id || "";
+      renderVulnDetail(still || null);
+    } else if (list[0]) {
+      _vulnSelectedId = list[0].id;
+      renderVulnDetail(list[0]);
+      el.querySelector(`.vuln-row[data-id="${String(list[0].id).replace(/"/g, "")}"]`)?.classList.add("is-selected");
+    }
+  }
+
+  function paintVulnFilters() {
+    const bar = qs("vulnFilterBar");
+    if (!bar) return;
+    const sevs = [...new Set(_vulnCache.map((v) => (v.severity || "").toLowerCase()).filter(Boolean))];
+    const statuses = [...new Set(_vulnCache.map((v) => (v.status || "").toLowerCase()).filter(Boolean))];
+    const sources = [
+      ...new Set(_vulnCache.map((v) => ((v.source || "").split(":")[0] || "").toLowerCase()).filter(Boolean)),
+    ];
+    bar.innerHTML = `
+      <input type="search" id="vulnFilterQ" class="filter-input" placeholder="Search CVE, title, asset…" value="${escapeHtml(
+        _vulnFilters.q
+      )}" />
+      <select id="vulnFilterSev" class="filter-select" title="Severity">
+        <option value="">Severity</option>
+        ${sevs.map((s) => `<option value="${escapeHtml(s)}" ${_vulnFilters.severity === s ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
+      </select>
+      <select id="vulnFilterStatus" class="filter-select" title="Status">
+        <option value="">Status</option>
+        ${statuses
+          .map((s) => `<option value="${escapeHtml(s)}" ${_vulnFilters.status === s ? "selected" : ""}>${escapeHtml(s)}</option>`)
+          .join("")}
+      </select>
+      <select id="vulnFilterSource" class="filter-select" title="Scanner">
+        <option value="">Scanner</option>
+        ${sources
+          .map((s) => `<option value="${escapeHtml(s)}" ${_vulnFilters.source === s ? "selected" : ""}>${escapeHtml(s)}</option>`)
+          .join("")}
+      </select>
+      <input type="text" id="vulnFilterOwner" class="filter-input filter-input-sm" placeholder="Owner" value="${escapeHtml(
+        _vulnFilters.owner
+      )}" />
+      <button type="button" class="btn-ghost" id="vulnFilterReset">Reset</button>`;
+    const sync = () => {
+      _vulnFilters = {
+        q: qs("vulnFilterQ")?.value || "",
+        severity: qs("vulnFilterSev")?.value || "",
+        status: qs("vulnFilterStatus")?.value || "",
+        source: qs("vulnFilterSource")?.value || "",
+        owner: qs("vulnFilterOwner")?.value || "",
+      };
+      paintVulnTable();
+    };
+    ["vulnFilterQ", "vulnFilterSev", "vulnFilterStatus", "vulnFilterSource", "vulnFilterOwner"].forEach((id) => {
+      qs(id)?.addEventListener("input", sync);
+      qs(id)?.addEventListener("change", sync);
+    });
+    qs("vulnFilterReset")?.addEventListener("click", () => {
+      _vulnFilters = { q: "", severity: "", status: "", source: "", owner: "" };
+      paintVulnFilters();
+      paintVulnTable();
+    });
+  }
+
+  async function renderVulnsPage() {
+    const res = await fetch("/api/vulnerabilities", { headers: authHeaders() });
+    const data = await res.json();
+    _vulnCache = data.vulnerabilities || [];
+    paintVulnFilters();
+    paintVulnTable();
   }
 
   async function renderRemsPage() {
@@ -328,6 +729,9 @@
           <button type="button" class="btn-secondary ws-rem-jira" data-id="${r.id}" data-title="${escapeHtml(
             r.title
           )}" data-control="${escapeHtml(r.control_id)}">Jira</button>
+          <button type="button" class="btn-secondary ws-rem-sn" data-id="${r.id}" data-title="${escapeHtml(
+            r.title
+          )}" data-control="${escapeHtml(r.control_id)}">ServiceNow</button>
         </td>
       </tr>`
       )
@@ -387,6 +791,46 @@
         }
       });
     });
+    qs("remsPageBody")?.querySelectorAll(".ws-rem-sn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const title = btn.getAttribute("data-title") || "Remediation";
+        const control = btn.getAttribute("data-control") || "";
+        await createServiceNowIncident(
+          {
+            summary: `[SecuraIQ] ${control} — ${title}`.slice(0, 160),
+            remediationId: btn.getAttribute("data-id"),
+          },
+          btn
+        );
+      });
+    });
+    if (!window.__securaiqRemFormWired) {
+      window.__securaiqRemFormWired = true;
+      qs("remCreateForm")?.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const title = qs("remNewTitle")?.value?.trim();
+        if (!title) return;
+        const res = await fetch("/api/gap/remediations", {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            title,
+            control_id: qs("remNewControl")?.value?.trim() || "MC",
+            owner: qs("remNewOwner")?.value?.trim() || "",
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alert(data.detail || `HTTP ${res.status}`);
+          return;
+        }
+        qs("remNewTitle").value = "";
+        qs("remNewControl").value = "";
+        qs("remNewOwner").value = "";
+        renderRemsPage();
+        if (typeof loadCommandCenter === "function") loadCommandCenter();
+      });
+    }
   }
 
   async function renderPlaybooksPage() {
@@ -433,10 +877,11 @@
   async function renderIntelPage() {
     const body = qs("intelPageBody");
     if (!body) return;
-    const [watchRes, vulnRes, kevRes] = await Promise.all([
+    const [watchRes, vulnRes, kevRes, catalogRes] = await Promise.all([
       fetch("/api/intel/watch", { headers: authHeaders() }),
       fetch("/api/vulnerabilities", { headers: authHeaders() }),
       fetch("/api/intel/kev?limit=12", { headers: authHeaders() }),
+      fetch("/api/intel/free/catalog", { headers: authHeaders() }),
     ]);
     const watch = (await watchRes.json()).watch || [];
     const vulns = ((await vulnRes.json()).vulnerabilities || [])
@@ -444,7 +889,26 @@
       .slice(0, 12);
     const kevData = await kevRes.json().catch(() => ({}));
     const kevItems = kevData.items || [];
+    const catalog = await catalogRes.json().catch(() => ({}));
+    const catalogItems = catalog.items || [];
+    const counts = catalog.counts || {};
+    const statusClass = (st) => {
+      if (st === "live") return "ok";
+      if (st === "keyed") return "";
+      if (st === "skipped") return "warn";
+      return "";
+    };
     body.innerHTML = `
+      <section class="cc-panel" style="margin-bottom:1rem">
+        <header><h2>IOC / CVE lookup</h2>
+          <span class="hint"><a href="https://free-apis.github.io/#/categories/Security" target="_blank" rel="noopener">Free APIs Security</a></span>
+        </header>
+        <form id="intelLookupForm" class="inline-form">
+          <input id="intelLookupQ" placeholder="IP, domain, URL, email, hash, or CVE-…" required style="min-width:16rem" />
+          <button type="submit">Lookup</button>
+        </form>
+        <pre id="intelLookupOut" class="tools-palette-out hidden"></pre>
+      </section>
       <div class="ws-grid-2">
         <section class="cc-panel">
           <header><h2>Watchlist</h2>
@@ -497,7 +961,57 @@
           }</ul>
           <button type="button" class="cc-action" id="intelAskAi">Ask AI for weekly threat brief</button>
         </section>
-      </div>`;
+      </div>
+      <section class="cc-panel" style="margin-top:1rem">
+        <header><h2>Free Security APIs</h2>
+          <span class="hint">${catalog.total || 0} listed · live ${counts.live || 0} · keyed ${counts.keyed || 0} · catalog ${counts.catalog || 0} · skipped ${counts.skipped || 0}</span>
+        </header>
+        <div class="integ-status-strip" id="intelCatalogStrip">
+          ${catalogItems
+            .map(
+              (it) =>
+                `<a class="integ-pill integ-chip ${statusClass(it.status)}" href="${escapeHtml(it.docs || "#")}" target="_blank" rel="noopener" title="${escapeHtml(
+                  it.notes || it.auth || ""
+                )}">${escapeHtml(it.name)} · ${escapeHtml(it.status)}${it.key_configured ? " ✓" : ""}</a>`
+            )
+            .join("")}
+        </div>
+        <p class="hint">Add optional keys in Settings to unlock AbuseIPDB, VirusTotal, Shodan, HIBP, URLhaus, EmailRep, and more.</p>
+        <div class="cc-action-row" style="margin-top:0.75rem">
+          <button type="button" class="btn-secondary" id="intelFeedMsrc">MSRC updates</button>
+          <button type="button" class="btn-secondary" id="intelFeedFilterlists">FilterLists</button>
+          <button type="button" class="btn-secondary" id="intelFeedPassword">Password exposure check</button>
+        </div>
+        <pre id="intelFeedOut" class="tools-palette-out hidden"></pre>
+      </section>`;
+    qs("intelLookupForm")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const q = qs("intelLookupQ")?.value?.trim();
+      const out = qs("intelLookupOut");
+      if (!q || !out) return;
+      out.classList.remove("hidden");
+      out.textContent = "Looking up…";
+      const res = await fetch(`/api/intel/lookup?q=${encodeURIComponent(q)}`, { headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        out.textContent = data.detail || `HTTP ${res.status}`;
+        return;
+      }
+      const lines = [
+        `kind: ${data.kind} · ok ${data.providers_ok} · failed ${data.providers_failed}`,
+        "",
+      ];
+      for (const r of data.results || []) {
+        const src = r.source || "?";
+        const summary = JSON.stringify(r.data || r, null, 0).slice(0, 400);
+        lines.push(`[${src}] ${summary}`);
+      }
+      if ((data.errors || []).length) {
+        lines.push("", "errors:");
+        for (const err of data.errors) lines.push(`- ${err.provider}: ${err.error}`);
+      }
+      out.textContent = lines.join("\n");
+    });
     qs("intelKevSync")?.addEventListener("click", async () => {
       const res = await fetch("/api/intel/kev/sync", { method: "POST", headers: authHeaders() });
       const data = await res.json().catch(() => ({}));
@@ -543,6 +1057,30 @@
         );
       }
     });
+    const showIntelFeed = async (url, label) => {
+      const out = qs("intelFeedOut");
+      if (!out) return;
+      out.classList.remove("hidden");
+      out.textContent = `Loading ${label}…`;
+      const res = await fetch(url, { headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      out.textContent = res.ok ? JSON.stringify(data, null, 2) : data.detail || `HTTP ${res.status}`;
+    };
+    qs("intelFeedMsrc")?.addEventListener("click", () => showIntelFeed("/api/intel/msrc", "MSRC"));
+    qs("intelFeedFilterlists")?.addEventListener("click", () => showIntelFeed("/api/intel/filterlists", "FilterLists"));
+    qs("intelFeedPassword")?.addEventListener("click", async () => {
+      const pwd = prompt("Check password exposure (uses k-anonymity API — not stored):");
+      if (!pwd) return;
+      const out = qs("intelFeedOut");
+      if (!out) return;
+      out.classList.remove("hidden");
+      out.textContent = "Checking…";
+      const res = await fetch(`/api/intel/password?password=${encodeURIComponent(pwd)}`, { headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      out.textContent = res.ok
+        ? `Exposed: ${data.exposed ? "yes" : "no"} · count: ${data.count ?? 0}`
+        : data.detail || `HTTP ${res.status}`;
+    });
   }
 
   async function renderReportsPage() {
@@ -571,9 +1109,14 @@
       <div class="cc-action-row" style="margin-top:1rem">
         <button type="button" class="cc-action" id="reportExecPdf">Download executive PDF</button>
         <button type="button" class="cc-action" id="reportExecDocx">Executive DOCX</button>
+        <button type="button" class="cc-action" id="reportRisksPdf">Risks PDF</button>
+        <button type="button" class="cc-action" id="reportVulnsPdf">Vulns PDF</button>
+        <button type="button" class="cc-action" id="reportComplianceDocx">Compliance DOCX</button>
         <button type="button" class="cc-action" id="reportRisksXlsx">Risks Excel</button>
         <button type="button" class="cc-action" id="reportVulnsXlsx">Vulns Excel</button>
         <button type="button" class="cc-action" id="reportExecAi">Generate executive report (AI)</button>
+        <button type="button" class="cc-action" id="reportBoardAi">Board report (AI)</button>
+        <button type="button" class="cc-action" id="reportSecurityAi">Security report (AI)</button>
         <button type="button" class="cc-action" id="reportTechAi">Generate technical report (AI)</button>
       </div>`;
     body.querySelectorAll(".report-card").forEach((btn) => {
@@ -636,6 +1179,19 @@
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
       )
     );
+    qs("reportRisksPdf")?.addEventListener("click", () =>
+      bin("/api/reports/risks.pdf", "securaiq-risks.pdf", "application/pdf")
+    );
+    qs("reportVulnsPdf")?.addEventListener("click", () =>
+      bin("/api/reports/vulns.pdf", "securaiq-vulns.pdf", "application/pdf")
+    );
+    qs("reportComplianceDocx")?.addEventListener("click", () =>
+      bin(
+        "/api/reports/compliance.docx",
+        "securaiq-compliance.docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      )
+    );
     qs("reportRisksXlsx")?.addEventListener("click", () =>
       bin(
         "/api/reports/risks.xlsx",
@@ -653,6 +1209,14 @@
     qs("reportExecAi")?.addEventListener("click", () => {
       if (typeof runNavPrompt === "function")
         runNavPrompt("ciso", "Generate an executive security status report from our current posture");
+    });
+    qs("reportBoardAi")?.addEventListener("click", () => {
+      if (typeof runNavPrompt === "function")
+        runNavPrompt("ciso", "Draft a board report: security score, top risks, compliance %, and decisions needed");
+    });
+    qs("reportSecurityAi")?.addEventListener("click", () => {
+      if (typeof runNavPrompt === "function")
+        runNavPrompt("blueteam", "Generate a technical security report covering critical vulns, remediations, and verify steps");
     });
     qs("reportTechAi")?.addEventListener("click", () => {
       if (typeof runNavPrompt === "function")
@@ -693,7 +1257,8 @@
                       <button type="button" class="btn-secondary ws-ask-ai" data-kind="incident" data-json="${escapeHtml(
                         JSON.stringify({ id: i.id, title: i.title, severity: i.severity })
                       )}">Ask AI</button>
-                      <button type="button" class="btn-secondary ws-close-inc" data-id="${i.id}">Close</button></li>`
+                      <button type="button" class="btn-secondary ws-close-inc" data-id="${i.id}">Close</button>
+                      <button type="button" class="btn-secondary ws-del-inc" data-id="${i.id}">Delete</button></li>`
                   )
                   .join("")
               : `<li class="hint">No open incidents</li>`
@@ -728,9 +1293,15 @@
         renderSocPage();
       });
     });
+    body.querySelectorAll(".ws-del-inc").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this incident?")) return;
+        await fetch(`/api/incidents/${btn.getAttribute("data-id")}`, { method: "DELETE", headers: authHeaders() });
+        renderSocPage();
+        if (typeof loadCommandCenter === "function") loadCommandCenter();
+      });
+    });
   }
-
-  async function renderEvidencePage() {
     const body = qs("evidencePageBody");
     if (!body) return;
     const [filesRes, linksRes, remsRes] = await Promise.all([
@@ -957,7 +1528,7 @@
           </form>
         </section>
       </div>
-      <p class="hint" style="margin-top:1rem">Roles: admin · analyst · viewer · client. MFA/SSO land in a later Phase A slice.</p>`;
+      <p class="hint" style="margin-top:1rem">Roles: admin · analyst · viewer · client. MFA (TOTP) and OIDC SSO available in Settings → Enterprise auth.</p>`;
     let selectedOrg = null;
     async function loadMembers(orgId) {
       selectedOrg = orgId;
@@ -1038,6 +1609,28 @@
     (dash.framework_control_stats || []).forEach((s) => {
       statsById[s.framework_id] = s;
     });
+    let totImpl = 0;
+    let totPartial = 0;
+    let totMissing = 0;
+    let pctSum = 0;
+    let pctN = 0;
+    Object.values(statsById).forEach((st) => {
+      const c = st.counts || {};
+      totImpl += c.implemented || 0;
+      totPartial += c.partial || 0;
+      totMissing += c.missing || 0;
+    });
+    (dash.frameworks || []).forEach((f) => {
+      if (f.compliance_percent != null) {
+        pctSum += Number(f.compliance_percent) || 0;
+        pctN += 1;
+      }
+    });
+    const avgPct = pctN ? Math.round(pctSum / pctN) : Math.round(Number(dash.compliance_score) || 0);
+    const openRems = rems.filter((r) => (r.status || "") !== "done").length;
+    const riskScore = dash.security_index != null ? Math.round(Number(dash.security_index)) : "—";
+    const maturity =
+      avgPct >= 80 ? "Managed" : avgPct >= 50 ? "Defined" : avgPct > 0 ? "Initial" : "Ad hoc";
     const remByControl = {};
     rems.forEach((r) => {
       const cid = (r.control_id || "").toUpperCase();
@@ -1063,8 +1656,22 @@
         aid = match?.id;
       }
       if (!aid) {
-        detailEl.innerHTML = `<p class="hint">No assessment for this framework yet — run gap analysis first.</p>
-          <button type="button" class="cc-action fw-run-gap" data-id="${escapeHtml(frameworkId)}">Run gap</button>`;
+        const catRes = await fetch(`/api/frameworks/${encodeURIComponent(frameworkId)}`, { headers: authHeaders() });
+        const catalog = catRes.ok ? await catRes.json().catch(() => ({})) : {};
+        const controls = catalog.controls || [];
+        detailEl.innerHTML = `<p class="hint">No assessment for this framework yet — run gap analysis to score controls.</p>
+          <button type="button" class="cc-action fw-run-gap" data-id="${escapeHtml(frameworkId)}">Run gap</button>
+          ${
+            controls.length
+              ? `<div class="data-table-wrap" style="margin-top:1rem"><table class="data-table"><thead><tr><th>Control</th><th>Title</th></tr></thead><tbody>${controls
+                  .slice(0, 40)
+                  .map(
+                    (c) =>
+                      `<tr><td>${escapeHtml(c.id || c.control_id || "")}</td><td>${escapeHtml(c.title || c.name || "")}</td></tr>`
+                  )
+                  .join("")}</tbody></table></div>`
+              : ""
+          }`;
         detailEl.querySelector(".fw-run-gap")?.addEventListener("click", () => {
           if (typeof openGap === "function") openGap();
           const sel = document.getElementById("gapFramework");
@@ -1090,7 +1697,10 @@
               counts.missing || 0
             } missing</p>
           </div>
-          <button type="button" class="btn-secondary" id="fwDetailClose">Close</button>
+          <div class="cc-action-row">
+            <button type="button" class="btn-secondary" id="fwExportAssessment">Export assessment</button>
+            <button type="button" class="btn-secondary" id="fwDetailClose">Close</button>
+          </div>
         </header>
         <div class="data-table-wrap">
           <table class="data-table">
@@ -1148,6 +1758,14 @@
         detailEl.innerHTML = "";
         detailEl.classList.add("hidden");
       });
+      qs("fwExportAssessment")?.addEventListener("click", async () => {
+        try {
+          await downloadApiExport(`/api/gap/assessments/${aid}/export`, `securaiq-gap-${frameworkId}.md`);
+          if (typeof notifyUser === "function") notifyUser("**Gap assessment exported** as Markdown.");
+        } catch (err) {
+          alert(err.message || "Export failed");
+        }
+      });
       detailEl.classList.remove("hidden");
       detailEl.querySelectorAll(".fw-ctrl-ask").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -1170,6 +1788,16 @@
     }
 
     body.innerHTML = `
+      <div class="comp-kpi-row" aria-label="Compliance health">
+        <div class="comp-kpi"><span>Implemented</span><strong>${totImpl}</strong></div>
+        <div class="comp-kpi"><span>Partial</span><strong>${totPartial}</strong></div>
+        <div class="comp-kpi"><span>Missing</span><strong>${totMissing}</strong></div>
+        <div class="comp-kpi"><span>Coverage</span><strong>${avgPct}%</strong></div>
+        <div class="comp-kpi"><span>Evidence</span><strong>${evidence.length}</strong></div>
+        <div class="comp-kpi"><span>Open remediations</span><strong>${openRems}</strong></div>
+        <div class="comp-kpi"><span>Risk score</span><strong>${riskScore}</strong></div>
+        <div class="comp-kpi"><span>Maturity</span><strong>${maturity}</strong></div>
+      </div>
       <div class="fw-grid">
         ${
           fws.length
@@ -1345,15 +1973,20 @@
       }
       if (kind === "settings") {
         qs("settingsBtn")?.click();
-        if (focus === "jira") {
+        const focusMap = {
+          jira: "setJiraUrl",
+          ai: "setOllamaUrl",
+          tools: "setLocalToolsEnabled",
+          keys: "apiKeyName",
+          audit: "auditLogList",
+        };
+        const targetId = focusMap[focus] || (focus ? `set${focus[0].toUpperCase()}${focus.slice(1)}` : null);
+        if (targetId) {
           setTimeout(() => {
-            const el =
-              document.getElementById("setJiraBase") ||
-              document.querySelector("[name='jira_base_url']") ||
-              document.getElementById("jiraBaseUrl");
+            const el = document.getElementById(targetId);
             el?.scrollIntoView?.({ behavior: "smooth", block: "center" });
-            el?.focus?.();
-          }, 200);
+            if (el && typeof el.focus === "function" && el.tagName !== "DIV") el.focus();
+          }, 220);
         }
         return;
       }
@@ -1372,17 +2005,21 @@
       const strip = qs("integStatusStrip");
       if (!strip) return;
       try {
-        const [setRes, hookRes] = await Promise.all([
+        const [setRes, hookRes, ghRes] = await Promise.all([
           fetch("/api/settings", { headers: authHeaders() }),
           fetch("/api/webhooks", { headers: authHeaders() }),
+          fetch("/api/integrations/github/status", { headers: authHeaders() }),
         ]);
         const settings = await setRes.json().catch(() => ({}));
         const hooks = await hookRes.json().catch(() => ({}));
+        const gh = await ghRes.json().catch(() => ({}));
         const jiraOk = Boolean(settings.jira_base_url && settings.jira_api_token_set);
         const hookCount = (hooks.webhooks || []).length;
+        const ghOk = Boolean(gh.configured);
         const backend = settings.model_backend || settings.MODEL_BACKEND || "local";
         strip.innerHTML = `
           <span class="integ-pill ${jiraOk ? "ok" : ""}">Jira: ${jiraOk ? "configured" : "not set"}</span>
+          <span class="integ-pill ${ghOk ? "ok" : ""}">GitHub: ${ghOk ? "webhook ready" : "not set"}</span>
           <span class="integ-pill ${hookCount ? "ok" : ""}">Webhooks: ${hookCount}</span>
           <span class="integ-pill ok">AI backend: ${escapeHtml(String(backend))}</span>
           <span class="integ-pill">Scanners: import via Vulns</span>`;
@@ -1530,14 +2167,34 @@
     }
     loadCatalog();
     loadStatusStrip();
+    loadVulnSampleButtons();
 
     qs("workspaceResetBtn")?.addEventListener("click", async () => {
       if (!confirm("Reset this workspace to empty? This cannot be undone.")) return;
+
+      // Two-step approval: request a code (delivered to Notifications), then
+      // the user must read and re-enter it — not just click through a dialog.
+      const reqRes = await fetch("/api/workspace/reset/request-code", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+      });
+      if (!reqRes.ok) {
+        const errData = await reqRes.json().catch(() => ({}));
+        if (typeof notifyUser === "function")
+          notifyUser(`**Reset failed:** ${errData.detail || reqRes.status}`);
+        return;
+      }
+      const code = prompt(
+        "A confirmation code was sent to your Notifications (bell icon). Enter it to confirm the reset:"
+      );
+      if (!code) return;
+
       const res = await fetch("/api/workspace/reset", {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           confirm: true,
+          confirm_code: code.trim(),
           clear_rag: Boolean(qs("resetClearRag")?.checked),
         }),
       });
@@ -1613,9 +2270,13 @@
     const body = qs("graphPageBody");
     if (!body) return;
     body.innerHTML = `<p class="hint">Loading graph…</p>`;
-    const res = await fetch("/api/graph", { headers: authHeaders() });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
+    const [gRes, lRes] = await Promise.all([
+      fetch("/api/graph", { headers: authHeaders() }),
+      fetch("/api/graph/links", { headers: authHeaders() }),
+    ]);
+    const data = await gRes.json().catch(() => ({}));
+    const linksData = await lRes.json().catch(() => ({}));
+    if (!gRes.ok) {
       body.innerHTML = `<p class="hint">${escapeHtml(data.detail || "Graph unavailable")}</p>`;
       return;
     }
@@ -1623,13 +2284,17 @@
     const byType = counts.by_type || {};
     const nodes = data.nodes || [];
     const edges = data.edges || [];
+    const links = linksData.links || [];
     body.innerHTML = `
       <div class="asset-breakdown-grid" style="margin-bottom:1rem">
         ${Object.entries(byType)
           .map(([k, v]) => `<div class="ab-tile"><span>${escapeHtml(k)}</span><strong>${v}</strong></div>`)
           .join("")}
       </div>
-      <p class="hint">${counts.nodes || 0} nodes · ${counts.edges || 0} edges</p>
+      <p class="hint">${counts.nodes || 0} nodes · ${counts.edges || 0} edges · ${links.length} manual links</p>
+      <div class="graph-path" aria-label="Attack surface path">
+        <span>Repo</span><i></i><span>Container</span><i></i><span>Image</span><i></i><span>Cloud</span><i></i><span>Server</span><i></i><span>Vuln</span><i></i><span>Incident</span><i></i><span>Compliance</span>
+      </div>
       <div class="ws-grid-2">
         <section class="cc-panel">
           <header><h2>Nodes</h2></header>
@@ -1645,7 +2310,7 @@
         <section class="cc-panel">
           <header><h2>Relationships</h2></header>
           <ul class="cc-list">${edges
-            .slice(0, 60)
+            .slice(0, 40)
             .map(
               (e) =>
                 `<li><code>${escapeHtml(e.from)}</code> —${escapeHtml(e.relation)}→ <code>${escapeHtml(
@@ -1655,7 +2320,31 @@
             .join("")}</ul>
           <button type="button" class="cc-action" id="graphAskAi" style="margin-top:0.75rem">Ask AI to explain top attack paths</button>
         </section>
-      </div>`;
+      </div>
+      <section class="cc-panel" style="margin-top:1rem">
+        <header><h2>Add entity link</h2></header>
+        <form id="graphLinkForm" class="inline-form" style="flex-wrap:wrap;gap:0.5rem">
+          <input id="glSrcType" placeholder="src type (asset)" required />
+          <input id="glSrcId" placeholder="src id" required />
+          <input id="glRel" placeholder="relation" value="related" />
+          <input id="glDstType" placeholder="dst type (vuln)" required />
+          <input id="glDstId" placeholder="dst id" required />
+          <button type="submit">Link</button>
+        </form>
+        <ul class="cc-list" style="margin-top:0.75rem">${
+          links.length
+            ? links
+                .slice(0, 30)
+                .map(
+                  (l) =>
+                    `<li><code>${escapeHtml(l.src_type)}:${escapeHtml(l.src_id)}</code> —${escapeHtml(
+                      l.relation || "related"
+                    )}→ <code>${escapeHtml(l.dst_type)}:${escapeHtml(l.dst_id)}</code></li>`
+                )
+                .join("")
+            : `<li class="hint">No manual links yet</li>`
+        }</ul>
+      </section>`;
     qs("graphAskAi")?.addEventListener("click", () => {
       if (typeof runNavPrompt === "function") {
         runNavPrompt(
@@ -1664,35 +2353,163 @@
         );
       }
     });
+    qs("graphLinkForm")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        const res = await fetch("/api/graph/links", {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            src_type: qs("glSrcType")?.value?.trim(),
+            src_id: qs("glSrcId")?.value?.trim(),
+            relation: qs("glRel")?.value?.trim() || "related",
+            dst_type: qs("glDstType")?.value?.trim(),
+            dst_id: qs("glDstId")?.value?.trim(),
+          }),
+        });
+        const out = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(out.detail || res.status);
+        renderGraphPage();
+      } catch (err) {
+        alert(err.message || "Link failed");
+      }
+    });
   }
 
-  function renderBillingPage() {
+  async function renderBillingPage() {
     const body = qs("billingPageBody");
     if (!body) return;
+    body.innerHTML = `<p class="hint">Loading billing…</p>`;
+    let dash = {};
+    let plat = {};
+    let usage = {};
+    let plans = [];
+    try {
+      const [dRes, healthRes, platRes, usageRes, plansRes] = await Promise.all([
+        fetch("/api/dashboard", { headers: authHeaders() }),
+        fetch("/api/health").catch(() => null),
+        fetch("/api/platform/status", { headers: authHeaders() }).catch(() => null),
+        fetch("/api/billing/usage", { headers: authHeaders() }).catch(() => null),
+        fetch("/api/billing/plans").catch(() => null),
+      ]);
+      dash = await dRes.json().catch(() => ({}));
+      if (healthRes && healthRes.ok) plat = await healthRes.json().catch(() => ({}));
+      const platStatus = platRes && platRes.ok ? await platRes.json().catch(() => ({})) : {};
+      plat = { ...plat, ...platStatus };
+      usage = usageRes && usageRes.ok ? await usageRes.json().catch(() => ({})) : {};
+      const plansData = plansRes && plansRes.ok ? await plansRes.json().catch(() => ({})) : {};
+      plans = Object.entries(plansData.plans || {}).map(([id, p]) => ({ id, ...p }));
+    } catch {
+      /* ignore */
+    }
+    const limit = usage.messages_limit == null ? "unlimited" : usage.messages_limit;
+    const planCards = plans.length
+      ? plans
+          .map(
+            (p) => `<article class="cc-panel integ-card-sm">
+              <h3>${escapeHtml(p.label || p.id)}</h3>
+              <p class="hint">${p.price_usd == null ? "Contact sales" : p.price_usd === 0 ? "Free" : `$${p.price_usd}/mo`}</p>
+              <p>${p.messages_per_month == null ? "Unlimited messages" : `${p.messages_per_month} messages/mo`}</p>
+              ${
+                p.id !== "free" && p.id !== (usage.plan || "free")
+                  ? `<button type="button" class="btn-secondary billing-upgrade" data-plan="${escapeHtml(p.id)}">Upgrade</button>`
+                  : p.id === (usage.plan || "free")
+                    ? `<span class="hint">Current plan</span>`
+                    : ""
+              }
+            </article>`
+          )
+          .join("")
+      : `<p class="hint">Community / local — self-hosted</p>`;
     body.innerHTML = `
       <div class="billing-grid">
         <section class="cc-panel">
           <header><h2>Subscription</h2></header>
-          <p><strong>Community / local</strong></p>
-          <p class="hint">Self-hosted — no metering yet. Commercial editions track seats &amp; usage.</p>
+          <p><strong>${escapeHtml(usage.plan_label || usage.plan || "Community")}</strong></p>
+          <p class="hint">${usage.messages_used_this_month ?? 0} / ${escapeHtml(String(limit))} messages this month
+            ${usage.enforcement_enabled ? "" : " (soft limit)"}</p>
+          <div class="integ-grid" style="margin-top:1rem">${planCards}</div>
         </section>
         <section class="cc-panel">
-          <header><h2>Usage</h2></header>
+          <header><h2>Workspace usage</h2></header>
           <ul class="cc-list">
-            <li>AI chats — local model</li>
-            <li>Gap assessments — unlimited (local)</li>
-            <li>Evidence links — local SQLite</li>
+            <li>Assets — <strong>${dash.assets_total || 0}</strong></li>
+            <li>Open risks — <strong>${dash.risks_open || 0}</strong></li>
+            <li>Open vulns — <strong>${dash.vulnerabilities_open || 0}</strong></li>
+            <li>Remediations — <strong>${dash.remediations_open || 0}</strong></li>
+            <li>Gap assessments — <strong>${dash.assessment_count || 0}</strong></li>
+            <li>Playbooks — <strong>${dash.playbooks_total || 0}</strong></li>
           </ul>
         </section>
         <section class="cc-panel">
-          <header><h2>Credits / seats</h2></header>
-          <p class="hint">Placeholder for SaaS metering (Month 3 roadmap).</p>
+          <header><h2>Platform</h2></header>
+          <p class="hint">${escapeHtml(plat.status || "Local · no cloud billing")}</p>
+          <ul class="cc-list">
+            <li>Backend — ${escapeHtml(String(plat.backend || "—"))}</li>
+            <li>Model — ${escapeHtml(String(plat.model || "—"))}</li>
+            <li>RAG docs — ${escapeHtml(String(plat.rag_documents ?? "—"))}</li>
+            <li>Vector store — ${escapeHtml(String(plat.vector_store || "—"))}</li>
+            <li>Scanners — ${escapeHtml(String((plat.scanners || []).length || "—"))} import adapters</li>
+            <li>Intel feeds — ${escapeHtml(String((plat.intel_feeds || []).length || "—"))} wired</li>
+          </ul>
         </section>
         <section class="cc-panel">
           <header><h2>Invoices</h2></header>
-          <p class="hint">No invoices in local mode.</p>
+          <p class="hint">Stripe checkout when <code>STRIPE_SECRET_KEY</code> is configured. Local mode has no invoices.</p>
         </section>
       </div>`;
+    body.querySelectorAll(".billing-upgrade").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const plan = btn.getAttribute("data-plan");
+        btn.disabled = true;
+        try {
+          const res = await fetch("/api/billing/checkout", {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({
+              plan,
+              success_url: `${window.location.origin}/?billing=success`,
+              cancel_url: `${window.location.origin}/?billing=cancel`,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+          if (data.url) window.location.href = data.url;
+          else if (typeof notifyUser === "function") notifyUser("**Checkout session created.**");
+        } catch (err) {
+          alert(err.message || "Checkout unavailable");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
+  async function loadVulnSampleButtons() {
+    const row = qs("vulnsSampleRow");
+    if (!row) return;
+    try {
+      const res = await fetch("/api/vulnerabilities/samples", { headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      const samples = data.samples || [];
+      if (!samples.length) {
+        row.innerHTML = `<span class="hint">No lab fixtures in data/samples/</span>`;
+        return;
+      }
+      row.innerHTML = samples
+        .map((s) => {
+          const label = (s.id || "").replace(/-lab$/, "").replace(/-/g, " ");
+          return `<button type="button" class="btn-secondary vulns-sample-btn" data-sample-id="${escapeHtml(
+            s.id
+          )}">${escapeHtml(label)}</button>`;
+        })
+        .join("");
+      row.querySelectorAll(".vulns-sample-btn").forEach((btn) => {
+        btn.addEventListener("click", () => importLabSample(btn.getAttribute("data-sample-id")));
+      });
+    } catch {
+      row.innerHTML = `<span class="hint">Could not load lab fixtures</span>`;
+    }
   }
 
   async function importLabSample(sampleId) {
@@ -1713,10 +2530,76 @@
       }
       showWorkspace("vulns");
       renderVulnsPage();
+      loadVulnSampleButtons();
       if (typeof loadCommandCenter === "function") loadCommandCenter();
     } catch (err) {
       alert(err.message || "Sample import failed");
     }
+  }
+
+  function renderAutomationPage() {
+    const body = qs("automationPageBody");
+    if (!body) return;
+    const jobs = [
+      { name: "Scan import → triage", status: "Ready", last: "On demand", trigger: "Manual / webhook" },
+      { name: "Critical → Jira", status: "Partial", last: "Uses Jira connect", trigger: "Triage+Jira" },
+      { name: "Board report export", status: "Ready", last: "Reports hub", trigger: "Manual" },
+      { name: "Slack notify", status: "Planned", last: "—", trigger: "Webhook" },
+    ];
+    body.innerHTML = `
+      <section class="cc-panel auto-flow-panel">
+        <header><h2>Golden-path workflow</h2>
+          <p class="hint">Visual pipeline for authorized scan → decision → ticket → verify.</p>
+        </header>
+        <div class="auto-flow" role="list">
+          ${["Trigger", "Scan", "AI triage", "Risk", "Approval", "Ticket", "Notify", "Close"]
+            .map(
+              (step, i) =>
+                `<div class="auto-flow-step" role="listitem"><span>${i + 1}</span><strong>${step}</strong></div>${
+                  i < 7 ? '<span class="auto-flow-arrow" aria-hidden="true">→</span>' : ""
+                }`
+            )
+            .join("")}
+        </div>
+      </section>
+      <div class="auto-grid">
+        <section class="cc-panel">
+          <header><h2>Jobs</h2></header>
+          <ul class="auto-job-list">
+            ${jobs
+              .map(
+                (j) => `<li>
+                  <div><strong>${escapeHtml(j.name)}</strong><span class="hint">${escapeHtml(j.trigger)}</span></div>
+                  <span class="auto-job-status status-${escapeHtml(j.status.toLowerCase())}">${escapeHtml(j.status)}</span>
+                  <span class="hint">${escapeHtml(j.last)}</span>
+                </li>`
+              )
+              .join("")}
+          </ul>
+        </section>
+        <section class="cc-panel">
+          <header><h2>Triggers &amp; webhooks</h2></header>
+          <p class="hint">Wire scanner webhooks and chatops under Integrations. Execution logs appear after the first run.</p>
+          <div class="cc-action-row">
+            <button type="button" class="cc-action" data-workspace="integrations">Open integrations</button>
+            <button type="button" class="btn-secondary" id="autoOpenReports" data-workspace="reports">Reports</button>
+          </div>
+        </section>
+        <section class="cc-panel">
+          <header><h2>Execution logs</h2></header>
+          <div class="auto-log">
+            <p class="hint">No automated runs yet — import a scan or run Triage+Jira to populate the pipeline.</p>
+          </div>
+        </section>
+      </div>`;
+    body.querySelectorAll("[data-workspace]").forEach((el) => {
+      el.addEventListener("click", () => showWorkspace(el.getAttribute("data-workspace")));
+    });
+    qs("automationAskDesign")?.addEventListener("click", () => {
+      const mode = qs("automationAskDesign").getAttribute("data-mode") || "ciso";
+      const prompt = qs("automationAskDesign").getAttribute("data-prompt") || "";
+      if (typeof window.runNavPrompt === "function") window.runNavPrompt(mode, prompt, { stay: true });
+    });
   }
 
   function wireWorkspaceNav() {
@@ -1728,11 +2611,8 @@
         showWorkspace(el.getAttribute("data-workspace"));
       });
     });
-    qs("notifBtn")?.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      showWorkspace("soc");
-    });
+    // notifBtn now opens the real notifications panel (wired in app.js).
+    // "Open SOC" inside that panel still uses the generic [data-workspace] handler above.
 
     document.querySelectorAll(".ai-tab").forEach((tab) => {
       tab.addEventListener("click", () => {
@@ -2037,13 +2917,6 @@
       ["assetsOpenCreate", () => typeof openAsset === "function" && openAsset()],
       ["risksOpenCreate", () => typeof openRisk === "function" && openRisk()],
       ["vulnsOpenImport", () => typeof openVuln === "function" && openVuln()],
-      ["vulnsSampleTrivy", () => importLabSample("trivy-lab")],
-      ["vulnsSampleSemgrep", () => importLabSample("semgrep-lab")],
-      ["vulnsSampleGitleaks", () => importLabSample("gitleaks-lab")],
-      ["vulnsSampleGrype", () => importLabSample("grype-lab")],
-      ["vulnsSampleCheckov", () => importLabSample("checkov-lab")],
-      ["vulnsSampleSonar", () => importLabSample("sonarqube-lab")],
-      ["vulnsSampleZap", () => importLabSample("zap-lab")],
       ["mcImportScanners", () => showWorkspace("vulns")],
       [
         "vulnsOpenExport",

@@ -66,6 +66,13 @@ class JiraIssueCreate(BaseModel):
     remediation_id: str | None = None
 
 
+class ServiceNowIncidentCreate(BaseModel):
+    short_description: str = Field(min_length=1, max_length=160)
+    description: str = ""
+    urgency: str = "2"
+    remediation_id: str | None = None
+
+
 @router.get("/orgs")
 async def orgs_list(user: Annotated[AuthUser, Depends(require_user)]):
     ensure_org_schema()
@@ -184,5 +191,30 @@ async def jira_issue(req: JiraIssueCreate, user: Annotated[AuthUser, Depends(req
             )
     try:
         return await jira_create_issue(summary=summary, description=description, issue_type=req.issue_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/integrations/servicenow/incident")
+async def servicenow_incident(req: ServiceNowIncidentCreate, user: Annotated[AuthUser, Depends(require_user)]):
+    from app.connectors.servicenow import create_incident as sn_create_incident
+
+    short_description = req.short_description
+    description = req.description
+    if req.remediation_id:
+        rems = list_remediations(user.id)
+        rem = next((r for r in rems if r.get("id") == req.remediation_id), None)
+        if rem:
+            short_description = short_description or f"[SecuraIQ] {rem.get('control_id')} — {rem.get('title')}"
+            description = (
+                description
+                or f"Control: {rem.get('control_id')}\n{rem.get('title')}\n\n"
+                f"Recommendation: {rem.get('recommendation') or rem.get('notes') or ''}\n"
+                f"Owner: {rem.get('owner') or 'unassigned'}\nStatus: {rem.get('status')}"
+            )
+    try:
+        return await sn_create_incident(
+            short_description=short_description, description=description, urgency=req.urgency
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

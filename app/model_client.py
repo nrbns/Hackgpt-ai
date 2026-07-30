@@ -111,6 +111,7 @@ class ModelClient:
                 "groq",
                 "together",
                 "fireworks",
+                "huggingface_api",
                 "openai_compat",
                 "ollama",
                 "hermes",
@@ -124,7 +125,15 @@ class ModelClient:
             model = override_model or settings.ollama_model
             async for chunk in self._stream_ollama(messages, model=model):
                 yield chunk
-        elif backend in {"openai_compat", "openai", "openrouter", "groq", "together", "fireworks"}:
+        elif backend in {
+            "openai_compat",
+            "openai",
+            "openrouter",
+            "groq",
+            "together",
+            "fireworks",
+            "huggingface_api",
+        }:
             async for chunk in self._stream_openai_compat(messages, backend=backend, model=override_model or None):
                 yield chunk
         elif backend == "hermes":
@@ -240,6 +249,14 @@ class ModelClient:
                 async with client.stream("POST", url, json=payload, headers=headers) as response:
                     if response.status_code != 200:
                         body = await response.aread()
+                        if b == "huggingface_api" and response.status_code in {402, 429, 503}:
+                            yield (
+                                f"_{label} is unavailable ({response.status_code}); "
+                                f"falling back to local `{settings.hf_model}`._\n\n"
+                            )
+                            async for chunk in self._stream_huggingface(messages):
+                                yield chunk
+                            return
                         yield (
                             f"**{label} error** ({response.status_code}): {body.decode()}\n\n"
                             f"Check URL `{base_url}` and model `{use_model}`."

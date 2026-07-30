@@ -230,8 +230,94 @@ def init_schema(conn: sqlite3.Connection | None = None) -> None:
             notes TEXT NOT NULL DEFAULT '',
             created_at REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS usage_events (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'chat_message',
+            quantity INTEGER NOT NULL DEFAULT 1,
+            created_at REAL NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS action_approvals (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            detail_json TEXT NOT NULL DEFAULT '{}',
+            code TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            consumed_at REAL
+        );
+        CREATE TABLE IF NOT EXISTS jobs (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            result_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT NOT NULL DEFAULT '',
+            created_at REAL NOT NULL,
+            started_at REAL,
+            finished_at REAL
+        );
+        CREATE TABLE IF NOT EXISTS notifications (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'info',
+            title TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '',
+            link TEXT NOT NULL DEFAULT '',
+            read INTEGER NOT NULL DEFAULT 0,
+            emailed INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL
+        );
         """
     )
+    c.commit()
+    _migrate_users(c)
+    _migrate_engagements(c)
+
+
+def _migrate_users(c: sqlite3.Connection) -> None:
+    """Lightweight schema migrations for auth/MFA/OIDC."""
+    cols = {row[1] for row in c.execute("PRAGMA table_info(users)").fetchall()}
+    additions = {
+        "mfa_secret": "TEXT NOT NULL DEFAULT ''",
+        "mfa_enabled": "INTEGER NOT NULL DEFAULT 0",
+        "email": "TEXT NOT NULL DEFAULT ''",
+        "oidc_sub": "TEXT NOT NULL DEFAULT ''",
+        "plan": "TEXT NOT NULL DEFAULT 'free'",
+        "stripe_customer_id": "TEXT NOT NULL DEFAULT ''",
+    }
+    for name, typedef in additions.items():
+        if name not in cols:
+            c.execute(f"ALTER TABLE users ADD COLUMN {name} {typedef}")
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mfa_pending (
+            token TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            expires_at REAL NOT NULL,
+            created_at REAL NOT NULL
+        );
+        """
+    )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS oidc_states (
+            state TEXT PRIMARY KEY,
+            created_at REAL NOT NULL,
+            expires_at REAL NOT NULL
+        );
+        """
+    )
+    c.commit()
+
+
+def _migrate_engagements(c: sqlite3.Connection) -> None:
+    """Lifecycle status for engagements (draft/active/on_hold/completed/archived) —
+    supports multi-project / partial-engagement tracking."""
+    cols = {row[1] for row in c.execute("PRAGMA table_info(engagements)").fetchall()}
+    if "status" not in cols:
+        c.execute("ALTER TABLE engagements ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
     c.commit()
 
 
@@ -256,3 +342,10 @@ def audit(action: str, user_id: str | None = None, detail: dict[str, Any] | None
         (new_id(), user_id, action, json.dumps(detail or {}), now()),
     )
     c.commit()
+
+    try:
+        from app.siem import log_security_event
+
+        log_security_event(action, user_id, detail)
+    except Exception:
+        pass  # logging/SIEM forwarding must never break the calling workflow

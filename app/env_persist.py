@@ -22,6 +22,16 @@ def ensure_env_file() -> None:
 def update_env_value(key: str, value: str) -> None:
     ensure_env_file()
 
+    # Encrypt secret-shaped values (API keys, tokens, passwords) before they
+    # touch disk. See app/secrets_crypto.py — non-secret keys and boolean/int
+    # settings pass through untouched.
+    from app.secrets import is_secret_field
+
+    if value and is_secret_field(key):
+        from app.secrets_crypto import encrypt_value
+
+        value = encrypt_value(value)
+
     raw = ENV_PATH.read_bytes()
     # Detect newline style from file bytes
     if b"\r\n" in raw:

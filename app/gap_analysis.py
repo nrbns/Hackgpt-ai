@@ -269,11 +269,15 @@ def dashboard_scores(user_id: str) -> dict[str, Any]:
         "compliance_score": overall,
         "frameworks": scores,
         "assessment_count": len(rows),
-        "recommendations": [
-            "Run ISO 27001 gap analysis against current policies/evidence",
-            "Prioritize missing MFA, patching, logging, and IR plan controls",
-            "Export executive report for Swana Techno engagement delivery",
-        ],
+        "recommendations": (
+            [
+                "Run ISO 27001 gap analysis against current policies/evidence",
+                "Prioritize missing MFA, patching, logging, and IR plan controls",
+                "Export executive report for engagement delivery",
+            ]
+            if scores
+            else []
+        ),
     }
 
 

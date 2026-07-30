@@ -1,19 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
-from app.config import settings
+from app.config import cors_origin_list, settings
+from app.rate_limit import RateLimitMiddleware
 from app.guardrails import check_request
 from app.model_client import model_client
 from app.prompts import (
@@ -41,17 +43,22 @@ from app.prompts import (
 from app.auth import resolve_user
 from app.backends import hermes_reachable, openai_compat_reachable
 from app.commercial_api import bootstrap_auth, router as commercial_router
+from app.integrations_api import router as integrations_router
 from app.gap_api import router as gap_router
 from app.enterprise_api import router as enterprise_router
 from app.ops_api import router as ops_router
 from app.commercial_ext_api import router as commercial_ext_router
 from app.platform_api import router as platform_router
+from app.billing_api import router as billing_router
 from app.commercial_ext import ensure_org_schema
 from app.gap_analysis import ensure_gap_schema
 from app.db import init_schema
 from app.knowledge_graph import ensure_graph_schema
 from app.automation import ensure_webhook_schema
 from app.intel_feeds import ensure_intel_cache_schema
+from app.jobs import start_background_jobs, stop_background_jobs
+from app.error_reporting import init_error_reporting
+from app.metrics import incr, incr_status, render_prometheus
 from app.env_persist import update_env_value
 from app.fine_tune.job import finetune_job, launch_unsloth_job
 from app.hermes_client import fetch_hermes_status
@@ -61,12 +68,25 @@ from app.platform_info import platform_info
 from app.probe import probe_backends
 from app.rag import rag_engine
 from app.settings_api import apply_settings_patch, public_settings
-from app.tools import format_tools_context, list_tools_status, run_security_tools
+from app.tools import (
+    format_tools_context,
+    iter_security_tools,
+    list_tools_status,
+    run_security_tools,
+)
 from app.uploads import attachment_context
 from app.web_search import format_search_context, web_search
 from app.workspace import append_message, memory_context_raw
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+def _encode_citations(sources: list[dict]) -> str:
+    """Base64-encode the citations payload so it's safe to embed inside a
+    `[[citations:...]]` bracket marker in a plain-text SSE stream (raw JSON
+    would contain `]` characters that break the existing marker regexes)."""
+    raw = json.dumps(sources, ensure_ascii=False)
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
 
 
 @asynccontextmanager
@@ -105,31 +125,86 @@ async def lifespan(app: FastAPI):
     elif settings.model_backend == "hermes":
         print(f"Hermes backend: {settings.hermes_base_url}")
     print(f"Auth: {'ENABLED' if settings.auth_enabled else 'disabled (local open mode)'}")
+    start_background_jobs()
+    print("Background jobs: worker + periodic scheduler started (KEV sync every 6h).")
+    if init_error_reporting():
+        print(f"Error reporting: Sentry active ({settings.sentry_environment}).")
+    else:
+        print("Error reporting: disabled (set SENTRY_DSN to enable — see docs/monitoring.md).")
     yield
+    await stop_background_jobs()
 
 
 app = FastAPI(title="SecuraIQ", version="1.5.0", lifespan=lifespan)
 
+_origins = cors_origin_list()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_origins,
+    allow_credentials=("*" not in _origins),
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["X-Hermes-Session-Id", "X-Hermes-Session-Key"],
 )
+app.add_middleware(
+    RateLimitMiddleware,
+    per_minute=settings.rate_limit_per_minute,
+    auth_per_minute=settings.rate_limit_auth_per_minute,
+    chat_per_minute=settings.rate_limit_chat_per_minute,
+)
+
+
+@app.middleware("http")
+async def metrics_middleware(request, call_next):
+    response = await call_next(request)
+    route = request.url.path
+    if route.startswith("/api/"):
+        # Collapse path params to keep cardinality sane (e.g. /api/jobs/{id} -> /api/jobs)
+        parts = route.strip("/").split("/")
+        collapsed = "/".join(p for p in parts[:3])
+        incr(collapsed)
+        incr_status(response.status_code)
+    return response
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # Relaxed CSP: allow same-origin scripts + Google Fonts used by Mission Control
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com data:; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self' http://127.0.0.1:* http://localhost:*; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'",
+    )
+    return response
 
 app.include_router(commercial_router)
+app.include_router(integrations_router)
 app.include_router(gap_router)
 app.include_router(enterprise_router)
 app.include_router(ops_router)
 app.include_router(commercial_ext_router)
 app.include_router(platform_router)
+app.include_router(billing_router)
 
 _PUBLIC_API_PREFIXES = (
     "/api/auth/login",
     "/api/auth/register",
     "/api/auth/status",
+    "/api/auth/mfa/verify",
+    "/api/auth/oidc/login",
+    "/api/auth/oidc/callback",
+    "/api/integrations/github/webhook",
+    "/api/billing/webhook",
     "/api/health",
     "/api/realtime",
 )
@@ -222,56 +297,13 @@ class BackendSwitchRequest(BaseModel):
         "hermes",
         "unsloth",
         "huggingface",
+        "huggingface_api",
         "openai",
         "openrouter",
         "groq",
         "together",
         "fireworks",
     ]
-
-
-class SettingsUpdateRequest(BaseModel):
-    openai_compat_base_url: str | None = None
-    openai_compat_model: str | None = None
-    openai_compat_api_key: str | None = None
-    hermes_base_url: str | None = None
-    hermes_model: str | None = None
-    hermes_api_key: str | None = None
-    hermes_session_key: str | None = None
-    hermes_show_tool_progress: bool | None = None
-    hf_model: str | None = None
-    hf_token: str | None = None
-    unsloth_model: str | None = None
-    unsloth_adapter_dir: str | None = None
-    unsloth_max_seq_length: int | None = None
-    unsloth_load_in_4bit: bool | None = None
-    ollama_base_url: str | None = None
-    ollama_model: str | None = None
-    web_search_enabled: bool | None = None
-    web_search_max_results: int | None = None
-    web_search_timeout_sec: float | None = None
-    searxng_url: str | None = None
-    net_assess_enabled: bool | None = None
-    net_assess_use_nmap: bool | None = None
-    local_tools_enabled: bool | None = None
-    local_tools_auto: bool | None = None
-    local_tools_allow_heavy: bool | None = None
-    jira_base_url: str | None = None
-    jira_email: str | None = None
-    jira_api_token: str | None = None
-    jira_project_key: str | None = None
-    router_enabled: bool | None = None
-    openai_api_key: str | None = None
-    openai_model: str | None = None
-    openrouter_api_key: str | None = None
-    openrouter_model: str | None = None
-    groq_api_key: str | None = None
-    groq_model: str | None = None
-    together_api_key: str | None = None
-    together_model: str | None = None
-    fireworks_api_key: str | None = None
-    fireworks_model: str | None = None
-    ollama_coder_model: str | None = None
 
 
 class FinetuneStartRequest(BaseModel):
@@ -551,37 +583,46 @@ async def _iter_build_messages(req: ChatRequest, user_id: str = "local"):
     awareness_tools = req.mode in {"awareness", "ciso", "blueteam", "tabletop", "ir"} or any(
         k in msg_lower for k in ("phish", "awareness", "spf", "dmarc", "dkim", "gophish")
     )
-    do_tools = (
-        req.use_local_tools
-        if req.use_local_tools is not None
-        else (
-            settings.local_tools_auto
-            and (
-                req.mode == "assess"
-                or req.mode == "awareness"
-                or bool(req.target)
-                or instruct_tools
-                or awareness_tools
-                or (bool(targets) and req.mode in tools_modes)
-            )
-        )
+    auto_tools = settings.local_tools_auto and (
+        req.mode == "assess"
+        or req.mode == "awareness"
+        or bool(req.target)
+        or instruct_tools
+        or awareness_tools
+        or (bool(targets) and req.mode in tools_modes)
     )
-    tools_task = None
-    if do_tools and settings.local_tools_enabled:
+    # Explicit tool list always runs; checkbox only gates auto selection
+    do_tools = bool(req.tools) or (
+        True if req.use_local_tools is True else False if req.use_local_tools is False else auto_tools
+    )
+    tools_payload = None
+    if do_tools and not settings.local_tools_enabled:
+        yield ("phase", "tools")
+        system_parts.append(
+            "## Local security tools\n"
+            "Tools were requested but **local tools are disabled** in Settings "
+            "(`LOCAL_TOOLS_ENABLED`). Enable them to run dns/ports/http probes."
+        )
+    elif do_tools and settings.local_tools_enabled:
         authorized = bool(req.authorized_target) or req.mode in tools_modes
         yield ("phase", "tools")
-        tools_task = asyncio.create_task(
-            run_security_tools(
+        tools_payload = {"ok": False, "runs": []}
+        try:
+            async for ev in iter_security_tools(
                 req.message,
                 target=req.target,
                 tools=req.tools,
                 authorized=authorized,
                 allow_public=bool(req.authorized_target) or req.mode == "awareness",
                 auto=not instruct_tools and not req.tools,
-                include_heavy=settings.local_tools_allow_heavy or instruct_tools,
+                include_heavy=settings.local_tools_allow_heavy or bool(req.tools) or instruct_tools,
                 mode=req.mode,
-            )
-        )
+            ):
+                # Keep live marker static for the whole tools phase (UI already showed phase)
+                if ev.get("event") == "done":
+                    tools_payload = ev.get("payload") or tools_payload
+        except Exception as exc:
+            tools_payload = {"ok": False, "error": str(exc), "runs": []}
 
     if search_task is not None:
         try:
@@ -604,20 +645,18 @@ async def _iter_build_messages(req: ChatRequest, user_id: str = "local"):
             "(e.g. 192.168.x.x / 10.x) or fill the Target IP field."
         )
 
-    if tools_task is not None:
-        try:
-            tools_payload = await tools_task
-        except Exception as exc:
-            tools_payload = {"ok": False, "error": str(exc), "runs": []}
+    if tools_payload is not None:
         system_parts.append(TOOLS_BEHAVIOR_PROMPT)
         system_parts.append(format_tools_context(tools_payload))
 
     if req.use_rag:
         yield ("phase", "rag")
         top_k = MODE_RAG_TOP_K.get(req.mode, 3)
-        context = await asyncio.to_thread(rag_engine.build_context, req.message, top_k)
+        context, sources = await asyncio.to_thread(rag_engine.build_context, req.message, top_k)
         if context:
             system_parts.append(context)
+        if sources:
+            yield ("citations", sources)
 
     # Engagement memory (server-side)
     if req.engagement_id:
@@ -643,6 +682,15 @@ async def _iter_build_messages(req: ChatRequest, user_id: str = "local"):
     yield ("messages", messages)
 
 
+@app.get("/api/metrics")
+async def metrics():
+    """Prometheus text-exposition endpoint. Scrape this instead of polling
+    /api/health repeatedly for uptime dashboards — see docs/monitoring.md."""
+    from fastapi.responses import PlainTextResponse
+
+    return PlainTextResponse(render_prometheus(), media_type="text/plain; version=0.0.4")
+
+
 @app.get("/api/health")
 async def health():
     installed: list[str] = []
@@ -656,7 +704,15 @@ async def health():
         backend_ready, installed = await fetch_ollama_tags()
         current = settings.ollama_model
         backend_status = "ready" if backend_ready and installed else "needs_model" if backend_ready else "offline"
-    elif settings.model_backend in {"openai_compat", "openai", "openrouter", "groq", "together", "fireworks"}:
+    elif settings.model_backend in {
+        "openai_compat",
+        "openai",
+        "openrouter",
+        "groq",
+        "together",
+        "fireworks",
+        "huggingface_api",
+    }:
         from app.model_router import resolve_openai_compat_endpoint
 
         if settings.model_backend == "openai_compat":
@@ -736,6 +792,7 @@ async def backend():
             "hermes",
             "unsloth",
             "huggingface",
+            "huggingface_api",
             "openai",
             "openrouter",
             "groq",
@@ -755,6 +812,10 @@ async def backends_probe():
 async def switch_backend(req: BackendSwitchRequest):
     settings.model_backend = req.backend
     update_env_value("MODEL_BACKEND", req.backend)
+    # Backend switches must be immediately visible to health/realtime clients.
+    # Otherwise the short health TTL can report the previous backend.
+    if hasattr(health, "_cache"):
+        delattr(health, "_cache")
     return {"backend": settings.model_backend}
 
 
@@ -784,9 +845,8 @@ async def get_settings():
 
 
 @app.post("/api/settings")
-async def update_settings(req: SettingsUpdateRequest):
-    payload = req.model_dump(exclude_none=True)
-    return apply_settings_patch(payload)
+async def update_settings(body: dict[str, Any] = Body(default_factory=dict)):
+    return apply_settings_patch(body)
 
 
 @app.get("/api/platform")
@@ -802,12 +862,12 @@ async def hermes_status():
 
 
 @app.get("/api/search/web")
-async def api_search_web(q: str = "", limit: int = 8):
+async def api_search_web(
+    q: str = Query(..., min_length=1, description="Search query"),
+    limit: int = Query(8, ge=1, le=20),
+):
     """Live cybersecurity web search (for UI/debug). Entity search is GET /api/search."""
-    query = (q or "").strip()
-    if not query:
-        raise HTTPException(status_code=400, detail="Missing q")
-    return await web_search(query, max_results=limit)
+    return await web_search(q.strip(), max_results=limit)
 
 
 class AssessRequest(BaseModel):
@@ -852,7 +912,7 @@ async def api_tools_run(req: ToolsRunRequest):
     """Run selected security tools against an authorized/lab target."""
     if not settings.local_tools_enabled:
         raise HTTPException(status_code=400, detail="Local tools disabled")
-    return await run_security_tools(
+    result = await run_security_tools(
         req.message or (f"run tools on {req.target}" if req.target else ""),
         target=req.target,
         tools=req.tools,
@@ -861,6 +921,75 @@ async def api_tools_run(req: ToolsRunRequest):
         auto=req.auto and not req.tools,
         include_heavy=settings.local_tools_allow_heavy or bool(req.tools),
     )
+    result["markdown"] = format_tools_context(result)
+    return result
+
+
+@app.post("/api/tools/run/stream")
+async def api_tools_run_stream(req: ToolsRunRequest):
+    """NDJSON realtime tool progress (lightweight builtins run in parallel)."""
+    if not settings.local_tools_enabled:
+        raise HTTPException(status_code=400, detail="Local tools disabled")
+
+    message = req.message or (f"run tools on {req.target}" if req.target else "")
+
+    async def ndjson():
+        async for ev in iter_security_tools(
+            message,
+            target=req.target,
+            tools=req.tools,
+            authorized=req.authorized_target,
+            allow_public=req.authorized_target,
+            auto=req.auto and not req.tools,
+            include_heavy=settings.local_tools_allow_heavy or bool(req.tools),
+        ):
+            if ev.get("event") == "done":
+                payload = dict(ev.get("payload") or {})
+                payload["markdown"] = format_tools_context(payload)
+                yield json.dumps({"event": "done", "payload": payload}, ensure_ascii=False) + "\n"
+            else:
+                yield json.dumps(ev, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(ndjson(), media_type="application/x-ndjson")
+
+
+class JobEnqueueRequest(BaseModel):
+    kind: Literal["kev_sync", "report_export"]
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+@app.get("/api/jobs")
+async def jobs_list(limit: int = 50, kind: str | None = None):
+    from app.jobs import list_jobs
+
+    return {"jobs": list_jobs(limit=limit, kind=kind)}
+
+
+@app.get("/api/jobs/{job_id}")
+async def jobs_get(job_id: str):
+    from app.jobs import get_job
+
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@app.post("/api/jobs")
+async def jobs_enqueue(req: JobEnqueueRequest, request: Request):
+    from app.jobs import enqueue_job
+
+    user = resolve_user(
+        request.headers.get("authorization"),
+        request.headers.get("x-securaiq-key") or request.headers.get("x-hackgpt-key"),
+    )
+    payload = dict(req.payload)
+    if req.kind == "report_export":
+        payload.setdefault("user_id", user.id if user else "local")
+    try:
+        return enqueue_job(req.kind, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/finetune")
@@ -909,7 +1038,14 @@ async def models():
         current = settings.ollama_model
     elif settings.model_backend == "openai_compat":
         current = settings.openai_compat_model
-    elif settings.model_backend in {"openai", "openrouter", "groq", "together", "fireworks"}:
+    elif settings.model_backend in {
+        "openai",
+        "openrouter",
+        "groq",
+        "together",
+        "fireworks",
+        "huggingface_api",
+    }:
         from app.model_router import resolve_openai_compat_endpoint
 
         _base, _key, current = resolve_openai_compat_endpoint(settings.model_backend)
@@ -1013,6 +1149,15 @@ async def chat(req: ChatRequest, request: Request):
     )
     uid = user.id if user else "local"
 
+    from app.billing import check_quota_ok, record_usage
+
+    quota_ok, quota_reason = check_quota_ok(uid)
+    if not quota_ok:
+        async def quota_stream():
+            yield quota_reason
+        return StreamingResponse(quota_stream(), media_type="text/plain; charset=utf-8")
+    record_usage(uid, "chat_message")
+
     def _persist(role: str, content: str) -> None:
         if not req.chat_id:
             return
@@ -1032,6 +1177,17 @@ async def chat(req: ChatRequest, request: Request):
             async for kind, payload in _iter_build_messages(req, user_id=uid):
                 if kind == "phase":
                     yield f"[[live:{payload}]]"
+                elif kind == "tool":
+                    yield "[[live:tools]]"
+                elif kind == "route":
+                    intent = (payload or {}).get("intent") or ""
+                    agent = (payload or {}).get("agent") or ""
+                    if intent:
+                        yield f"[[live:route:{intent}]]"
+                    if agent:
+                        yield f"[[router:{agent}|{intent}|{(payload or {}).get('recommended_backend') or ''}]]"
+                elif kind == "citations":
+                    yield f"[[citations:{_encode_citations(payload)}]]"
                 elif kind == "messages":
                     messages = payload
             if not messages:
@@ -1065,6 +1221,8 @@ async def chat(req: ChatRequest, request: Request):
         async for kind, payload in _iter_build_messages(req, user_id=uid):
             if kind == "phase":
                 yield f"[[live:{payload}]]"
+            elif kind == "tool":
+                yield "[[live:tools]]"
             elif kind == "route":
                 route_plan = payload
                 intent = (payload or {}).get("intent") or ""
@@ -1073,6 +1231,8 @@ async def chat(req: ChatRequest, request: Request):
                     yield f"[[live:route:{intent}]]"
                 if agent:
                     yield f"[[router:{agent}|{intent}|{(payload or {}).get('recommended_backend') or ''}]]"
+            elif kind == "citations":
+                yield f"[[citations:{_encode_citations(payload)}]]"
             elif kind == "messages":
                 messages = payload
         if not messages:

@@ -37,7 +37,14 @@ def main() -> int:
     if not health.get("backend"):
         return 1
     options = backend.get("options") or []
-    for required in ("ollama", "openai_compat", "hermes", "unsloth", "huggingface"):
+    for required in (
+        "ollama",
+        "openai_compat",
+        "hermes",
+        "unsloth",
+        "huggingface",
+        "huggingface_api",
+    ):
         if required not in options:
             print(f"missing backend option: {required}")
             return 1

@@ -10,6 +10,7 @@ from typing import Any
 from app.config import settings
 from app.db import audit, get_conn, new_id, now
 from app.rag import rag_engine
+from app.upload_validation import check_magic_bytes, check_user_quota
 from app.workspace import get_engagement
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
@@ -61,6 +62,16 @@ def save_upload(
             f"Unsupported file type `{ext}`. "
             "Upload docs, code, configs, CSV/JSON/XML, PDF, or images."
         )
+
+    # Extension-spoofing / renamed-executable defense (real gap — extension
+    # allowlist alone doesn't verify content matches what it claims to be).
+    check_magic_bytes(safe, data)
+
+    # Per-user aggregate storage quota (previously only a per-file cap existed).
+    existing_total = get_conn().execute(
+        "SELECT COALESCE(SUM(size_bytes), 0) AS total FROM files WHERE user_id = ?", (user_id,)
+    ).fetchone()["total"]
+    check_user_quota(int(existing_total or 0), len(data), settings.upload_quota_mb_per_user)
 
     fid = new_id()
     dest_dir = uploads_root() / user_id

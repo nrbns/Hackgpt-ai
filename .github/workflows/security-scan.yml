@@ -1,0 +1,80 @@
+name: Security scan (dogfood)
+
+# Was "not started" per docs/launch-readiness.md — SecuraIQ ships adapters for
+# Trivy/Semgrep/Gitleaks/Bandit/Checkov but never ran any of them against its
+# own repo. This wires that up: dependency, SAST, secret, and IaC scanning on
+# every push/PR, plus a weekly scheduled run so drift (new CVEs in pinned
+# deps) gets caught even without a code change.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"  # weekly, Monday 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-audit:
+    name: pip-audit (dependency CVEs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pip-audit
+      - run: pip-audit -r requirements.txt --desc || true
+        # `|| true` for now — flip to a hard fail once the alpha dependency
+        # set has a documented triage/exception process (see launch-readiness.md).
+
+  sast-bandit:
+    name: Bandit (SAST on app/)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install bandit
+      - run: bandit -r app -ll -x app/fine_tune -f screen
+
+  secret-scan:
+    name: Gitleaks (secret scanning)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  container-scan:
+    name: Trivy (container image)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t securaiq:ci .
+      - name: Scan image
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: securaiq:ci
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "0"  # report-only until the base-image CVE backlog is triaged
+
+  iac-scan:
+    name: Checkov (docker-compose IaC)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: docker_compose
+          soft_fail: true  # report-only until findings are triaged

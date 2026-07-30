@@ -53,6 +53,29 @@ def create_incident(
     )
     c.commit()
     audit("incident_create", user_id, {"id": iid, "title": title})
+
+    from app.notifications import notify
+
+    notify(
+        user_id,
+        "incident",
+        f"New incident: {title.strip()}",
+        f"Severity: {severity} · Source: {source}" + (f" · {summary}" if summary else ""),
+        link=f"/api/incidents/{iid}",
+        email=(severity in ("critical", "high")),
+    )
+
+    if severity in ("critical", "high"):
+        import asyncio
+
+        from app.connectors import slack, teams
+
+        alert_text = f"🚨 *New incident* ({severity}): {title.strip()}" + (f"\n{summary}" if summary else "")
+        if slack.is_configured():
+            asyncio.create_task(slack.send_message(alert_text))
+        if teams.is_configured():
+            asyncio.create_task(teams.send_message(f"Incident: {title.strip()}", alert_text))
+
     return get_incident(user_id, iid)  # type: ignore[return-value]
 
 

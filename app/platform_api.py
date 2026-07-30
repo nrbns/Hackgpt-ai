@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
@@ -18,6 +18,15 @@ from app.enterprise import (
     export_vuln_markdown,
     list_risks,
     list_vulnerabilities,
+)
+from app.free_security_apis import (
+    catalog_summary,
+    generate_password,
+    lookup_filterlists,
+    lookup_greynoise,
+    lookup_msrc,
+    lookup_uk_police_forces,
+    unified_lookup,
 )
 from app.intel_feeds import fetch_cisa_kev, lookup_nvd_cve, sync_kev_to_watchlist
 from app.knowledge_graph import add_entity_link, build_knowledge_graph, list_entity_links
@@ -85,6 +94,58 @@ async def intel_nvd(cve_id: str, user: Annotated[AuthUser, Depends(require_user)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"NVD lookup failed: {exc}") from exc
+
+
+@router.get("/intel/free/catalog")
+async def intel_free_catalog(user: Annotated[AuthUser, Depends(require_user)]):
+    """Full Free APIs Security + Anti-Malware catalog with live/keyed/skipped status."""
+    return catalog_summary()
+
+
+@router.get("/intel/lookup")
+async def intel_lookup(
+    user: Annotated[AuthUser, Depends(require_user)],
+    q: Annotated[str, Query(min_length=2, max_length=500, description="IP, domain, URL, email, hash, or CVE")],
+):
+    """Unified IOC/CVE lookup across free + configured keyed providers."""
+    return await unified_lookup(q.strip())
+
+
+@router.get("/intel/greynoise/{ip}")
+async def intel_greynoise(ip: str, user: Annotated[AuthUser, Depends(require_user)]):
+    try:
+        return await lookup_greynoise(ip)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"GreyNoise lookup failed: {exc}") from exc
+
+
+@router.get("/intel/msrc")
+async def intel_msrc(user: Annotated[AuthUser, Depends(require_user)], limit: int = 15):
+    try:
+        return await lookup_msrc(limit=min(50, max(1, limit)))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"MSRC feed unavailable: {exc}") from exc
+
+
+@router.get("/intel/filterlists")
+async def intel_filterlists(user: Annotated[AuthUser, Depends(require_user)], limit: int = 20):
+    try:
+        return await lookup_filterlists(limit=min(100, max(1, limit)))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"FilterLists unavailable: {exc}") from exc
+
+
+@router.get("/intel/uk-police/forces")
+async def intel_uk_police(user: Annotated[AuthUser, Depends(require_user)]):
+    try:
+        return await lookup_uk_police_forces()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"UK Police API unavailable: {exc}") from exc
+
+
+@router.get("/intel/password")
+async def intel_password(user: Annotated[AuthUser, Depends(require_user)], length: int = 16):
+    return await generate_password(length=length)
 
 
 @router.get("/reports/risks.xlsx")
@@ -218,7 +279,17 @@ async def platform_status(user: Annotated[AuthUser, Depends(require_user)]):
         "embedding_model": settings.embedding_model,
         "scanners": [*list_import_adapters(), "csv", "json", "xml"],
         "office_exports": ["pdf", "docx", "xlsx", "markdown"],
-        "intel_feeds": ["cisa_kev", "nvd"],
+        "intel_feeds": [
+            "cisa_kev",
+            "nvd",
+            "greynoise",
+            "otx",
+            "urlscan",
+            "msrc",
+            "filterlists",
+            "phishstats",
+            "free_apis_security",
+        ],
     }
 
 

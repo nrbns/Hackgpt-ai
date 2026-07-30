@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SecuraIQ — User Manual</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0f1412;
+      --panel: #171d1a;
+      --text: #e8efea;
+      --muted: #9aaba2;
+      --line: #2a3530;
+      --accent: #2a9b84;
+      --accent-soft: #1a3d34;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Manrope, system-ui, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(900px 420px at 0% -10%, #1a3d34 0%, transparent 55%),
+        var(--bg);
+      line-height: 1.55;
+    }
+    .wrap {
+      max-width: 46rem;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+    header {
+      margin-bottom: 2rem;
+      padding-bottom: 1.25rem;
+      border-bottom: 1px solid var(--line);
+    }
+    .brand {
+      font-family: Syne, Manrope, sans-serif;
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin: 0 0 0.4rem;
+    }
+    h1 {
+      font-family: Syne, Manrope, sans-serif;
+      font-size: clamp(1.8rem, 4vw, 2.4rem);
+      margin: 0 0 0.5rem;
+      line-height: 1.15;
+    }
+    .lead { color: var(--muted); margin: 0; max-width: 36rem; }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
+    a.btn {
+      text-decoration: none;
+      color: #f7fffb;
+      background: var(--accent);
+      padding: 0.55rem 0.9rem;
+      border-radius: 0.55rem;
+      font-weight: 700;
+      font-size: 0.9rem;
+    }
+    a.btn.ghost {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+    nav.toc {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 0.85rem;
+      padding: 1rem 1.15rem;
+      margin-bottom: 2rem;
+    }
+    nav.toc strong { display: block; margin-bottom: 0.5rem; }
+    nav.toc a {
+      display: block;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 0.2rem 0;
+      font-size: 0.92rem;
+    }
+    nav.toc a:hover { color: var(--accent); }
+    h2 {
+      font-family: Syne, Manrope, sans-serif;
+      font-size: 1.25rem;
+      margin: 2rem 0 0.65rem;
+      scroll-margin-top: 1rem;
+    }
+    h3 { font-size: 1rem; margin: 1.25rem 0 0.4rem; }
+    p, li { color: var(--text); }
+    .muted { color: var(--muted); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+      margin: 0.75rem 0 1rem;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 0.5rem 0.65rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: var(--panel); color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    code, pre {
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 0.85em;
+    }
+    code {
+      background: var(--accent-soft);
+      padding: 0.1rem 0.35rem;
+      border-radius: 0.3rem;
+    }
+    pre {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 0.75rem;
+      padding: 0.85rem 1rem;
+      overflow: auto;
+    }
+    .flow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      align-items: center;
+      margin: 0.75rem 0 1rem;
+    }
+    .flow span {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 0.55rem;
+      padding: 0.4rem 0.65rem;
+      font-size: 0.85rem;
+      font-weight: 650;
+    }
+    .flow i { color: var(--accent); font-style: normal; opacity: 0.8; }
+    .warn {
+      border-left: 3px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 0.75rem 1rem;
+      border-radius: 0 0.55rem 0.55rem 0;
+      margin: 1rem 0;
+    }
+    footer {
+      margin-top: 3rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <p class="brand">SecuraIQ</p>
+      <h1>User Manual</h1>
+      <p class="lead">AI Security OS for authorized labs, owned systems, CTFs, blue-team work, and GRC — not unauthorized hacking.</p>
+      <div class="actions">
+        <a class="btn" href="/">Open Mission Control</a>
+        <a class="btn ghost" href="/legal/">Legal</a>
+      </div>
+    </header>
+
+    <nav class="toc" aria-label="Contents">
+      <strong>Contents</strong>
+      <a href="#start">1. Start</a>
+      <a href="#pillars">2. Five pillars</a>
+      <a href="#ai">3. AI Assistant</a>
+      <a href="#golden">4. Golden path</a>
+      <a href="#modules">5. Modules</a>
+      <a href="#tools">6. Tools &amp; probing</a>
+      <a href="#account">7. Account &amp; settings</a>
+      <a href="#safety">8. Safety</a>
+      <a href="#fix">9. Troubleshooting</a>
+    </nav>
+
+    <h2 id="start">1. Start</h2>
+    <p>Run the server, then open <code>http://127.0.0.1:8080</code>.</p>
+    <pre>Windows:  .\scripts\run_proper.ps1
+Linux/macOS: bash scripts/run_proper.sh</pre>
+    <p class="muted">UI is the Mission Control SPA served by FastAPI on port 8080.</p>
+    <p>Configure a local model (Ollama / LM Studio) under Settings or <strong>Advanced model routing</strong> in the assistant.</p>
+
+    <h2 id="pillars">2. Five pillars</h2>
+    <table>
+      <thead><tr><th>Pillar</th><th>What you do there</th></tr></thead>
+      <tbody>
+        <tr><td>Mission Control</td><td>Morning brief, KPIs, charts, heat map, work queue</td></tr>
+        <tr><td>AI Workspace</td><td>Full chat, canvas, memory, files, tools</td></tr>
+        <tr><td>Security Operations</td><td>Assets, vulns, intel, incidents, playbooks</td></tr>
+        <tr><td>Compliance &amp; Risk</td><td>Frameworks, gap, evidence, risk register, graph</td></tr>
+        <tr><td>Automation</td><td>Workflow pipeline, jobs, reports</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="ai">3. AI Assistant</h2>
+    <p>On Mission Control and module pages, use the bottom-right <strong>Assistant</strong> button (not a chat bar on every screen).</p>
+    <ul>
+      <li>Action chips: Executive Summary, Root Cause, Attack Path, Ticket, Report, Fix, Playbook, Investigation</li>
+      <li><strong>Ask AI</strong> on a finding opens the assistant and stays on the page</li>
+      <li><strong>Workspace</strong> opens full AI Workspace · <strong>Close</strong> or <kbd>Esc</kbd> dismisses</li>
+      <li>Pick an <strong>Agent</strong>; models stay under Advanced</li>
+    </ul>
+
+    <h2 id="golden">4. Golden path</h2>
+    <div class="flow">
+      <span>Import scan</span><i>→</i>
+      <span>AI triage</span><i>→</i>
+      <span>Jira / assign</span><i>→</i>
+      <span>Evidence</span><i>→</i>
+      <span>Report</span>
+    </div>
+    <ol>
+      <li>Vulnerabilities → Import scan (or Lab fixtures)</li>
+      <li>Select a finding → use the detail panel</li>
+      <li>Triage or Triage+Jira</li>
+      <li>Link evidence / remediations</li>
+      <li>Export from Reports · check Mission Control counters</li>
+    </ol>
+
+    <h2 id="modules">5. Modules</h2>
+    <h3>Vulnerabilities</h3>
+    <p>Filters (severity, status, scanner, owner, search) · table with CVSS/SLA/age · right panel for AI, references, triage.</p>
+    <h3>Compliance</h3>
+    <p>KPI strip (implemented / partial / missing / coverage / evidence / maturity) · framework cards · Open controls · Run gap.</p>
+    <h3>Assets</h3>
+    <p>Class tiles (server → API) plus inventory table.</p>
+    <h3>Automation</h3>
+    <p>Visual Trigger → … → Close pipeline, jobs, webhook pointers into Integrations.</p>
+    <h3>Integrations &amp; Reports</h3>
+    <p>Connect scanners/Jira/Slack paths that open real import or settings. Export executive/technical reports from Reports.</p>
+
+    <h2 id="tools">6. Tools &amp; probing</h2>
+    <p>Open Tools in the assistant. Set a <strong>lab/owned</strong> target and check <strong>Auth</strong> before probe tools. Built-ins (DNS, ports, HTTP, headers) work without extra installs.</p>
+
+    <h2 id="account">7. Account &amp; settings</h2>
+    <table>
+      <thead><tr><th>Topic</th><th>Where</th></tr></thead>
+      <tbody>
+        <tr><td>Login (if auth on)</td><td>Account · <code>AUTH_ENABLED=true</code></td></tr>
+        <tr><td>Project / engagement</td><td>Sidebar Project selector</td></tr>
+        <tr><td>Theme</td><td>Sidebar theme toggle</td></tr>
+        <tr><td>API keys / backends</td><td>Settings</td></tr>
+        <tr><td>Upload evidence</td><td>Sidebar Upload or AI Files</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="safety">8. Safety</h2>
+    <div class="warn">
+      Use only on authorized labs, CTF ranges, PortSwigger-style training, and systems you own or have written permission to test. No malware, credential theft, or C2 workflows.
+    </div>
+    <p>AI output can be wrong — verify remediations before production changes. See <a href="/legal/">Legal</a>.</p>
+
+    <h2 id="fix">9. Troubleshooting</h2>
+    <table>
+      <thead><tr><th>Issue</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr><td>UI looks outdated</td><td>Hard refresh (<kbd>Ctrl</kbd>+<kbd>F5</kbd>)</td></tr>
+        <tr><td>Chat errors</td><td>Start Ollama/LM Studio · check Settings model</td></tr>
+        <tr><td>Empty dashboard</td><td>Import a scan or run gap analysis</td></tr>
+        <tr><td>Jira fails</td><td>Configure Jira in Settings; triage without Jira first</td></tr>
+      </tbody>
+    </table>
+
+    <footer>
+      Full markdown: <code>docs/user-manual.md</code> in the repo · Private alpha — not enterprise launch-ready.
+    </footer>
+  </div>
+</body>
+</html>

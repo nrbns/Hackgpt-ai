@@ -61,7 +61,14 @@ REQUIRED_HTML_IDS = [
     "newEngagementBtn",
     "authBtn",
 ]
-BACKENDS = ["ollama", "openai_compat", "hermes", "unsloth", "huggingface"]
+BACKENDS = [
+    "ollama",
+    "openai_compat",
+    "hermes",
+    "unsloth",
+    "huggingface",
+    "huggingface_api",
+]
 
 
 def fail(msg: str) -> None:

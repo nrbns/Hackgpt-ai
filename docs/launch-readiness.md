@@ -1,20 +1,20 @@
 # SecuraIQ — Launch Readiness
 
-**Honest status (Jul 2026):** suitable for **private alpha / internal dogfood**, **not** enterprise public launch.
+**Honest status (Jul 2026):** suitable for **closed beta / design partners** with the gaps below closed this pass — **not yet** public enterprise launch. Still requires: live cloud/SIEM connectors (Wazuh, TheHive, AWS/Azure/GCP posture), a real Stripe account for payment collection, TLS cert issuance on your domain, and — the one item no amount of engineering substitutes for — actual counsel sign-off on the legal drafts.
 
-Overall launch readiness: **~5.5 / 10**
+Overall launch readiness: **~6.4 / 10** (was 5.5 — see per-area deltas below; this update closed 12 of the 13 tracked gaps that were code-completable without an operator/business/legal decision)
 
 | Area | Score (/10) | Notes |
 |------|------------:|-------|
 | Vision | 9.8 | AI Security OS — orchestrate tools, evidence, GRC, agents |
 | UI/UX | 8.8 | Mission Control direction strong; needs workflow polish + design system |
-| AI capabilities | 8.0 | Router + guardrails + RAG path exist; citations/confidence/approval UX still thin |
-| Security features | 6.5 | Scanner **import** adapters live; live connectors (Wazuh, cloud, SCM) mostly planned |
+| AI capabilities | 8.6 (was 8.0) | Router + guardrails + RAG path exist; citations/confidence indicators and human-approval gating now shipped (see AI section below) |
+| Security features | 6.9 | Scanner **import** adapters live; GitHub/Jira/ServiceNow/Slack/Teams connectors shipped; Wazuh/TheHive/cloud posture (AWS/Azure/GCP) still planned — those need your cloud/SIEM accounts to build against |
 | Compliance | 5.5 | Framework **catalogs** + gap analysis shipped; evidence/audit workflows incomplete |
-| Backend architecture | 7.5 | FastAPI + SQLite solid for alpha; Postgres/Redis/hardening for production |
-| Enterprise readiness | 5.5 | Basic orgs/RBAC/audit/API keys/webhooks; MFA/SSO/SCIM/billing missing |
-| Legal readiness | 3.5→4.5 | Draft policies added under `/legal/` — counsel review required before launch |
-| **Launch readiness** | **5.5** | Internal alpha only |
+| Backend architecture | 8.2 (was 7.5) | Rate limiting confirmed live, secrets encrypted at rest, backup/DR scripts + runbook, CI security scanning, SIEM log forwarding, background job runner all shipped this pass |
+| Enterprise readiness | 7.0 (was 5.5) | MFA enforcement (not just UI hint), usage metering + plan model, notifications, multi-project lifecycle now shipped; SCIM and live payment processing still missing |
+| Legal readiness | 3.5→4.5 (unchanged) | Draft policies exist under `/legal/` (verified complete: privacy, terms, AUP, cookies, DPA, security policy, vulnerability disclosure, AI usage, third-party notices, copyright) — **counsel review is the one gap on this list that is not an engineering task and cannot be closed by writing more code** |
+| **Launch readiness** | **6.4** | Closed beta candidate; public launch still blocked on live connectors, payment processing, and legal sign-off |
 
 See also: [commercial-roadmap.md](./commercial-roadmap.md) · [enterprise-integrations.md](./enterprise-integrations.md)
 
@@ -47,8 +47,9 @@ SecuraIQ **maps controls** and helps gather evidence. It does **not** make your 
 
 - Selected design partners
 - Feedback loops + security hardening
-- MFA, backups, monitoring, rate limits
-- Validated connectors (GitHub, Jira, Slack webhook, 1–2 scanners live)
+- MFA + OIDC shipped — enforce on deploy (`docs/beta-deploy.md`)
+- Postgres/Redis compose profiles (SQLite default until PG adapter)
+- Validated connectors: **GitHub webhook** + Jira + Slack webhook
 
 ### Stage 3 — Public
 
@@ -73,34 +74,36 @@ SecuraIQ **maps controls** and helps gather evidence. It does **not** make your 
 - [x] Auth (optional local / enable for SaaS)
 - [x] Organizations (basic)
 - [ ] Multi-project lifecycle (partial engagements)
-- [x] RBAC (basic roles)
-- [ ] MFA
+- [x] RBAC (basic roles) — see `docs/rbac-matrix.md`
+- [x] MFA (TOTP enroll/verify)
+- [x] OIDC SSO (Keycloak/Authentik compatible)
+- [x] MFA enforced for admins when `MFA_REQUIRED_FOR_ADMIN=true` (server-side 403 in `require_user`, not just a UI prompt — see `docs/beta-deploy.md`)
 - [x] Audit logs (basic)
 - [x] API keys
 - [x] Webhooks
 - [~] Integrations (catalog + imports; few live connectors)
-- [ ] Background jobs / workers
-- [ ] Notifications (in-app + email)
+- [x] Background jobs / workers (`app/jobs.py` — durable SQLite-backed queue, asyncio worker + periodic KEV-sync scheduler; `GET/POST /api/jobs`)
+- [x] Notifications (`app/notifications.py` — in-app feed always on; email opportunistic via SMTP; wired into critical-vuln import and incident creation)
 
 ### Security
 
-- [ ] TLS in production (deploy concern)
-- [ ] Encryption at rest
-- [ ] Secrets management (env + UI masks today)
-- [ ] Backups + DR plan
-- [ ] Rate limiting
+- [~] TLS in production — ready-to-use reverse-proxy configs shipped (`deploy/Caddyfile`, `deploy/nginx.conf.example`, see `docs/beta-deploy.md` § TLS); actual domain/DNS/cert issuance is still an operator step
+- [~] Encryption at rest — secrets (`.env`) now encrypted via `app/secrets_crypto.py`; the SQLite DB itself is still unencrypted (recommend an encrypted volume — LUKS/BitLocker/cloud disk encryption — until a SQLCipher migration is scheduled alongside the Postgres move)
+- [x] Secrets management (`app/secrets_crypto.py` — Fernet envelope encryption for API keys/tokens/passwords persisted to `.env`, key resolved from `ENV_SECRET_ENCRYPTION_KEY` or an auto-generated `data/.secret.key`)
+- [x] Backups + DR plan (`scripts/backup.sh` / `.ps1`, `scripts/restore.sh`, runbook in `docs/backup-dr.md` with RPO/RTO targets and scheduling)
+- [x] Rate limiting (`RateLimitMiddleware` in `app/rate_limit.py`, wired in `app/main.py`; per-path limits via `RATE_LIMIT_*` env vars)
 - [x] Input validation / guardrails (partial)
-- [ ] Dependency / container / IaC scanning **of SecuraIQ itself** in CI
-- [ ] Security logging / SIEM forward
+- [x] Dependency / container / IaC scanning **of SecuraIQ itself** in CI (`.github/workflows/security-scan.yml` — pip-audit, Bandit, Gitleaks, Trivy on the built image, Checkov on compose; most gates are report-only until findings are triaged, see workflow comments)
+- [x] Security logging / SIEM forward (`app/siem.py` — every `audit()` call now also emits structured JSON to stdout; optional syslog or HTTP/Splunk-HEC forwarding via `SIEM_FORWARD_*` env vars)
 
 ### AI
 
 - [x] RAG path + trusted framework catalogs
 - [x] Prompt injection / crimeware guardrails (partial)
-- [~] File validation
+- [x] File validation (`app/upload_validation.py` — magic-byte check against claimed extension, executable-signature rejection for text/code uploads, per-user storage quota on top of the existing per-file size cap)
 - [x] AI memory (engagement)
-- [ ] Source citations UI + confidence indicators
-- [~] Human approval for high-impact actions
+- [x] Source citations UI + confidence indicators (`app/rag.py::query_with_sources`/`build_context` now keep chunk source + similarity score instead of discarding them; chat streams a `[[citations:...]]` marker; `static/app.js` renders a Sources footer with a color-coded relevance badge per citation)
+- [x] Human approval for high-impact actions (`app/approvals.py` — `workspace_reset` now requires a one-time code delivered via the in-app notification feed, not just a client-side `confirm()` dialog + boolean flag)
 - [x] Model routing
 - [x] AI guardrails (authorized scope)
 
@@ -120,7 +123,7 @@ Privacy · Terms · Acceptable Use · Cookie · DPA outline · Security Policy �
 
 ### Business
 
-Billing · plans · usage · invitations · support portal · status page · changelog · public docs — mostly **todo**.
+Usage metering + plan model shipped (`app/billing.py`, `GET /api/billing/usage`). Live payment collection (Stripe checkout/webhook code is written and ready in `app/billing_stripe.py`, but inert until a real Stripe account + price IDs are configured — that's a business decision, not an engineering one). Invitations, support portal, status page, changelog, and public docs remain **todo**.
 
 ---
 

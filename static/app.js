@@ -150,13 +150,64 @@ async function refreshAuthStatus() {
     const res = await fetch("/api/auth/status", { headers: authHeaders() });
     const data = await res.json();
     authEnabled = Boolean(data.auth_enabled);
+    window.__securaiqUser = data.user?.username || "";
     const hint = document.getElementById("authStatusHint");
+    const oidcBtn = document.getElementById("authOidcBtn");
+    if (oidcBtn) {
+      oidcBtn.classList.toggle("hidden", !data.oidc_enabled);
+    }
     if (hint) {
       if (!authEnabled) hint.textContent = "Auth disabled (open local mode). Enable AUTH_ENABLED for team use.";
-      else if (data.user) hint.textContent = `Signed in as ${data.user.username} (${data.user.role})`;
-      else hint.textContent = "Auth required — login or register.";
+      else if (data.user) {
+        const mfaNote = data.mfa?.enabled ? " · MFA on" : data.mfa_enrollment_required ? " · enroll MFA (admin)" : "";
+        hint.textContent = `Signed in as ${data.user.username} (${data.user.role})${mfaNote}`;
+      } else hint.textContent = data.oidc_enabled ? "Auth required — login, SSO, or register." : "Auth required — login or register.";
     }
     if (authBtn) authBtn.textContent = data.user && authEnabled ? `Account (${data.user.username})` : "Account";
+    refreshMfaAccountPanel(data);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function refreshMfaAccountPanel(cached) {
+  const hint = document.getElementById("mfaAccountHint");
+  const enrollBtn = document.getElementById("mfaEnrollBtn");
+  const disableBtn = document.getElementById("mfaDisableBtn");
+  const enrollBlock = document.getElementById("mfaEnrollBlock");
+  if (!hint) return;
+  try {
+    const data = cached || (await fetch("/api/auth/status", { headers: authHeaders() }).then((r) => r.json()));
+    if (!data.auth_enabled) {
+      hint.textContent = "Enable AUTH_ENABLED to use MFA.";
+      enrollBtn?.classList.add("hidden");
+      disableBtn?.classList.add("hidden");
+      enrollBlock?.classList.add("hidden");
+      return;
+    }
+    if (!data.user) {
+      hint.textContent = "Sign in (Account) to manage two-factor authentication.";
+      enrollBtn?.classList.add("hidden");
+      disableBtn?.classList.add("hidden");
+      enrollBlock?.classList.add("hidden");
+      return;
+    }
+    if (data.mfa?.enabled) {
+      hint.textContent = "MFA is enabled on your account.";
+      enrollBtn?.classList.add("hidden");
+      disableBtn?.classList.remove("hidden");
+      enrollBlock?.classList.add("hidden");
+    } else if (data.mfa?.enrolled) {
+      hint.textContent = "Finish enrollment — enter a code from your authenticator.";
+      enrollBtn?.classList.add("hidden");
+      disableBtn?.classList.add("hidden");
+      enrollBlock?.classList.remove("hidden");
+    } else {
+      hint.textContent = "Protect your account with TOTP (Google Authenticator, 1Password, etc.).";
+      enrollBtn?.classList.remove("hidden");
+      disableBtn?.classList.add("hidden");
+      enrollBlock?.classList.add("hidden");
+    }
   } catch {
     /* ignore */
   }
@@ -181,7 +232,8 @@ async function loadEngagements() {
     for (const e of data.engagements || []) {
       const opt = document.createElement("option");
       opt.value = e.id;
-      opt.textContent = e.name;
+      const status = e.status && e.status !== "active" ? ` (${e.status})` : "";
+      opt.textContent = `${e.name}${status}`;
       engagementSelectEl.appendChild(opt);
     }
     if (cur) engagementSelectEl.value = cur;
@@ -225,6 +277,90 @@ async function createEngagement() {
   await loadEngagements();
   if (engagementSelectEl) engagementSelectEl.value = eng.id;
   appendMessage("assistant", renderMarkdown(`**Engagement created:** ${eng.name}`), true);
+}
+
+async function renameEngagement() {
+  const id = engagementSelectEl?.value;
+  if (!id) {
+    appendMessage("assistant", renderMarkdown("**Select a Project/engagement** first."), true);
+    return;
+  }
+  const name = prompt("New engagement name:");
+  if (!name?.trim()) return;
+  const scope = prompt("Scope notes (leave blank to keep unchanged)") ?? "";
+  try {
+    const body = { name: name.trim() };
+    if (scope.trim()) body.scope_notes = scope.trim();
+    const res = await fetch(`/api/engagements/${id}`, {
+      method: "PATCH",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    await loadEngagements();
+    if (engagementSelectEl) engagementSelectEl.value = id;
+    appendMessage("assistant", renderMarkdown(`**Engagement renamed** → ${data.name || name}`), true);
+  } catch (err) {
+    appendMessage("assistant", renderMarkdown(`**Rename failed:** ${err.message}`), true);
+  }
+}
+
+async function exportEngagement() {
+  const id = engagementSelectEl?.value;
+  if (!id) {
+    appendMessage("assistant", renderMarkdown("**Select a Project/engagement** first, then Export."), true);
+    return;
+  }
+  try {
+    const res = await fetch(`/api/engagements/${id}/export`, { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    const md =
+      data.markdown ||
+      `# ${data.name || "Engagement"}\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\`\n`;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+    a.download = `securaiq-engagement-${id}.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (err) {
+    appendMessage("assistant", renderMarkdown(`**Export failed:** ${err.message}`), true);
+  }
+}
+
+const ENGAGEMENT_STATUS_CHOICES = ["draft", "active", "on_hold", "completed", "archived"];
+
+async function changeEngagementStatus() {
+  const id = engagementSelectEl?.value;
+  if (!id) {
+    appendMessage("assistant", renderMarkdown("**Select a Project/engagement** first."), true);
+    return;
+  }
+  const choice = prompt(
+    `New status (${ENGAGEMENT_STATUS_CHOICES.join(" / ")}):\n` +
+      "on_hold = paused/partial engagement, not completed or archived."
+  );
+  if (!choice) return;
+  const status = choice.trim().toLowerCase();
+  if (!ENGAGEMENT_STATUS_CHOICES.includes(status)) {
+    appendMessage("assistant", renderMarkdown(`**Invalid status.** Must be one of: ${ENGAGEMENT_STATUS_CHOICES.join(", ")}`), true);
+    return;
+  }
+  try {
+    const res = await fetch(`/api/engagements/${id}/status`, {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ status }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    await loadEngagements();
+    if (engagementSelectEl) engagementSelectEl.value = id;
+    appendMessage("assistant", renderMarkdown(`**Engagement status updated** → \`${status}\``), true);
+  } catch (err) {
+    appendMessage("assistant", renderMarkdown(`**Status change failed:** ${err.message}`), true);
+  }
 }
 
 async function uploadFile() {
@@ -336,8 +472,10 @@ function closeGap() {
   gapModal?.classList.add("hidden");
 }
 function openDash() {
-  dashModal?.classList.remove("hidden");
-  loadDashboard();
+  // Legacy ops modal → Mission Control
+  if (typeof showView === "function") showView("command");
+  if (typeof loadCommandCenter === "function") loadCommandCenter();
+  else loadDashboard();
 }
 function closeDash() {
   dashModal?.classList.add("hidden");
@@ -883,12 +1021,14 @@ const LIVE_PHASE_LABELS = {
   tools: "Running security tools…",
   rag: "Reading knowledge & attachments…",
   model: "Writing answer…",
-  done: "Live",
+  done: "Ready",
   error: "Pipeline error",
 };
 
 const THINK_STEPS = [
   { id: "think", label: "Understand the ask & constraints" },
+  { id: "route", label: "Route intent & agent" },
+  { id: "intel", label: "Load threat intel" },
   { id: "search", label: "Gather live context" },
   { id: "assess", label: "Probe authorized target" },
   { id: "tools", label: "Run security tools" },
@@ -908,7 +1048,7 @@ function applyLiveMarker(phase) {
   const label = LIVE_PHASE_LABELS[phase] || phase;
   updateThinkingUI(phase);
   if (phase === "done") {
-    setLiveState("live-on", "Live", "");
+    setLiveState("live-on", "Ready", "");
     finishThinkingUI(true);
     return;
   }
@@ -986,6 +1126,11 @@ function stripLiveMarkers(text) {
       if (liveActivityEl) liveActivityEl.textContent = intent;
       return "";
     })
+    /* legacy per-tool markers → keep static "tools" label */
+    .replace(/\[\[live:tool:[^\]]+\]\]/gi, () => {
+      applyLiveMarker("tools");
+      return "";
+    })
     .replace(/\[\[live:([a-z0-9_-]+)\]\]/gi, (_, phase) => {
       applyLiveMarker(phase.toLowerCase());
       return "";
@@ -999,9 +1144,11 @@ function startRealtimeFeed() {
   }
   try {
     const es = new EventSource("/api/realtime");
-    es.onopen = () => setLiveState("live-on", "Live", "");
+    es.onopen = () => {
+      if (!streaming) setLiveState("live-on", "Ready", "");
+    };
     es.onmessage = (ev) => {
-      if (streaming) return;
+      if (streaming || window.__securaiqStreaming) return;
       try {
         const data = JSON.parse(ev.data);
         if (data.error) {
@@ -1009,18 +1156,35 @@ function startRealtimeFeed() {
           return;
         }
         const ready = data.backend_ready || data.backend_status === "loads_on_chat";
-        setLiveState(ready ? "live-on" : "live-off", ready ? "Live" : "Backend offline", "");
+        const backend = data.backend || "model";
+        setLiveState(
+          ready ? "live-on" : "live-off",
+          ready ? `Ready · ${backend}` : "Backend offline",
+          data.model || ""
+        );
         if (liveMetaEl) {
-          liveMetaEl.textContent = `${data.backend || "?"} · ${data.model || "?"} · tools ${data.tools_available || 0}/${data.tools_total || 0} · RAG ${data.rag_documents ?? "—"}`;
+          const bits = [];
+          const tt = Number(data.tools_total || 0);
+          const ta = Number(data.tools_available || 0);
+          if (tt > 0) bits.push(`tools ${ta}/${tt}`);
+          const rag = Number(data.rag_documents || 0);
+          if (rag > 0) bits.push(`RAG ${rag}`);
+          liveMetaEl.textContent = bits.join(" · ");
         }
-        if (toolsStatusEl && data.tools_available != null) {
-          toolsStatusEl.textContent = `Tools ${data.tools_available}/${data.tools_total} ready`;
+        if (toolsStatusEl && data.tools_total != null) {
+          const tt = Number(data.tools_total || 0);
+          toolsStatusEl.textContent =
+            tt > 0 ? `Tools ${data.tools_available || 0}/${tt} ready` : "Tools ready";
         }
       } catch {
         /* ignore */
       }
     };
-    es.onerror = () => setLiveState("live-off", "Reconnecting…", "");
+    es.onerror = () => {
+      if (!streaming && !window.__securaiqStreaming) {
+        setLiveState("live-off", "Reconnecting…", "");
+      }
+    };
   } catch {
     setLiveState("live-off", "Realtime offline", "");
   }
@@ -1263,26 +1427,51 @@ function openChat(id) {
   const chat = chatStore.find((c) => c.id === id);
   if (!chat) return;
 
-  // Save current before switching
   persistCurrentChat();
 
-  currentChatId = chat.id;
-  history = (chat.messages || []).slice(-MAX_MESSAGES);
-  if (chat.mode && modeEl) {
-    modeEl.value = chat.mode;
-    updateModeLabel();
-    renderQuickPrompts();
+  const activate = (c) => {
+    currentChatId = c.id;
+    serverChatId = c.serverId || (c.fromServer ? c.id : null);
+    history = (c.messages || []).slice(-MAX_MESSAGES);
+    if (c.mode && modeEl) {
+      modeEl.value = c.mode;
+      updateModeLabel();
+      renderQuickPrompts();
+    }
+    renderTranscript(history);
+    updateChatTitle();
+    saveChatStore();
+    renderChatList();
+    closeSidebar();
+    inputEl?.focus();
+  };
+
+  if (chat.fromServer && !(chat.messages || []).length) {
+    const sid = chat.serverId || chat.id;
+    fetch(`/api/chats/${sid}`, { headers: authHeaders() })
+      .then((r) => r.json())
+      .then((data) => {
+        chat.messages = (data.messages || []).map((m) => ({
+          role: m.role,
+          content: m.content,
+        }));
+        chat.title = (data.chat || {}).title || chat.title;
+        chat.mode = (data.chat || {}).mode || chat.mode;
+        activate(chat);
+      })
+      .catch(() => activate(chat));
+    return;
   }
-  renderTranscript(history);
-  updateChatTitle();
-  saveChatStore();
-  renderChatList();
-  closeSidebar();
-  inputEl?.focus();
+  activate(chat);
 }
 
 function deleteChat(id) {
   if (streaming) return;
+  const doomed = chatStore.find((c) => c.id === id);
+  const sid = doomed?.serverId || (doomed?.fromServer ? doomed.id : null);
+  if (sid) {
+    fetch(`/api/chats/${sid}`, { method: "DELETE", headers: authHeaders() }).catch(() => {});
+  }
   const next = chatStore.filter((c) => c.id !== id);
   chatStore = next;
   if (currentChatId === id) {
@@ -1303,6 +1492,36 @@ function deleteChat(id) {
   saveChatStore();
   renderChatList();
   updateChatTitle();
+}
+
+async function syncServerChats() {
+  try {
+    const res = await fetch("/api/chats", { headers: authHeaders() });
+    if (!res.ok) return;
+    const data = await res.json();
+    let changed = false;
+    for (const c of data.chats || []) {
+      if (chatStore.some((x) => x.serverId === c.id || x.id === c.id)) continue;
+      chatStore.push({
+        id: c.id,
+        serverId: c.id,
+        fromServer: true,
+        title: c.title || "Server chat",
+        mode: c.mode || "default",
+        messages: [],
+        createdAt: Date.parse(c.created_at || "") || Date.now(),
+        updatedAt: Date.parse(c.updated_at || c.created_at || "") || Date.now(),
+      });
+      changed = true;
+    }
+    if (changed) {
+      chatStore = chatStore.slice(0, MAX_CHATS);
+      saveChatStore();
+      renderChatList();
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 function newChat() {
@@ -1419,10 +1638,37 @@ window.formatApiDetail = formatApiDetail;
 window.refreshActiveWorkspace = refreshActiveWorkspace;
 
 function renderMarkdown(text) {
+  let html;
   if (typeof marked !== "undefined" && typeof marked.parse === "function") {
-    return marked.parse(text);
+    html = marked.parse(text ?? "");
+  } else {
+    html = `<pre class="md-fallback">${escapeHtml(text ?? "")}</pre>`;
   }
-  return `<pre class="md-fallback">${escapeHtml(text)}</pre>`;
+  return sanitizeHtml(html);
+}
+
+function sanitizeHtml(html) {
+  try {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = String(html || "");
+    tpl.content.querySelectorAll("script,iframe,object,embed,form,link,meta").forEach((el) => el.remove());
+    tpl.content.querySelectorAll("*").forEach((el) => {
+      [...el.attributes].forEach((attr) => {
+        const n = attr.name.toLowerCase();
+        const v = attr.value || "";
+        if (n.startsWith("on") || n === "srcdoc" || n === "xlink:href") {
+          el.removeAttribute(attr.name);
+          return;
+        }
+        if ((n === "href" || n === "src") && /^\s*javascript:/i.test(v)) {
+          el.removeAttribute(attr.name);
+        }
+      });
+    });
+    return tpl.innerHTML;
+  } catch {
+    return escapeHtml(String(html || ""));
+  }
 }
 
 
@@ -1553,6 +1799,16 @@ function openAiTab(name) {
   if (name === "files" && typeof window.refreshAiFilesTab === "function") window.refreshAiFilesTab();
   if (name === "memory" && typeof window.refreshAiMemoryTab === "function") window.refreshAiMemoryTab();
   if (name === "tasks" && typeof window.refreshAiTasksTab === "function") window.refreshAiTasksTab();
+  if (name === "canvas") {
+    const ta = document.getElementById("aiCanvasNotes");
+    if (ta && !ta.value) {
+      try {
+        ta.value = localStorage.getItem("securaiq.canvas") || "";
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 }
 window.openAiTab = openAiTab;
 
@@ -1679,9 +1935,18 @@ async function runSelectedTools() {
     "user",
     `Run tools [${selectedTools.join(", ")}] on ${target}${authorized ? " (authorized)" : ""}`
   );
-  const bubble = appendMessage("assistant", "Running cyber tools…", false);
+  const toolList = selectedTools.join(", ");
+  const bubble = appendMessage(
+    "assistant",
+    renderMarkdown(`**Running security tools** on \`${target}\`…\n\n\`${toolList}\``),
+    true
+  );
+  streaming = true;
+  window.__securaiqStreaming = true;
+  setLiveState("live-busy", "Running security tools…", toolList);
+  const doneRuns = [];
   try {
-    const res = await fetch("/api/tools/run", {
+    const res = await fetch("/api/tools/run/stream", {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
@@ -1691,9 +1956,51 @@ async function runSelectedTools() {
         message: `authorized assessment of ${target}`,
       }),
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-    let md = data.markdown || data.output || "";
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.detail || `HTTP ${res.status}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let data = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split("\n");
+      buf = parts.pop() || "";
+      for (const line of parts) {
+        const raw = line.trim();
+        if (!raw) continue;
+        let ev;
+        try {
+          ev = JSON.parse(raw);
+        } catch {
+          continue;
+        }
+        if (ev.event === "start") {
+          const list = (ev.tools || selectedTools).join(", ");
+          if (toolsPaletteOutEl) {
+            toolsPaletteOutEl.classList.remove("hidden");
+            toolsPaletteOutEl.textContent = `Running: ${list}`;
+          }
+        } else if (ev.event === "tool_done" && ev.run) {
+          doneRuns.push(ev.run);
+          if (toolsPaletteOutEl) {
+            const preview = doneRuns
+              .map((r) => `${r.name || r.tool}: ${r.ok ? "OK" : "FAIL"}`)
+              .join(" · ");
+            toolsPaletteOutEl.classList.remove("hidden");
+            toolsPaletteOutEl.textContent = preview;
+          }
+        } else if (ev.event === "done") {
+          data = ev.payload || {};
+        }
+      }
+    }
+    if (!data) data = { ok: false, error: "No tool output", runs: doneRuns, target };
+    let md = data.markdown || "";
     if (!md && Array.isArray(data.runs)) {
       md = data.runs
         .map((r) => {
@@ -1703,16 +2010,21 @@ async function runSelectedTools() {
         })
         .join("\n\n");
     }
-    if (!md) md = "```json\n" + JSON.stringify(data, null, 2) + "\n```";
+    if (!md) md = data.error || "```json\n" + JSON.stringify(data, null, 2) + "\n```";
     bubble.innerHTML = renderMarkdown(
-      `**Tool run ${data.ok ? "complete" : "finished with errors"}** · target \`${data.target || target}\`\n\n${md}`
+      `**Tool run ${data.ok ? "complete" : "finished with errors"}** · target \`${data.target || target}\`${data.light ? " · light" : ""}\n\n${md}`
     );
     if (toolsPaletteOutEl) {
       toolsPaletteOutEl.classList.remove("hidden");
       toolsPaletteOutEl.textContent = typeof md === "string" ? md.slice(0, 4000) : JSON.stringify(data, null, 2);
     }
+    setLiveState("live-on", "Ready", "");
   } catch (err) {
     bubble.innerHTML = renderMarkdown(`**Tool run failed:** ${err.message}`);
+    setLiveState("live-off", "Tools error", "");
+  } finally {
+    streaming = false;
+    window.__securaiqStreaming = false;
   }
 }
 window.runSelectedTools = runSelectedTools;
@@ -1743,7 +2055,7 @@ function askAboutEntity(kind, payload) {
     },
   };
   const cfg = map[kind] || { mode: "default", prompt: `Explain and recommend actions for ${kind}: ${JSON.stringify(p)}` };
-  runNavPrompt(cfg.mode, cfg.prompt);
+  runNavPrompt(cfg.mode, cfg.prompt, { stay: true });
 }
 window.askAboutEntity = askAboutEntity;
 
@@ -1768,7 +2080,7 @@ function showView(view, opts = {}) {
   const moduleViews = new Set([
     "assets", "risks", "vulns", "remediations", "playbooks", "campaigns",
     "intel", "reports", "soc", "evidence", "orgs", "frameworks",
-    "integrations", "billing", "graph",
+    "integrations", "billing", "graph", "automation",
   ]);
   if (moduleViews.has(view) && typeof window.showWorkspace === "function") {
     window.showWorkspace(view, opts);
@@ -1782,6 +2094,15 @@ function showView(view, opts = {}) {
   composerWrapEl?.classList.toggle("is-command", currentView === "command");
   composerWrapEl?.classList.toggle("is-page", false);
   composerWrapEl?.classList.toggle("is-chat", currentView === "chat");
+  composerWrapEl?.classList.toggle("is-floating", currentView !== "chat");
+  if (currentView === "chat") {
+    composerWrapEl?.classList.remove("is-open");
+    document.getElementById("aiFab")?.classList.add("hidden");
+  } else {
+    composerWrapEl?.classList.remove("is-open");
+    document.getElementById("aiFab")?.classList.remove("hidden");
+    document.getElementById("aiFab")?.setAttribute("aria-expanded", "false");
+  }
   setNavActive(currentView);
   if (topbarChatTitleEl) {
     topbarChatTitleEl.textContent = currentView === "command" ? "Mission Control" : (getCurrentChat()?.title || "AI Workspace");
@@ -1809,8 +2130,12 @@ async function loadCommandCenter() {
   const riskListEl = document.getElementById("ccTopRisks");
   const vulnListEl = document.getElementById("ccTopVulns");
   try {
-    const res = await fetch("/api/dashboard", { headers: authHeaders() });
+    const [res, briefRes] = await Promise.all([
+      fetch("/api/dashboard", { headers: authHeaders() }),
+      fetch("/api/dashboard/brief", { headers: authHeaders() }).catch(() => null),
+    ]);
     const data = await res.json();
+    const briefData = briefRes && briefRes.ok ? await briefRes.json().catch(() => ({})) : {};
     if (!res.ok) throw new Error(formatApiDetail(data.detail, `HTTP ${res.status}`));
     const mc = data.mission_control || {};
     const compliance = Number(data.compliance_score || 0);
@@ -1818,21 +2143,20 @@ async function loadCommandCenter() {
     const crit = Number(data.vulnerabilities_critical_high || 0);
     const openRems = Number(data.remediations_open || 0);
     const index = Number(data.security_index != null ? data.security_index : mc.security_score) || 0;
+    const emptyWorkspace =
+      data.is_empty === true ||
+      (!(data.assets_total || 0) &&
+        !(data.vulnerabilities_total || 0) &&
+        !(data.risks_total || 0) &&
+        !(data.remediations_total || 0) &&
+        !(data.incidents_total || 0) &&
+        !(data.assessment_count || 0) &&
+        !(data.intel?.watch_count || 0) &&
+        !(data.playbooks_total || 0) &&
+        !(data.campaigns_total || 0));
 
-    // KPI trend deltas via localStorage snapshot
-    const snapKey = "securaiq.kpi.snap";
-    let prev = {};
-    try {
-      prev = JSON.parse(localStorage.getItem(snapKey) || "{}");
-    } catch {
-      prev = {};
-    }
-    const delta = (cur, key) => {
-      if (prev[key] == null) return "New";
-      const d = cur - Number(prev[key] || 0);
-      if (d === 0) return "→ flat";
-      return d > 0 ? `↑ ${d}` : `↓ ${Math.abs(d)}`;
-    };
+    // KPI trends: prefer server snapshot deltas when available
+    const trends = data.kpi_trends || {};
     const setTrend = (id, text, goodUp) => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -1842,32 +2166,95 @@ async function loadCommandCenter() {
       el.classList.toggle("up-bad", text.startsWith("↑") && !goodUp);
       el.classList.toggle("down-good", text.startsWith("↓") && !goodUp);
     };
+    const fmtApi = (d) => {
+      const n = Number(d || 0);
+      if (!n) return "→ flat";
+      return n > 0 ? `↑ ${n}` : `↓ ${Math.abs(n)}`;
+    };
+    if (emptyWorkspace) {
+      try {
+        localStorage.removeItem("securaiq.kpi.snap");
+      } catch {
+        /* ignore */
+      }
+      ["ccScoreTrend", "ccCompTrend", "ccCritTrend", "ccRiskTrend", "ccRemTrend", "ccAssetTrend"].forEach(
+        (id) => setTrend(id, "—", true)
+      );
+    } else if (trends.has_baseline) {
+      setTrend("ccScoreTrend", fmtApi(trends.security_index_delta), true);
+      setTrend("ccCompTrend", fmtApi(trends.compliance_delta), true);
+      setTrend("ccCritTrend", fmtApi(trends.vulns_delta), false);
+      setTrend("ccRiskTrend", fmtApi(trends.risks_delta), false);
+      setTrend("ccRemTrend", fmtApi(trends.rems_delta), false);
+      setTrend("ccAssetTrend", fmtApi(trends.assets_delta), true);
+    } else {
+      const snapKey = "securaiq.kpi.snap";
+      let prev = {};
+      try {
+        prev = JSON.parse(localStorage.getItem(snapKey) || "{}");
+      } catch {
+        prev = {};
+      }
+      const delta = (cur, key) => {
+        if (prev[key] == null) return "New";
+        const d = cur - Number(prev[key] || 0);
+        if (d === 0) return "→ flat";
+        return d > 0 ? `↑ ${d}` : `↓ ${Math.abs(d)}`;
+      };
+      setTrend("ccScoreTrend", delta(index, "index"), true);
+      setTrend("ccCompTrend", delta(compliance, "comp"), true);
+      setTrend("ccCritTrend", delta(crit, "crit"), false);
+      setTrend("ccRiskTrend", delta(openRisks, "risks"), false);
+      setTrend("ccRemTrend", delta(openRems, "rems"), false);
+      setTrend("ccAssetTrend", delta(Number(data.assets_total || 0), "assets"), true);
+      localStorage.setItem(
+        snapKey,
+        JSON.stringify({
+          index,
+          comp: compliance,
+          crit,
+          risks: openRisks,
+          rems: openRems,
+          assets: data.assets_total || 0,
+          at: Date.now(),
+        })
+      );
+    }
 
-    if (scoreEl) scoreEl.textContent = String(index);
-    if (compEl) compEl.textContent = `${compliance}%`;
-    if (barEl) barEl.style.width = `${Math.min(100, compliance)}%`;
-    if (critEl) critEl.textContent = String(crit);
-    if (risksEl) risksEl.textContent = String(openRisks);
-    if (remsEl) remsEl.textContent = String(openRems);
-    if (assetsEl) assetsEl.textContent = String(data.assets_total || 0);
-    setTrend("ccScoreTrend", delta(index, "index"), true);
-    setTrend("ccCompTrend", delta(compliance, "comp"), true);
-    setTrend("ccCritTrend", delta(crit, "crit"), false);
-    setTrend("ccRiskTrend", delta(openRisks, "risks"), false);
-    setTrend("ccRemTrend", delta(openRems, "rems"), false);
-    setTrend("ccAssetTrend", delta(Number(data.assets_total || 0), "assets"), true);
-    localStorage.setItem(
-      snapKey,
-      JSON.stringify({
-        index,
-        comp: compliance,
-        crit,
-        risks: openRisks,
-        rems: openRems,
-        assets: data.assets_total || 0,
-        at: Date.now(),
-      })
-    );
+    if (scoreEl) scoreEl.textContent = String(emptyWorkspace ? 0 : index);
+    if (compEl) compEl.textContent = emptyWorkspace ? "0%" : `${compliance}%`;
+    if (barEl) barEl.style.width = `${Math.min(100, emptyWorkspace ? 0 : compliance)}%`;
+    if (critEl) critEl.textContent = String(emptyWorkspace ? 0 : crit);
+    if (risksEl) risksEl.textContent = String(emptyWorkspace ? 0 : openRisks);
+    if (remsEl) remsEl.textContent = String(emptyWorkspace ? 0 : openRems);
+    if (assetsEl) assetsEl.textContent = String(emptyWorkspace ? 0 : data.assets_total || 0);
+    const gauge = document.getElementById("ccScoreGauge");
+    if (gauge) gauge.style.setProperty("--p", String(Math.min(100, Math.max(0, emptyWorkspace ? 0 : index))));
+    const levelEl = document.getElementById("ccScoreLevel");
+    if (levelEl) {
+      if (emptyWorkspace) {
+        levelEl.textContent = "Ready";
+        levelEl.dataset.level = "ok";
+      } else {
+        levelEl.textContent =
+          index >= 80 ? "Strong" : index >= 60 ? "Stable" : index >= 40 ? "Watch" : "Critical";
+        levelEl.dataset.level = index >= 60 ? "ok" : index >= 40 ? "warn" : "bad";
+      }
+    }
+    const incEl = document.getElementById("ccIncidents");
+    if (incEl) incEl.textContent = String(emptyWorkspace ? 0 : data.incidents_open || 0);
+    // notifBadge is now driven by the real GET /api/notifications unread_count
+    // (see refreshNotifBadge()) instead of a client-side guess from crit+incidents.
+    const topOrg = document.getElementById("topOrgName");
+    if (topOrg) topOrg.textContent = (mc.organization || "Local").split(/\s+/)[0] || "Local";
+    const topEnv = document.getElementById("topEnvName");
+    if (topEnv) topEnv.textContent = emptyWorkspace
+      ? "Lab"
+      : (mc.environment || "Lab").split("/")[0].trim() || "Lab";
+    const topProj = document.getElementById("topProjectName");
+    if (topProj) topProj.textContent = engagementSelectEl?.selectedOptions?.[0]?.textContent || "Workspace";
+    const syncEl = document.getElementById("topLastSync");
+    if (syncEl) syncEl.textContent = `Sync ${new Date().toLocaleTimeString()}`;
 
     // Mission context header
     const setTxt = (id, v) => {
@@ -1875,22 +2262,31 @@ async function loadCommandCenter() {
       if (el) el.textContent = v;
     };
     setTxt("mcOrgName", mc.organization || "Local workspace");
-    setTxt("mcSecurityScore", String(mc.security_score != null ? mc.security_score : index));
-    setTxt("mcFramework", mc.framework || "—");
-    setTxt("mcEnvironment", mc.environment || "Lab / local");
+    setTxt("mcSecurityScore", String(emptyWorkspace ? 0 : mc.security_score != null ? mc.security_score : index));
+    setTxt("mcFramework", emptyWorkspace ? "—" : mc.framework || "—");
+    setTxt("mcEnvironment", emptyWorkspace ? "Lab / local" : mc.environment || "Lab / local");
+    const brief = briefData.brief || data.morning_brief || {};
+    const greetEl = document.getElementById("mcGreeting");
+    if (greetEl) {
+      const uname = (window.__securaiqUser || "").trim();
+      greetEl.textContent = brief.greeting
+        ? `${brief.greeting}${uname ? `, ${uname}` : ""}`
+        : "Mission Control";
+    }
+    const aiSum = document.getElementById("mcAiSummary");
+    if (aiSum) {
+      aiSum.textContent =
+        brief.summary ||
+        (emptyWorkspace
+          ? "Your workspace starts at zero — import a scan or run gap analysis when ready."
+          : `Score ${index} · ${crit} critical/high · ${openRisks} open risks.`);
+    }
     const lastScan = mc.last_scan;
     if (lastScan) {
       const d = new Date(Number(lastScan) * (Number(lastScan) < 1e12 ? 1000 : 1));
       setTxt("mcLastScan", Number.isNaN(d.getTime()) ? String(lastScan) : d.toLocaleString());
     } else setTxt("mcLastScan", "No scans yet");
     const today = mc.today || {};
-    const emptyWorkspace =
-      !(today.critical_findings || 0) &&
-      !(today.open_risks || 0) &&
-      !(today.open_actions || 0) &&
-      !(today.open_incidents || 0) &&
-      !(data.assets_total || 0) &&
-      !(data.intel?.watch_count || 0);
     setTxt(
       "mcTodaySummary",
       emptyWorkspace
@@ -1917,8 +2313,26 @@ async function loadCommandCenter() {
       return;
     }
 
+    const wf = data.workflow || {};
+    const setWf = (id, n) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = String(n || 0);
+    };
+    setWf("wfImported", wf.imported);
+    setWf("wfTriaged", wf.triaged);
+    setWf("wfActions", wf.actions);
+    setWf("wfClosed", wf.closed);
+    document.querySelectorAll(".mc-wf-step").forEach((step) => {
+      const key = step.getAttribute("data-wf");
+      const n = Number(wf[key] || 0);
+      step.classList.toggle("active", n > 0);
+    });
+
     // Work queue
     renderWorkQueue(data.work_queue || []);
+    renderMcDecisionPanel(data);
+    renderMcCharts(data);
+    refreshMcIntegrations();
 
     const recEl = document.getElementById("ccRecommendedToday");
     if (recEl) {
@@ -2168,32 +2582,37 @@ function renderWorkQueue(items) {
     el.innerHTML = `<p class="hint">Empty queue — use the quick-start checklist or import your first scan.</p>`;
     return;
   }
-  el.innerHTML = items
-    .map((w) => {
-      const pri = (w.priority || "medium").toLowerCase();
-      return `<article class="wq-item pri-${escapeHtml(pri)}">
-        <div class="wq-top">
-          <span class="wq-badge">${escapeHtml(pri)}</span>
-          <strong>${escapeHtml(w.title)}</strong>
-        </div>
-        <div class="wq-meta">
-          <span>Owner: ${escapeHtml(w.owner || "Unassigned")}</span>
-          <span>Due: ${escapeHtml(w.due || "—")}</span>
-          <span>Status: ${escapeHtml(w.status || "open")}</span>
-        </div>
-        <div class="wq-actions">
-          <button type="button" class="btn-secondary wq-ask" data-mode="${escapeHtml(
-            w.mode || "ciso"
-          )}" data-prompt="${escapeHtml(w.prompt || w.title)}">Ask AI</button>
-          <button type="button" class="btn-primary-cc wq-task" data-title="${escapeHtml(
-            w.title
-          )}" data-workspace="${escapeHtml(w.workspace || "remediations")}" data-action="${escapeHtml(
-        w.action || "task"
-      )}">Create task</button>
-        </div>
-      </article>`;
-    })
-    .join("");
+  el.innerHTML = `<div class="wq-table-wrap"><table class="wq-table">
+    <thead><tr>
+      <th>Priority</th><th>Task</th><th>Owner</th><th>Due</th><th>Framework</th><th>Risk</th><th>Status</th><th>AI</th><th></th>
+    </tr></thead>
+    <tbody>
+    ${items
+      .map((w) => {
+        const pri = (w.priority || "medium").toLowerCase();
+        return `<tr class="pri-${escapeHtml(pri)}">
+          <td><span class="wq-badge">${escapeHtml(pri)}</span></td>
+          <td><strong>${escapeHtml(w.title)}</strong></td>
+          <td>${escapeHtml(w.owner || "Unassigned")}</td>
+          <td>${escapeHtml(w.due || "—")}</td>
+          <td>${escapeHtml(w.framework || "—")}</td>
+          <td>${escapeHtml(String(w.risk || "—"))}</td>
+          <td>${escapeHtml(w.status || "open")}</td>
+          <td class="wq-ai">${escapeHtml(w.ai || "")}</td>
+          <td class="wq-actions">
+            <button type="button" class="btn-secondary wq-ask" data-mode="${escapeHtml(
+              w.mode || "ciso"
+            )}" data-prompt="${escapeHtml(w.prompt || w.title)}">Ask AI</button>
+            <button type="button" class="btn-primary-cc wq-task" data-title="${escapeHtml(
+              w.title
+            )}" data-workspace="${escapeHtml(w.workspace || "remediations")}" data-action="${escapeHtml(
+          w.action || "task"
+        )}">Act</button>
+          </td>
+        </tr>`;
+      })
+      .join("")}
+    </tbody></table></div>`;
   el.querySelectorAll(".wq-ask").forEach((btn) => {
     btn.addEventListener("click", () => runNavPrompt(btn.getAttribute("data-mode"), btn.getAttribute("data-prompt")));
   });
@@ -2210,7 +2629,6 @@ function renderWorkQueue(items) {
         window.showWorkspace?.(ws);
         return;
       }
-      // Create remediation-style task when possible
       try {
         const res = await fetch("/api/gap/remediations", {
           method: "POST",
@@ -2227,7 +2645,6 @@ function renderWorkQueue(items) {
           notifyUser(`**Task created:** ${title}`);
           window.showWorkspace?.("remediations");
         } else {
-          // fallback: open remediations / ask AI
           notifyUser(`**Open module** to track: ${title}`);
           if (ws) window.showWorkspace?.(ws);
         }
@@ -2238,6 +2655,119 @@ function renderWorkQueue(items) {
   });
 }
 window.renderWorkQueue = renderWorkQueue;
+
+function renderMcDecisionPanel(data) {
+  const what = document.getElementById("mcDecisionWhat");
+  const why = document.getElementById("mcDecisionWhy");
+  const next = document.getElementById("mcDecisionNext");
+  const actions = document.getElementById("mcDecisionActions");
+  if (!what) return;
+  const wq = data.work_queue || [];
+  const top = wq[0];
+  const crit = data.vulnerabilities_critical_high || 0;
+  const risks = data.risks_open || 0;
+  if (!top && !crit && !risks) {
+    what.textContent = "Posture is quiet — keep monitoring and attach evidence for compliance.";
+    why.textContent = "No open critical queue items.";
+    next.textContent = "Run a gap analysis or import the latest scanner export.";
+  } else if (top) {
+    what.textContent = top.title;
+    why.textContent = top.ai || `Priority ${top.priority} · owner ${top.owner || "Unassigned"}`;
+    next.textContent = top.prompt || "Ask AI for remediation steps, then create a tracked task.";
+  } else {
+    what.textContent = `${crit} critical/high findings · ${risks} open risks`;
+    why.textContent = "Unresolved findings increase residual risk and audit exposure.";
+    next.textContent = "Triage top vulns, assign owners, and open remediations.";
+  }
+  if (actions) {
+    actions.innerHTML = `
+      <button type="button" class="cc-action" data-workspace="vulns">Triage vulns</button>
+      <button type="button" class="cc-action" data-module="gap">Gap analysis</button>
+      <button type="button" class="cc-action" data-view="chat" data-mode="ciso" data-prompt="Create Jira-ready remediation tickets for our top 3 findings">Create tickets</button>
+      <button type="button" class="cc-action" data-workspace="reports">Board report</button>`;
+    actions.querySelectorAll("[data-workspace]").forEach((b) =>
+      b.addEventListener("click", () => window.showWorkspace?.(b.getAttribute("data-workspace")))
+    );
+    actions.querySelectorAll("[data-module]").forEach((b) =>
+      b.addEventListener("click", () => handleModuleAction(b.getAttribute("data-module")))
+    );
+    actions.querySelectorAll("[data-view]").forEach((b) =>
+      b.addEventListener("click", () =>
+        runNavPrompt(b.getAttribute("data-mode") || "ciso", b.getAttribute("data-prompt"))
+      )
+    );
+  }
+}
+
+function renderMcCharts(data) {
+  const sev = document.getElementById("ccSevBars");
+  if (sev) {
+    const findings = data.findings?.top_vulns || [];
+    const buckets = { critical: 0, high: 0, medium: 0, low: 0 };
+    findings.forEach((v) => {
+      const s = (v.severity || "medium").toLowerCase();
+      if (buckets[s] != null) buckets[s] += 1;
+    });
+    // Prefer aggregate counts when available
+    const crit = Number(data.vulnerabilities_critical_high || 0);
+    if (crit && buckets.critical + buckets.high === 0) {
+      buckets.critical = Math.ceil(crit / 2);
+      buckets.high = Math.floor(crit / 2);
+    }
+    const max = Math.max(1, ...Object.values(buckets));
+    sev.innerHTML = Object.entries(buckets)
+      .map(
+        ([k, v]) =>
+          `<div class="sev-row"><span>${k}</span><i style="width:${Math.round((v / max) * 100)}%"></i><em>${v}</em></div>`
+      )
+      .join("");
+  }
+  const assetChart = document.getElementById("ccAssetChart");
+  const ab = data.asset_breakdown || {};
+  if (assetChart && Object.keys(ab).length) {
+    assetChart.innerHTML = Object.entries(ab)
+      .map(
+        ([k, v]) =>
+          `<button type="button" class="ab-tile" data-workspace="assets"><span>${escapeHtml(k)}</span><strong>${v}</strong></button>`
+      )
+      .join("");
+    assetChart.querySelectorAll("[data-workspace]").forEach((b) =>
+      b.addEventListener("click", () => window.showWorkspace?.("assets"))
+    );
+  }
+}
+
+async function refreshMcIntegrations() {
+  const list = document.getElementById("ccIntegStatus");
+  const sync = document.getElementById("ccIntegSync");
+  if (!list) return;
+  try {
+    const [setRes, toolsRes, hookRes] = await Promise.all([
+      fetch("/api/settings", { headers: authHeaders() }),
+      fetch("/api/tools"),
+      fetch("/api/webhooks", { headers: authHeaders() }),
+    ]);
+    const settings = await setRes.json().catch(() => ({}));
+    const tools = await toolsRes.json().catch(() => ({}));
+    const hooks = await hookRes.json().catch(() => ({}));
+    const rows = [
+      ["Local tools", (tools.available_count || 0) > 0],
+      ["Jira", Boolean(settings.jira_base_url && settings.jira_api_token_set)],
+      ["Webhooks", (hooks.webhooks || []).length > 0],
+      ["Web search", settings.web_search_enabled !== false],
+      ["AI backend", Boolean(settings.model_backend)],
+    ];
+    list.innerHTML = rows
+      .map(
+        ([name, ok]) =>
+          `<li class="${ok ? "ok" : ""}"><span>${escapeHtml(name)}</span><strong>${ok ? "connected" : "not set"}</strong></li>`
+      )
+      .join("");
+    if (sync) sync.textContent = `Last sync ${new Date().toLocaleTimeString()} · ${rows.filter((r) => r[1]).length} ready`;
+  } catch {
+    list.innerHTML = `<li class="hint">Status unavailable</li>`;
+  }
+}
 
 async function renderRiskHeatMap() {
   const el = document.getElementById("ccRiskHeat");
@@ -2292,7 +2822,26 @@ async function renderRiskHeatMap() {
   }
 }
 
-function runNavPrompt(mode, prompt) {
+function runNavPrompt(mode, prompt, opts = {}) {
+  const stayOnPage =
+    opts.stay === true ||
+    (opts.stay !== false &&
+      composerWrapEl?.classList.contains("is-floating") &&
+      currentView !== "chat");
+  if (stayOnPage) {
+    openAiAssistant();
+    if (mode && modeEl) {
+      modeEl.value = mode;
+      modeEl.dispatchEvent(new Event("change"));
+    }
+    if (prompt && inputEl) {
+      inputEl.value = prompt;
+      resizeInput();
+      inputEl.focus();
+    }
+    syncAiAssistThread();
+    return;
+  }
   showView("chat");
   if (mode && modeEl) {
     modeEl.value = mode;
@@ -2304,56 +2853,113 @@ function runNavPrompt(mode, prompt) {
     inputEl.focus();
   }
 }
+window.runNavPrompt = runNavPrompt;
+
+function openAiAssistant() {
+  if (!composerWrapEl) return;
+  if (currentView === "chat") {
+    inputEl?.focus();
+    return;
+  }
+  composerWrapEl.classList.add("is-floating", "is-open");
+  document.getElementById("aiFab")?.classList.add("hidden");
+  document.getElementById("aiFab")?.setAttribute("aria-expanded", "true");
+  const ctx = document.getElementById("aiAssistContext");
+  if (ctx) {
+    const labels = {
+      command: "Mission Control",
+      page: "Module context",
+      chat: "AI Workspace",
+    };
+    ctx.textContent = `${labels[currentView] || "SecuraIQ"} · authorized labs`;
+  }
+  syncAiAssistThread();
+  inputEl?.focus();
+}
+window.openAiAssistant = openAiAssistant;
+
+function closeAiAssistant() {
+  if (!composerWrapEl) return;
+  composerWrapEl.classList.remove("is-open");
+  if (composerWrapEl.classList.contains("is-floating") && currentView !== "chat") {
+    document.getElementById("aiFab")?.classList.remove("hidden");
+    document.getElementById("aiFab")?.setAttribute("aria-expanded", "false");
+  }
+}
+window.closeAiAssistant = closeAiAssistant;
+
+function syncAiAssistThread() {
+  const thread = document.getElementById("aiAssistThread");
+  if (!thread || !chatEl) return;
+  const msgs = [...chatEl.querySelectorAll(".message")].slice(-6);
+  if (!msgs.length) {
+    thread.classList.add("hidden");
+    thread.innerHTML = "";
+    return;
+  }
+  thread.classList.remove("hidden");
+  thread.innerHTML = msgs
+    .map((m) => {
+      const role = m.classList.contains("user") ? "You" : "SecuraIQ";
+      const bubble = m.querySelector(".bubble");
+      const text = (bubble?.innerText || bubble?.textContent || "").trim().slice(0, 480);
+      return `<div class="ai-assist-msg ${m.classList.contains("user") ? "is-user" : "is-ai"}"><span>${role}</span><p>${escapeHtml(
+        text
+      )}${text.length >= 480 ? "…" : ""}</p></div>`;
+    })
+    .join("");
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function wireAiAssistantChrome() {
+  if (window.__securaiqAiFabWired) return;
+  window.__securaiqAiFabWired = true;
+  document.getElementById("aiFab")?.addEventListener("click", () => openAiAssistant());
+  document.getElementById("aiAssistClose")?.addEventListener("click", () => closeAiAssistant());
+  document.getElementById("aiAssistOpenWorkspace")?.addEventListener("click", () => {
+    closeAiAssistant();
+    showView("chat");
+  });
+}
+wireAiAssistantChrome();
 
 function handleModuleAction(module) {
-  if (module === "gap") openGap();
-  else if (module === "risks") {
-    if (typeof window.showWorkspace === "function") window.showWorkspace("risks");
-    openRisk();
-  } else if (module === "vulns") {
-    if (typeof window.showWorkspace === "function") window.showWorkspace("vulns");
-    openVuln();
-  } else if (module === "assets") {
-    if (typeof window.showWorkspace === "function") window.showWorkspace("assets");
-    openAsset();
-  } else if (module === "rems") {
-    if (typeof window.showWorkspace === "function") window.showWorkspace("remediations");
-  } else if (module === "playbooks") {
-    if (typeof window.showWorkspace === "function") window.showWorkspace("playbooks");
-    openPlaybook();
-  } else if (module === "campaigns") {
-    if (typeof window.showWorkspace === "function") window.showWorkspace("campaigns");
-    openCampaign();
-  } else if (module === "dashboard") openDash();
+  const go = (ws) => {
+    if (typeof window.showWorkspace === "function") window.showWorkspace(ws);
+  };
+  if (module === "gap") {
+    go("frameworks");
+    openGap();
+  } else if (module === "risks") go("risks");
+  else if (module === "vulns") go("vulns");
+  else if (module === "assets") go("assets");
+  else if (module === "rems") go("remediations");
+  else if (module === "playbooks") go("playbooks");
+  else if (module === "campaigns") go("campaigns");
+  else if (module === "dashboard") openDash();
 }
 
 function handleGlobalSearch(q) {
   const query = (q || "").trim();
   if (!query) return;
+  const searchEl = document.getElementById("globalSearch");
+  if (searchEl && window.__securaiqSearchWired) {
+    searchEl.value = query;
+    searchEl.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    return;
+  }
   const lower = query.toLowerCase();
   if (lower.startsWith("cve") || /CVE-\d{4}-\d+/i.test(query)) {
     runNavPrompt("research", `Threat intel brief on ${query}`);
     return;
   }
-  if (lower.includes("risk")) {
-    openRisk();
-    return;
-  }
-  if (lower.includes("vuln") || lower.includes("scan")) {
-    openVuln();
-    return;
-  }
-  if (lower.includes("asset")) {
-    openAsset();
-    return;
-  }
-  if (lower.includes("gap") || lower.includes("iso") || lower.includes("nist")) {
-    openGap();
-    return;
-  }
-  if (lower.includes("playbook") || lower.includes("incident")) {
-    openPlaybook();
-    return;
+  if (typeof window.showWorkspace === "function") {
+    if (lower.includes("risk")) return window.showWorkspace("risks");
+    if (lower.includes("vuln") || lower.includes("scan")) return window.showWorkspace("vulns");
+    if (lower.includes("asset")) return window.showWorkspace("assets");
+    if (lower.includes("gap") || lower.includes("iso") || lower.includes("nist"))
+      return window.showWorkspace("frameworks");
+    if (lower.includes("playbook") || lower.includes("incident")) return window.showWorkspace("soc");
   }
   runNavPrompt(modeEl?.value || "default", `Find and explain: ${query}`);
 }
@@ -2389,6 +2995,7 @@ function appendMessage(role, content, isHtml = false) {
   chatEl.appendChild(div);
   syncEmptyState();
   chatEl.scrollTop = chatEl.scrollHeight;
+  if (composerWrapEl?.classList.contains("is-open")) syncAiAssistThread();
   return bubble;
 }
 
@@ -2471,6 +3078,103 @@ function openSettings() {
   loadPlatformTip();
   refreshHermesStatus();
   refreshSettingsToolsHint();
+  refreshApiKeysPanel();
+  refreshAuditPanel();
+  refreshBillingUsage();
+}
+
+async function refreshBillingUsage() {
+  const box = document.getElementById("billingUsageBox");
+  if (!box) return;
+  box.textContent = "Loading…";
+  try {
+    const res = await fetch("/api/billing/usage", { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      box.textContent = data.detail || `Usage unavailable (${res.status})`;
+      return;
+    }
+    const limit = data.messages_limit == null ? "unlimited" : data.messages_limit;
+    const remaining = data.messages_remaining == null ? "—" : data.messages_remaining;
+    box.innerHTML = `
+      <strong>${escapeHtml(data.plan_label || data.plan || "Community")}</strong> plan ·
+      ${escapeHtml(String(data.messages_used_this_month ?? 0))} / ${escapeHtml(String(limit))} messages this month
+      (${escapeHtml(String(remaining))} remaining)
+      ${data.enforcement_enabled ? "" : ' <span class="hint">— soft limit, not enforced yet</span>'}
+      ${data.over_limit ? '<div class="hint" style="color:#f85149">Over limit</div>' : ""}
+    `;
+  } catch {
+    box.textContent = "Usage unavailable";
+  }
+}
+on(document.getElementById("billingRefreshBtn"), "click", refreshBillingUsage);
+
+async function refreshApiKeysPanel() {
+  const list = document.getElementById("apiKeyList");
+  if (!list) return;
+  try {
+    const res = await fetch("/api/auth/api-keys", { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    const keys = data.api_keys || [];
+    if (!keys.length) {
+      list.innerHTML = `<li class="hint">No API keys yet${res.ok ? "" : " — enable AUTH_ENABLED to create"}</li>`;
+      return;
+    }
+    list.innerHTML = keys
+      .map(
+        (k) => `<li class="settings-list-item">
+          <span><strong>${escapeHtml(k.name || "key")}</strong> · <code>${escapeHtml(k.key_prefix || k.prefix || k.id || "")}</code></span>
+          <button type="button" class="btn-ghost api-key-revoke" data-id="${escapeHtml(k.id)}">Revoke</button>
+        </li>`
+      )
+      .join("");
+    list.querySelectorAll(".api-key-revoke").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Revoke this API key?")) return;
+        const r = await fetch(`/api/auth/api-keys/${btn.getAttribute("data-id")}`, {
+          method: "DELETE",
+          headers: authHeaders(),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          alert(err.detail || `HTTP ${r.status}`);
+          return;
+        }
+        refreshApiKeysPanel();
+      });
+    });
+  } catch {
+    list.innerHTML = `<li class="hint">API keys unavailable</li>`;
+  }
+}
+
+async function refreshAuditPanel() {
+  const box = document.getElementById("auditLogList");
+  if (!box) return;
+  try {
+    const res = await fetch("/api/audit?limit=40", { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      box.textContent = data.detail || `Audit unavailable (${res.status})`;
+      return;
+    }
+    const events = data.events || [];
+    if (!events.length) {
+      box.textContent = "No audit events yet";
+      return;
+    }
+    box.innerHTML = `<ul class="settings-list">${events
+      .slice(0, 40)
+      .map(
+        (e) =>
+          `<li><code>${escapeHtml(e.action || e.event || "event")}</code> · ${escapeHtml(
+            e.username || e.user_id || "—"
+          )} · ${escapeHtml(String(e.created_at || e.ts || "").slice(0, 19))}</li>`
+      )
+      .join("")}</ul>`;
+  } catch {
+    box.textContent = "Audit unavailable";
+  }
 }
 
 function closeSettings() {
@@ -2600,6 +3304,7 @@ async function loadModels() {
       opt.textContent = data.current;
       modelEl.appendChild(opt);
       modelEl.value = data.current;
+      refreshModelStatusBar(backend, data.current, true);
       return;
     }
 
@@ -2628,9 +3333,18 @@ async function loadModels() {
       );
       if (match) modelEl.value = match.value;
     }
+    refreshModelStatusBar(backend, modelEl.value || data.current || "", Boolean((data.installed || []).length || data.current));
   } catch {
     modelEl.innerHTML = '<option value="">Models unavailable</option>';
+    refreshModelStatusBar("—", "", false);
   }
+}
+
+function refreshModelStatusBar(backend, model, ready) {
+  if (window.__securaiqStreaming) return;
+  const b = backend || backendEl?.value || "—";
+  const m = model || modelEl?.value || "";
+  setLiveState(ready ? "live-on" : "live-off", ready ? `Ready · ${b}` : "Connect a model", m || "");
 }
 
 async function loadSettingsForm() {
@@ -2668,6 +3382,7 @@ async function loadSettingsForm() {
     document.getElementById("setOllamaUrl").value = s.ollama_base_url || "";
     document.getElementById("setOllamaModel").value = s.ollama_model || "";
     document.getElementById("setHfModel").value = s.hf_model || "";
+    setVal("setHfApiModel", s.huggingface_api_model || "");
     document.getElementById("setHfToken").value = "";
     document.getElementById("hfTokenHint").textContent = s.hf_token_set
       ? "Saved: •••••••• (hidden)"
@@ -2713,8 +3428,42 @@ async function loadSettingsForm() {
     setHint("openaiKeyHint", s.openai_api_key_set);
     setHint("openrouterKeyHint", s.openrouter_api_key_set);
     setHint("groqKeyHint", s.groq_api_key_set);
+    setVal("setTogetherModel", s.together_model || "");
+    setVal("setFireworksModel", s.fireworks_model || "");
     setHint("togetherKeyHint", s.together_api_key_set);
     setHint("fireworksKeyHint", s.fireworks_api_key_set);
+    const intelKeys = [
+      ["setAbuseipdbKey", "abuseipdbKeyHint", "abuseipdb_api_key_set"],
+      ["setVirustotalKey", "virustotalKeyHint", "virustotal_api_key_set"],
+      ["setShodanKey", "shodanKeyHint", "shodan_api_key_set"],
+      ["setOtxKey", "otxKeyHint", "otx_api_key_set"],
+      ["setUrlscanKey", "urlscanKeyHint", "urlscan_api_key_set"],
+      ["setHibpKey", "hibpKeyHint", "hibp_api_key_set"],
+      ["setGreynoiseKey", "greynoiseKeyHint", "greynoise_api_key_set"],
+      ["setPulsediveKey", "pulsediveKeyHint", "pulsedive_api_key_set"],
+      ["setMalwarebazaarKey", "malwarebazaarKeyHint", "malwarebazaar_api_key_set"],
+      ["setEmailrepKey", "emailrepKeyHint", "emailrep_api_key_set"],
+      ["setUrlhausKey", "urlhausKeyHint", "urlhaus_api_key_set"],
+    ];
+    for (const [inputId, hintId, setKey] of intelKeys) {
+      setVal(inputId, "");
+      setHint(hintId, s[setKey]);
+    }
+    setChecked("setMfaRequiredAdmin", Boolean(s.mfa_required_for_admin));
+    setChecked("setOidcEnabled", Boolean(s.oidc_enabled));
+    setVal("setOidcIssuer", s.oidc_issuer || "");
+    setVal("setOidcClientId", s.oidc_client_id || "");
+    setVal("setOidcClientSecret", "");
+    setVal("setOidcRedirect", s.oidc_redirect_uri || "");
+    setVal("setOidcScopes", s.oidc_scopes || "openid profile email");
+    setVal("setGithubWebhookSecret", "");
+    setVal("setDatabaseUrl", "");
+    setVal("setRedisUrl", "");
+    setHint("oidcSecretHint", s.oidc_client_secret_set);
+    setHint("githubWebhookHint", s.github_webhook_secret_set ? "Saved: •••••••• (hidden)" : "Not set — enables GitHub webhook");
+    setHint("databaseUrlHint", s.database_url_set);
+    setHint("redisUrlHint", s.redis_url_set);
+    await refreshMfaAccountPanel();
     await refreshSettingsToolsHint();
   } catch (err) {
     appendMessage("assistant", renderMarkdown(`**Settings load failed:** ${err.message}`), true);
@@ -2741,6 +3490,7 @@ async function saveSettings(event) {
     ollama_base_url: document.getElementById("setOllamaUrl").value.trim(),
     ollama_model: document.getElementById("setOllamaModel").value.trim(),
     hf_model: document.getElementById("setHfModel").value.trim(),
+    huggingface_api_model: document.getElementById("setHfApiModel")?.value.trim() || "",
     hf_token: document.getElementById("setHfToken").value.trim(),
     unsloth_model: document.getElementById("setUnslothModel").value.trim(),
     unsloth_adapter_dir: document.getElementById("setUnslothAdapter").value.trim(),
@@ -2762,8 +3512,31 @@ async function saveSettings(event) {
     groq_api_key: document.getElementById("setGroqKey")?.value.trim() || "",
     groq_model: document.getElementById("setGroqModel")?.value.trim() || "",
     together_api_key: document.getElementById("setTogetherKey")?.value.trim() || "",
+    together_model: document.getElementById("setTogetherModel")?.value.trim() || "",
     fireworks_api_key: document.getElementById("setFireworksKey")?.value.trim() || "",
+    fireworks_model: document.getElementById("setFireworksModel")?.value.trim() || "",
     ollama_coder_model: document.getElementById("setOllamaCoder")?.value.trim() || "",
+    abuseipdb_api_key: document.getElementById("setAbuseipdbKey")?.value.trim() || "",
+    virustotal_api_key: document.getElementById("setVirustotalKey")?.value.trim() || "",
+    shodan_api_key: document.getElementById("setShodanKey")?.value.trim() || "",
+    otx_api_key: document.getElementById("setOtxKey")?.value.trim() || "",
+    urlscan_api_key: document.getElementById("setUrlscanKey")?.value.trim() || "",
+    hibp_api_key: document.getElementById("setHibpKey")?.value.trim() || "",
+    greynoise_api_key: document.getElementById("setGreynoiseKey")?.value.trim() || "",
+    pulsedive_api_key: document.getElementById("setPulsediveKey")?.value.trim() || "",
+    malwarebazaar_api_key: document.getElementById("setMalwarebazaarKey")?.value.trim() || "",
+    emailrep_api_key: document.getElementById("setEmailrepKey")?.value.trim() || "",
+    urlhaus_api_key: document.getElementById("setUrlhausKey")?.value.trim() || "",
+    mfa_required_for_admin: document.getElementById("setMfaRequiredAdmin")?.checked ?? false,
+    oidc_enabled: document.getElementById("setOidcEnabled")?.checked ?? false,
+    oidc_issuer: document.getElementById("setOidcIssuer")?.value.trim() || "",
+    oidc_client_id: document.getElementById("setOidcClientId")?.value.trim() || "",
+    oidc_client_secret: document.getElementById("setOidcClientSecret")?.value.trim() || "",
+    oidc_redirect_uri: document.getElementById("setOidcRedirect")?.value.trim() || "",
+    oidc_scopes: document.getElementById("setOidcScopes")?.value.trim() || "",
+    github_webhook_secret: document.getElementById("setGithubWebhookSecret")?.value.trim() || "",
+    database_url: document.getElementById("setDatabaseUrl")?.value.trim() || "",
+    redis_url: document.getElementById("setRedisUrl")?.value.trim() || "",
   };
   try {
     const res = await fetch("/api/settings", {
@@ -3180,6 +3953,7 @@ async function sendMessage() {
   }
 
   streaming = true;
+  window.__securaiqStreaming = true;
   sendBtn.disabled = true;
   inputEl.value = "";
   resizeInput();
@@ -3219,6 +3993,46 @@ async function sendMessage() {
   startThinkingUI(assistantBody);
   let fullText = "";
   let answerStarted = false;
+  let pendingCitations = null;
+
+  const captureCitations = (text) =>
+    text.replace(/\[\[citations:([^\]]+)\]\]/g, (_, b64) => {
+      try {
+        pendingCitations = JSON.parse(atob(b64));
+      } catch {
+        /* malformed marker — ignore, no citations shown for this turn */
+      }
+      return "";
+    });
+
+  const renderCitations = () => {
+    if (!pendingCitations || !pendingCitations.length) return;
+    const answer = assistantBody.querySelector(".answer-body") || assistantBody;
+    const box = document.createElement("div");
+    box.className = "citations-box";
+    const label = document.createElement("div");
+    label.className = "citations-label";
+    label.textContent = "Sources (retrieved knowledge, not verified against live web):";
+    box.appendChild(label);
+    const list = document.createElement("ul");
+    list.className = "citations-list";
+    pendingCitations.forEach((c) => {
+      const li = document.createElement("li");
+      const pct = typeof c.relevance === "number" ? `${Math.round(c.relevance * 100)}%` : "n/a";
+      const confidenceClass =
+        typeof c.relevance === "number"
+          ? c.relevance >= 0.7
+            ? "conf-high"
+            : c.relevance >= 0.4
+            ? "conf-med"
+            : "conf-low"
+          : "conf-unknown";
+      li.innerHTML = `<span class="citation-tag">[${c.id || "?"}]</span> ${c.source || "unknown"} <span class="citation-confidence ${confidenceClass}">${pct} relevance</span>`;
+      list.appendChild(li);
+    });
+    box.appendChild(list);
+    answer.appendChild(box);
+  };
 
   try {
     const cid = await ensureServerChat().catch(() => null);
@@ -3232,7 +4046,8 @@ async function sendMessage() {
         use_rag: ragEl.checked,
         use_web_search: webSearchEl ? webSearchEl.checked : modeEl.value === "research",
         use_net_assess: netAssessEl ? netAssessEl.checked : modeEl.value === "assess",
-        use_local_tools: localToolsEl ? localToolsEl.checked : true,
+        use_local_tools:
+          selectedTools.length > 0 ? true : localToolsEl ? localToolsEl.checked : true,
         tools: selectedTools.length ? selectedTools.slice() : null,
         target: targetIpEl && targetIpEl.value.trim() ? targetIpEl.value.trim() : null,
         authorized_target: authorizedTargetEl ? authorizedTargetEl.checked : false,
@@ -3290,9 +4105,12 @@ async function sendMessage() {
         localStorage.setItem("hermesSessionId", hermesSessionId);
         return "";
       });
+      carry = captureCitations(carry);
       carry = stripLiveMarkers(carry);
       if (
-        (carry.includes("[[hermes_session:") || carry.includes("[[live:")) &&
+        (carry.includes("[[hermes_session:") ||
+          carry.includes("[[live:") ||
+          carry.includes("[[citations:")) &&
         !carry.includes("]]")
       ) {
         continue;
@@ -3307,6 +4125,7 @@ async function sendMessage() {
         localStorage.setItem("hermesSessionId", hermesSessionId);
         return "";
       });
+      carry = captureCitations(carry);
       carry = stripLiveMarkers(carry);
       fullText += carry;
       paintAnswer();
@@ -3318,6 +4137,7 @@ async function sendMessage() {
       finishThinkingUI(true);
       assistantBody.innerHTML = renderMarkdown(fullText || "_No response_");
     }
+    renderCitations();
     const histUser =
       attachmentNames.length > 0
         ? `${message}\n\n[Attached: ${attachmentNames.join(", ")}]`
@@ -3334,8 +4154,11 @@ async function sendMessage() {
     assistantBody.innerHTML = renderMarkdown(`**Error:** ${err.message}`);
   } finally {
     streaming = false;
+    window.__securaiqStreaming = false;
     sendBtn.disabled = !backendReady;
+    if (composerWrapEl?.classList.contains("is-open")) syncAiAssistThread();
     inputEl.focus();
+    refreshModelStatusBar(backendEl?.value, modelEl?.value, backendReady);
   }
 }
 
@@ -3392,6 +4215,18 @@ if (campaignModal) {
   campaignModal.querySelectorAll("[data-close-campaign]").forEach((el) => el.addEventListener("click", closeCampaign));
 }
 on(newEngagementBtn, "click", createEngagement);
+on(document.getElementById("renameEngagementBtn"), "click", renameEngagement);
+on(document.getElementById("exportEngagementBtn"), "click", exportEngagement);
+on(document.getElementById("engagementStatusBtn"), "click", changeEngagementStatus);
+on(document.getElementById("aiCanvasSave"), "click", () => {
+  const ta = document.getElementById("aiCanvasNotes");
+  try {
+    localStorage.setItem("securaiq.canvas", ta?.value || "");
+    notifyUser("**Canvas saved** locally.");
+  } catch (err) {
+    notifyUser(`**Save failed:** ${err.message}`);
+  }
+});
 on(uploadBtn, "click", () => fileUploadInput?.click());
 on(fileUploadInput, "change", uploadFile);
 on(attachBtn, "click", () => chatAttachInput?.click());
@@ -3443,22 +4278,103 @@ on(authForm, "submit", async (e) => {
   e.preventDefault();
   const username = document.getElementById("authUser")?.value?.trim();
   const password = document.getElementById("authPass")?.value || "";
+  const totp = document.getElementById("authMfa")?.value?.trim() || "";
+  const mfaToken = document.getElementById("authMfaToken")?.value?.trim() || "";
+  const mfaWrap = document.getElementById("authMfaWrap");
   try {
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
+    let res;
+    if (mfaToken && totp) {
+      res = await fetch("/api/auth/mfa/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mfa_token: mfaToken, totp }),
+      });
+    } else {
+      res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password, totp: totp || undefined }),
+      });
+    }
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (data.mfa_required) {
+      if (mfaWrap) mfaWrap.classList.remove("hidden");
+      const tokEl = document.getElementById("authMfaToken");
+      if (tokEl) tokEl.value = data.mfa_token || "";
+      appendMessage("assistant", renderMarkdown("**MFA required** — enter your authenticator code and submit again."), true);
+      return;
+    }
     authToken = data.token;
     localStorage.setItem(AUTH_TOKEN_KEY, authToken);
+    if (mfaWrap) mfaWrap.classList.add("hidden");
+    const tokEl = document.getElementById("authMfaToken");
+    if (tokEl) tokEl.value = "";
     await refreshAuthStatus();
     await loadEngagements();
     closeAuth();
     appendMessage("assistant", renderMarkdown(`**Signed in** as ${data.user.username}`), true);
   } catch (err) {
     appendMessage("assistant", renderMarkdown(`**Login failed:** ${err.message}`), true);
+  }
+});
+on(document.getElementById("authOidcBtn"), "click", () => {
+  window.location.href = "/api/auth/oidc/login";
+});
+on(document.getElementById("mfaEnrollBtn"), "click", async () => {
+  try {
+    const res = await fetch("/api/auth/mfa/enroll", { method: "POST", headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    const secretEl = document.getElementById("mfaOtpSecret");
+    if (secretEl) secretEl.textContent = data.secret || "";
+    document.getElementById("mfaEnrollBlock")?.classList.remove("hidden");
+    document.getElementById("mfaEnrollBtn")?.classList.add("hidden");
+    document.getElementById("mfaAccountHint").textContent =
+      "Scan the secret in your authenticator app, then enter a verification code.";
+  } catch (err) {
+    appendMessage("assistant", renderMarkdown(`**MFA enroll failed:** ${err.message}`), true);
+  }
+});
+on(document.getElementById("mfaConfirmBtn"), "click", async () => {
+  const code = document.getElementById("mfaConfirmCode")?.value?.trim() || "";
+  if (!code) return;
+  try {
+    const res = await fetch("/api/auth/mfa/confirm", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ code }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    document.getElementById("mfaConfirmCode").value = "";
+    document.getElementById("mfaEnrollBlock")?.classList.add("hidden");
+    await refreshAuthStatus();
+    appendMessage("assistant", renderMarkdown("**MFA enabled** on your account."), true);
+  } catch (err) {
+    appendMessage("assistant", renderMarkdown(`**MFA confirm failed:** ${err.message}`), true);
+  }
+});
+on(document.getElementById("mfaCancelEnrollBtn"), "click", async () => {
+  document.getElementById("mfaEnrollBlock")?.classList.add("hidden");
+  document.getElementById("mfaConfirmCode").value = "";
+  await refreshAuthStatus();
+});
+on(document.getElementById("mfaDisableBtn"), "click", async () => {
+  const code = window.prompt("Enter your authenticator code to disable MFA:");
+  if (!code) return;
+  try {
+    const res = await fetch("/api/auth/mfa/disable", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ code: code.trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    await refreshAuthStatus();
+    appendMessage("assistant", renderMarkdown("**MFA disabled** on your account."), true);
+  } catch (err) {
+    appendMessage("assistant", renderMarkdown(`**MFA disable failed:** ${err.message}`), true);
   }
 });
 on(document.getElementById("authRegisterBtn"), "click", async () => {
@@ -3509,6 +4425,51 @@ on(document.getElementById("settingsRefreshTools"), "click", () => {
   refreshSettingsToolsHint();
   loadToolsStatus();
 });
+on(document.getElementById("apiKeyCreateBtn"), "click", async () => {
+  const nameEl = document.getElementById("apiKeyName");
+  const hint = document.getElementById("apiKeyCreatedHint");
+  const name = nameEl?.value?.trim() || "default";
+  try {
+    const res = await fetch("/api/auth/api-keys", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ name }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (hint) {
+      hint.classList.remove("hidden");
+      hint.innerHTML = `Created — copy now: <code>${escapeHtml(data.api_key || "")}</code>`;
+    }
+    if (nameEl) nameEl.value = "";
+    refreshApiKeysPanel();
+  } catch (err) {
+    if (hint) {
+      hint.classList.remove("hidden");
+      hint.textContent = err.message || "Create failed";
+    }
+  }
+});
+on(document.getElementById("auditRefreshBtn"), "click", () => refreshAuditPanel());
+on(document.getElementById("auditExportBtn"), "click", async () => {
+  try {
+    const res = await fetch("/api/audit/export", { headers: authHeaders() });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || `HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "securaiq-audit.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+    appendMessage("assistant", renderMarkdown("**Audit log exported** as CSV."), true);
+  } catch (err) {
+    appendMessage("assistant", renderMarkdown(`**Audit export failed:** ${err.message}`), true);
+  }
+});
 on(document.getElementById("setTheme"), "change", applyThemeFromSettings);
 if (settingsModal) {
   settingsModal.querySelectorAll("[data-close-settings]").forEach((el) => {
@@ -3524,7 +4485,10 @@ on(modeEl, "change", () => {
   // Only auto-enable expensive toggles for modes that need them (keeps default chat fast)
   if (webSearchEl) webSearchEl.checked = mode === "research";
   if (netAssessEl) netAssessEl.checked = mode === "assess";
-  if (localToolsEl) localToolsEl.checked = mode === "assess" || mode === "lab_offensive";
+  if (localToolsEl) {
+    localToolsEl.checked =
+      mode === "assess" || mode === "lab_offensive" || selectedTools.length > 0;
+  }
   renderQuickPrompts();
   const chat = getCurrentChat();
   if (chat) {
@@ -3594,6 +4558,7 @@ document.addEventListener("keydown", (e) => {
     else if (campaignModal && !campaignModal.classList.contains("hidden")) closeCampaign();
     else if (authModal && !authModal.classList.contains("hidden")) closeAuth();
     else if (settingsModal && !settingsModal.classList.contains("hidden")) closeSettings();
+    else if (composerWrapEl?.classList.contains("is-open")) closeAiAssistant();
     else closeSidebar();
   }
 });
@@ -3616,6 +4581,109 @@ setInterval(() => {
   if (currentView === "command") loadCommandCenter();
 }, 120000);
 resizeInput();
+
+/* ---- Notifications panel (bell icon) -------------------------------- */
+/* Backend: GET/POST /api/notifications — was previously unwired; notifBtn
+   just navigated to the SOC view and the badge was a client-side guess from
+   dashboard vuln/incident counts. This replaces the badge with the real
+   unread_count and gives the bell an actual dropdown list. */
+
+async function fetchNotifications() {
+  try {
+    const res = await fetch("/api/notifications?limit=30", { headers: authHeaders() });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+function setNotifBadge(count) {
+  const badge = document.getElementById("notifBadge");
+  if (!badge) return;
+  const n = Number(count || 0);
+  badge.hidden = n <= 0;
+  badge.textContent = String(Math.min(99, n));
+}
+
+function renderNotifList(data) {
+  const list = document.getElementById("notifList");
+  if (!list) return;
+  const items = data?.notifications || [];
+  if (!items.length) {
+    list.innerHTML = '<p class="notif-empty">No notifications yet.</p>';
+    return;
+  }
+  list.innerHTML = items
+    .map((n) => {
+      const time = n.created_at ? new Date(n.created_at * 1000).toLocaleString() : "";
+      return `<div class="notif-item ${n.read ? "" : "unread"}" data-id="${n.id}">
+        <div class="notif-title">${escapeHtml(n.title || "")}</div>
+        ${n.body ? `<div class="notif-body">${escapeHtml(n.body)}</div>` : ""}
+        <div class="notif-time">${escapeHtml(time)}</div>
+      </div>`;
+    })
+    .join("");
+  list.querySelectorAll(".notif-item").forEach((el) => {
+    el.addEventListener("click", async () => {
+      const id = el.getAttribute("data-id");
+      if (!el.classList.contains("unread")) return;
+      el.classList.remove("unread");
+      try {
+        await fetch(`/api/notifications/${id}/read`, { method: "POST", headers: authHeaders() });
+        const fresh = await fetchNotifications();
+        if (fresh) setNotifBadge(fresh.unread_count);
+      } catch {
+        /* badge just stays slightly stale — not worth surfacing an error for */
+      }
+    });
+  });
+}
+
+async function refreshNotifBadge() {
+  const data = await fetchNotifications();
+  if (data) setNotifBadge(data.unread_count);
+  return data;
+}
+
+async function toggleNotifPanel() {
+  const panel = document.getElementById("notifPanel");
+  if (!panel) return;
+  if (!panel.classList.contains("hidden")) {
+    panel.classList.add("hidden");
+    return;
+  }
+  panel.classList.remove("hidden");
+  const list = document.getElementById("notifList");
+  if (list) list.innerHTML = '<p class="hint">Loading…</p>';
+  const data = await fetchNotifications();
+  renderNotifList(data);
+  if (data) setNotifBadge(data.unread_count);
+}
+
+on(document.getElementById("notifBtn"), "click", (e) => {
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  toggleNotifPanel();
+});
+on(document.getElementById("notifMarkAllRead"), "click", async (e) => {
+  e.preventDefault();
+  try {
+    await fetch("/api/notifications/read-all", { method: "POST", headers: authHeaders() });
+    renderNotifList(await fetchNotifications());
+    setNotifBadge(0);
+  } catch {
+    /* ignore — user can retry */
+  }
+});
+document.addEventListener("click", (e) => {
+  const panel = document.getElementById("notifPanel");
+  const wrap = e.target.closest?.(".notif-wrap");
+  if (panel && !panel.classList.contains("hidden") && !wrap) panel.classList.add("hidden");
+});
+
+refreshNotifBadge();
+setInterval(refreshNotifBadge, 45000);
 
 async function loadToolsStatus() {
   if (!toolsStatusEl) return;
@@ -3644,11 +4712,12 @@ async function loadToolsStatus() {
 async function showWelcome() {
   if (emptyLeadEl) {
     emptyLeadEl.textContent =
-      "Start from an empty workspace — ask a question, import a scan, or open Mission Control.";
+      "Start from zero — ask a question, import a scan, or open Mission Control.";
   }
   syncEmptyState();
   renderChatList();
   updateChatTitle();
+  syncServerChats();
 }
 
 /* ops surfaces: /api/soc /api/reports /api/search /api/intel/watch /api/incidents */

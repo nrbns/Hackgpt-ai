@@ -48,6 +48,13 @@ CLOUD_PROVIDERS: dict[str, dict[str, Any]] = {
         "env_key": "fireworks_api_key",
         "best_for": "Fast open-source model inference",
     },
+    "huggingface_api": {
+        "label": "Hugging Face (Inference Providers)",
+        "base_url": "https://router.huggingface.co/v1",
+        "default_model": "meta-llama/Llama-3.1-8B-Instruct",
+        "env_key": "hf_token",
+        "best_for": "Hosted open models with one HF token (no local download)",
+    },
 }
 
 LOCAL_PROVIDERS = ("ollama", "openai_compat", "hermes", "huggingface", "unsloth")

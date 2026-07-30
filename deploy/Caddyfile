@@ -1,0 +1,27 @@
+# SecuraIQ — Caddy reverse proxy with automatic TLS (Let's Encrypt).
+# Caddy handles cert issuance/renewal for you — just point DNS at this host
+# and run: caddy run --config deploy/Caddyfile
+#
+# Replace securaiq.yourdomain.com with your real domain. A domain + DNS
+# pointed at this host is required — that part can't be done for you from
+# inside the app, it's a decision only you can make about your own infra.
+
+securaiq.yourdomain.com {
+	reverse_proxy 127.0.0.1:8080
+
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+	}
+
+	# SSE endpoints (chat streaming, /api/realtime) need buffering disabled
+	@sse path /api/chat /api/realtime /api/tools/run/stream
+	handle @sse {
+		reverse_proxy 127.0.0.1:8080 {
+			flush_interval -1
+		}
+	}
+}

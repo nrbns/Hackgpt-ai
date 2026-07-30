@@ -232,7 +232,37 @@ def create_vulnerability(user_id: str, item: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     c.commit()
-    return get_vulnerability(user_id, vid)  # type: ignore[return-value]
+    result = get_vulnerability(user_id, vid)
+
+    severity = (item.get("severity") or "medium").lower()
+    if severity in ("critical", "high"):
+        from app.notifications import notify
+
+        title = item.get("title") or "Untitled finding"
+        asset = item.get("asset_name") or "unknown"
+        cve = (item.get("cve") or "n/a").upper()
+
+        notify(
+            user_id,
+            "critical_vuln",
+            f"New {severity} vulnerability: {title}",
+            f"Asset: {asset} · CVE: {cve} · Source: {item.get('source') or 'import'}",
+            link=f"/api/vulnerabilities/{vid}",
+            email=(severity == "critical"),
+        )
+
+        if severity == "critical":
+            import asyncio
+
+            from app.connectors import slack, teams
+
+            alert_text = f"🔴 *Critical vulnerability*: {title}\nAsset: {asset} · CVE: {cve}"
+            if slack.is_configured():
+                asyncio.create_task(slack.send_message(alert_text))
+            if teams.is_configured():
+                asyncio.create_task(teams.send_message("Critical vulnerability", alert_text))
+
+    return result  # type: ignore[return-value]
 
 
 def get_vulnerability(user_id: str, vuln_id: str) -> dict[str, Any] | None:
@@ -280,6 +310,73 @@ def update_vulnerability(user_id: str, vuln_id: str, patch: dict[str, Any]) -> d
     get_conn().commit()
     audit("vuln_update", user_id, {"id": vuln_id, "status": data.get("status")})
     return get_vulnerability(user_id, vuln_id)
+
+
+def triage_vulnerability(
+    user_id: str,
+    vuln_id: str,
+    *,
+    owner: str = "SecOps",
+    create_ticket_hint: bool = False,
+) -> dict[str, Any]:
+    """Golden-path writeback: finding → risk + remediation + in_progress status."""
+    v = get_vulnerability(user_id, vuln_id)
+    if not v:
+        raise ValueError("Vulnerability not found")
+
+    sev = (v.get("severity") or "medium").lower()
+    impact = {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}.get(sev, 3)
+    likelihood = 4 if sev in {"critical", "high"} else 3
+    sla = {"critical": "24h", "high": "72h", "medium": "14d", "low": "30d"}.get(sev, "14d")
+    cve = (v.get("cve") or "").strip()
+    title = (v.get("title") or "Finding").strip()
+    threat = f"{cve + ' — ' if cve else ''}{title}"[:500]
+    asset = (v.get("asset_name") or "").strip()
+    own = (owner or v.get("owner") or "SecOps").strip() or "SecOps"
+
+    risk = create_risk(
+        user_id,
+        threat=threat,
+        vulnerability=cve or title[:200],
+        asset_name=asset,
+        asset_id=v.get("asset_id"),
+        impact=impact,
+        likelihood=likelihood,
+        owner=own,
+        mitigation=f"Triage from vulnerability {vuln_id}. Verify fix and re-scan.",
+        status="open",
+        engagement_id=v.get("engagement_id"),
+    )
+    rem = create_remediation(
+        user_id,
+        control_id="VM",
+        title=f"Remediate: {threat}"[:300],
+        owner=own,
+        due_date=sla,
+        recommendation=(
+            f"Prioritize {sev} finding on {asset or 'unknown asset'}. "
+            f"Validate patch/config, then close finding after verification scan."
+        ),
+        engagement_id=v.get("engagement_id"),
+    )
+    updated = update_vulnerability(
+        user_id,
+        vuln_id,
+        {"status": "in_progress", "owner": own, "sla_due": sla},
+    )
+    audit(
+        "vuln_triage",
+        user_id,
+        {"vuln_id": vuln_id, "risk_id": risk.get("id"), "remediation_id": rem.get("id")},
+    )
+    return {
+        "ok": True,
+        "vulnerability": updated,
+        "risk": risk,
+        "remediation": rem,
+        "create_ticket_hint": create_ticket_hint,
+        "workflow_step": "triaged",
+    }
 
 
 def import_vulnerabilities(
@@ -640,22 +737,63 @@ def enterprise_dashboard(user_id: str) -> dict[str, Any]:
 
     avg_risk = round(sum(r.get("risk_score") or 0 for r in open_risks) / max(len(open_risks), 1), 1)
 
-    # Security index (same weighting as UI)
-    compliance = float(gap.get("compliance_score") or 0)
-    security_index = max(
-        0,
-        min(
-            100,
-            round(
-                compliance * 0.55
-                + max(0, 100 - len(open_risks) * 4) * 0.2
-                + max(0, 100 - len(crit_vulns) * 8) * 0.15
-                + max(0, 100 - len(open_rems) * 2) * 0.1
-            ),
-        ),
+    frameworks = gap.get("frameworks") or []
+    is_empty = not any(
+        [
+            assets,
+            vulns,
+            risks,
+            remediations,
+            incidents,
+            campaigns,
+            playbooks,
+            intel_watch,
+            frameworks,
+            gap.get("assessment_count"),
+        ]
     )
 
-    frameworks = gap.get("frameworks") or []
+    # Security index — empty workspaces stay at 0 (not a fake mid-score from “no findings”)
+    compliance = float(gap.get("compliance_score") or 0)
+    if is_empty:
+        security_index = 0
+    else:
+        security_index = max(
+            0,
+            min(
+                100,
+                round(
+                    compliance * 0.55
+                    + max(0, 100 - len(open_risks) * 4) * 0.2
+                    + max(0, 100 - len(crit_vulns) * 8) * 0.15
+                    + max(0, 100 - len(open_rems) * 2) * 0.1
+                ),
+            ),
+        )
+
+    kpi_now = {
+        "index": security_index,
+        "comp": compliance,
+        "crit": len(crit_vulns),
+        "risks": len(open_risks),
+        "rems": len(open_rems),
+        "assets": len(assets),
+    }
+    kpi_trends = (
+        {"has_baseline": False, "security_index_delta": 0, "compliance_delta": 0, "vulns_delta": 0, "risks_delta": 0, "rems_delta": 0, "assets_delta": 0}
+        if is_empty
+        else _compute_kpi_trends(user_id, kpi_now)
+    )
+    if is_empty:
+        try:
+            from app.config import settings as _settings
+
+            snap = Path(_settings.data_dir) / "kpi_snaps" / f"{user_id}.json"
+            if snap.exists():
+                snap.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     primary_fw = frameworks[0] if frameworks else None
     org_name = "Local workspace"
     try:
@@ -681,6 +819,7 @@ def enterprise_dashboard(user_id: str) -> dict[str, Any]:
 
     return {
         **gap,
+        "is_empty": is_empty,
         "security_index": security_index,
         "risks_open": len(open_risks),
         "risks_total": len(risks),
@@ -735,16 +874,122 @@ def enterprise_dashboard(user_id: str) -> dict[str, Any]:
         },
         "incidents_open": len(open_incidents),
         "incidents_total": len(incidents),
+        "workflow": {
+            "imported": len(vulns),
+            "open": len(open_vulns),
+            "triaged": len(
+                [v for v in vulns if (v.get("status") or "") in {"in_progress", "triaged", "accepted"}]
+            ),
+            "actions": len(open_rems),
+            "closed": len([v for v in vulns if (v.get("status") or "") in {"closed", "resolved", "fixed"}]),
+            "risks": len(open_risks),
+        },
         "asset_breakdown": asset_breakdown,
         "timeline": timeline,
         "mitre_coverage": mitre,
         "framework_control_stats": control_stats,
-        "kpi_trends": {
-            "security_index_delta": 0,
-            "compliance_delta": 0,
-            "vulns_delta": 0,
-            "risks_delta": 0,
-        },
+        "kpi_trends": kpi_trends,
+        "morning_brief": _morning_brief(
+            org_name=org_name,
+            security_index=security_index,
+            compliance=compliance,
+            crit=len(crit_vulns),
+            risks=len(open_risks),
+            rems=len(open_rems),
+            incidents=len(open_incidents),
+            work_queue=work_queue,
+            framework=(primary_fw or {}).get("framework_id") or "",
+            is_empty=is_empty,
+        ),
+    }
+
+
+def _morning_brief(
+    *,
+    org_name: str,
+    security_index: int | float,
+    compliance: float,
+    crit: int,
+    risks: int,
+    rems: int,
+    incidents: int,
+    work_queue: list[dict[str, Any]],
+    framework: str,
+    is_empty: bool = False,
+) -> dict[str, Any]:
+    """Deterministic morning AI summary (no model call) for Mission Control home."""
+    hour = __import__("datetime").datetime.now().hour
+    hello = "Good morning" if hour < 12 else "Good afternoon" if hour < 17 else "Good evening"
+    if is_empty:
+        summary = (
+            f"{hello}. {org_name} starts at zero — no assets, findings, or assessments yet. "
+            "Import a scanner export or run gap analysis when you are ready."
+        )
+        attention = "Your workspace is empty by design."
+        next_step = "Import an authorized lab scan, add assets, or run a gap analysis."
+    elif crit == 0 and risks == 0 and incidents == 0 and not work_queue:
+        summary = (
+            f"{hello}. {org_name} is quiet — no critical findings or open incidents. "
+            "Import a scanner export or run gap analysis when you are ready."
+        )
+        attention = "Maintain baseline monitoring and keep evidence current."
+        next_step = "Connect integrations or import an authorized lab scan."
+    else:
+        top = (work_queue[0]["title"] if work_queue else "Triage critical findings")
+        summary = (
+            f"{hello}. Security score is {int(security_index)} with {compliance:.0f}% "
+            f"{(framework or 'compliance')}. "
+            f"Attention: {crit} critical/high, {risks} open risks, {incidents} incidents, "
+            f"{rems} open remediations."
+        )
+        attention = top
+        next_step = (
+            work_queue[0].get("ai")
+            if work_queue
+            else "Triage top vulnerabilities, assign owners, and link evidence."
+        )
+    return {
+        "greeting": hello,
+        "summary": summary,
+        "attention": attention,
+        "next_step": next_step,
+        "generated": "rules",  # model optional later
+    }
+
+
+def _compute_kpi_trends(user_id: str, current: dict[str, Any]) -> dict[str, Any]:
+    """Persist last KPI snapshot and return deltas for Mission Control trends."""
+    from app.config import settings
+
+    snap_dir = Path(settings.data_dir) / "kpi_snaps"
+    path = snap_dir / f"{user_id}.json"
+    prev: dict[str, Any] = {}
+    has_baseline = path.exists()
+    if has_baseline:
+        try:
+            prev = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            prev = {}
+            has_baseline = False
+    try:
+        snap_dir.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({**current, "at": now()}, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+    def delta(key: str) -> int:
+        if not has_baseline:
+            return 0
+        return int(round(float(current.get(key) or 0) - float(prev.get(key) or 0)))
+
+    return {
+        "has_baseline": has_baseline,
+        "security_index_delta": delta("index"),
+        "compliance_delta": delta("comp"),
+        "vulns_delta": delta("crit"),
+        "risks_delta": delta("risks"),
+        "rems_delta": delta("rems"),
+        "assets_delta": delta("assets"),
     }
 
 
@@ -769,6 +1014,9 @@ def _work_queue(
         mode: str = "ciso",
         prompt: str = "",
         workspace: str | None = None,
+        framework: str = "",
+        risk: str | int | float = "",
+        ai: str = "",
     ) -> None:
         items.append(
             {
@@ -782,6 +1030,9 @@ def _work_queue(
                 "mode": mode,
                 "prompt": prompt or title,
                 "workspace": workspace,
+                "framework": framework,
+                "risk": risk,
+                "ai": ai or "Ask AI for root cause, impact, and remediation steps.",
             }
         )
 
@@ -799,6 +1050,9 @@ def _work_queue(
             mode="ciso",
             prompt="Guide me through an ISO 27001 gap analysis with evidence mapping",
             workspace="frameworks",
+            framework="ISO 27001",
+            risk="Compliance drift",
+            ai="Map evidence to controls; run Gap analysis next.",
         )
     for v in vulns[:2]:
         add(
@@ -810,6 +1064,8 @@ def _work_queue(
             mode="blueteam",
             prompt=f"Draft remediation and verification for {v.get('cve') or ''} {v.get('title')}",
             workspace="vulns",
+            risk=v.get("severity") or "",
+            ai=f"Triage {v.get('cve') or 'finding'} → remediate → verify.",
         )
     if risks:
         top = risks[0]
@@ -822,6 +1078,8 @@ def _work_queue(
             mode="ciso",
             prompt=f"Draft mitigation plan for risk: {top.get('threat')}",
             workspace="risks",
+            risk=top.get("risk_score") or "",
+            ai="Reduce likelihood/impact; set residual score.",
         )
     for r in rems[:2]:
         add(
@@ -833,6 +1091,8 @@ def _work_queue(
             mode="ciso",
             prompt=f"Implementation checklist for {r.get('control_id')} — {r.get('title')}",
             workspace="remediations",
+            framework=str(r.get("framework_id") or r.get("control_id") or ""),
+            ai="Attach evidence and close when verified.",
         )
     # de-dupe by title, keep priority order high>medium>low
     order = {"high": 0, "medium": 1, "low": 2}
@@ -1116,8 +1376,41 @@ def reset_workspace(user_id: str, *, clear_rag: bool = False) -> dict[str, Any]:
         except Exception:
             counts[table] = counts.get(table, 0)
 
+    # Organizations owned / joined by this user
+    try:
+        from app.commercial_ext import ensure_org_schema
+
+        ensure_org_schema()
+        org_ids = [
+            r["org_id"]
+            for r in c.execute("SELECT org_id FROM org_members WHERE user_id = ?", (user_id,)).fetchall()
+        ]
+        cur = c.execute("DELETE FROM org_members WHERE user_id = ?", (user_id,))
+        counts["org_members"] = int(cur.rowcount or 0)
+        orgs_deleted = 0
+        for oid in org_ids:
+            left = c.execute("SELECT 1 FROM org_members WHERE org_id = ? LIMIT 1", (oid,)).fetchone()
+            if left:
+                continue
+            c.execute("DELETE FROM organizations WHERE id = ?", (oid,))
+            orgs_deleted += 1
+        counts["organizations"] = orgs_deleted
+    except Exception:
+        counts["organizations"] = counts.get("organizations", 0)
+
     c.commit()
     audit("workspace_reset", user_id, {"counts": counts, "clear_rag": clear_rag})
+
+    # Clear KPI trend baseline so empty UI does not show stale deltas
+    try:
+        from app.config import settings as _settings
+
+        snap = Path(_settings.data_dir) / "kpi_snaps" / f"{user_id}.json"
+        if snap.exists():
+            snap.unlink(missing_ok=True)
+            counts["kpi_snap"] = 1
+    except Exception:
+        pass
 
     rag_cleared = False
     if clear_rag:

@@ -25,6 +25,7 @@ from app.enterprise import (
     evidence_from_files,
     export_risk_markdown,
     export_vuln_markdown,
+    get_vulnerability,
     import_vulnerabilities,
     list_assets,
     list_campaigns,
@@ -32,6 +33,7 @@ from app.enterprise import (
     list_remediations,
     list_risks,
     list_vulnerabilities,
+    triage_vulnerability,
     update_asset,
     update_campaign,
     update_playbook,
@@ -172,16 +174,62 @@ async def dashboard(user: Annotated[AuthUser, Depends(require_user)]):
     return enterprise_dashboard(user.id)
 
 
+@router.get("/dashboard/brief")
+async def dashboard_brief(user: Annotated[AuthUser, Depends(require_user)]):
+    """Morning Mission Control brief (fast rules engine; model optional later)."""
+    ensure_gap_schema()
+    dash = enterprise_dashboard(user.id)
+    brief = dash.get("morning_brief") or {}
+    return {
+        "user": user.username,
+        "organization": (dash.get("mission_control") or {}).get("organization"),
+        "brief": brief,
+        "scores": {
+            "security": dash.get("security_index"),
+            "compliance": dash.get("compliance_score"),
+            "critical": dash.get("vulnerabilities_critical_high"),
+            "risks": dash.get("risks_open"),
+            "incidents": dash.get("incidents_open"),
+        },
+        "tasks": (dash.get("work_queue") or [])[:5],
+    }
+
+
 class WorkspaceResetRequest(BaseModel):
     clear_rag: bool = False
     confirm: bool = False
+    confirm_code: str | None = None
+
+
+@router.post("/workspace/reset/request-code")
+async def workspace_reset_request_code(user: Annotated[AuthUser, Depends(require_user)]):
+    """Step 1 of destructive-action approval: issues a one-time code delivered
+    via the in-app notification feed (GET /api/notifications) — never returned
+    here. See app/approvals.py for why a bare confirm:true boolean wasn't real
+    human approval."""
+    from app.approvals import request_approval
+
+    return request_approval(user.id, "workspace_reset", {})
 
 
 @router.post("/workspace/reset")
 async def workspace_reset(req: WorkspaceResetRequest, user: Annotated[AuthUser, Depends(require_user)]):
-    """Wipe operational data for the current user. Starts Mission Control from zero."""
-    if not req.confirm:
-        raise HTTPException(status_code=400, detail="Set confirm=true to reset workspace")
+    """Wipe operational data for the current user. Starts Mission Control from zero.
+
+    Requires a confirm_code from POST /workspace/reset/request-code (delivered
+    via notifications) — this is a real two-person-equivalent approval step,
+    not just a client-side confirm() dialog.
+    """
+    from app.approvals import verify_and_consume
+
+    if not req.confirm_code or not verify_and_consume(user.id, "workspace_reset", req.confirm_code):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Missing or invalid confirmation code. Call POST /api/workspace/reset/request-code first, "
+                "check your notifications for the code, then resubmit with confirm_code set."
+            ),
+        )
     from app.enterprise import reset_workspace
 
     return reset_workspace(user.id, clear_rag=req.clear_rag)
@@ -346,6 +394,65 @@ async def vulns_update(vuln_id: str, req: VulnUpdate, user: Annotated[AuthUser, 
     if not out:
         raise HTTPException(status_code=404, detail="Not found")
     return out
+
+
+class VulnTriage(BaseModel):
+    owner: str = "SecOps"
+    create_jira: bool = False
+
+
+@router.post("/vulnerabilities/{vuln_id}/triage")
+async def vulns_triage(vuln_id: str, req: VulnTriage, user: Annotated[AuthUser, Depends(require_user)]):
+    """Golden path: finding → risk + remediation (+ optional Jira)."""
+    try:
+        out = triage_vulnerability(user.id, vuln_id, owner=req.owner, create_ticket_hint=req.create_jira)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    jira = None
+    if req.create_jira:
+        try:
+            from app.commercial_ext import jira_create_issue
+
+            rem = out.get("remediation") or {}
+            v = out.get("vulnerability") or {}
+            summary = f"[SecuraIQ] {v.get('cve') or ''} {v.get('title') or rem.get('title')}".strip()[:255]
+            jira = await jira_create_issue(
+                summary=summary,
+                description=(
+                    f"Auto-triaged from vulnerability `{vuln_id}`.\n\n"
+                    f"Severity: {v.get('severity')}\n"
+                    f"Asset: {v.get('asset_name') or '—'}\n"
+                    f"Risk id: {(out.get('risk') or {}).get('id')}\n"
+                    f"Remediation id: {rem.get('id')}\n"
+                ),
+            )
+            out["jira"] = jira
+        except Exception as exc:
+            out["jira_error"] = str(exc)
+    return out
+
+
+@router.post("/vulnerabilities/{vuln_id}/jira")
+async def vulns_jira(vuln_id: str, user: Annotated[AuthUser, Depends(require_user)]):
+    v = get_vulnerability(user.id, vuln_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        from app.commercial_ext import jira_create_issue
+
+        summary = f"[SecuraIQ] {v.get('cve') or ''} — {v.get('title')}".strip()[:255]
+        return await jira_create_issue(
+            summary=summary,
+            description=(
+                f"Vulnerability `{vuln_id}`\n"
+                f"Severity: {v.get('severity')}\n"
+                f"Asset: {v.get('asset_name') or '—'}\n"
+                f"Source: {v.get('source') or '—'}\n"
+            ),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/gap/remediations")
