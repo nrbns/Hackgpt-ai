@@ -35,6 +35,10 @@ _worker_task: asyncio.Task | None = None
 _scheduler_task: asyncio.Task | None = None
 
 KEV_SYNC_INTERVAL_SEC = 6 * 3600  # matches the 12h KEV cache TTL with margin
+_SCHEDULER_TICK_SEC = 300  # poll granularity; each job kind tracks its own interval below
+_last_kev_sync = 0.0
+_last_xdr_sync = 0.0
+_last_wazuh_sync = 0.0
 
 
 def register_job(kind: str):
@@ -47,15 +51,32 @@ def register_job(kind: str):
     return _wrap
 
 
-def enqueue_job(kind: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def enqueue_job(
+    kind: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    engine: str = "auto",
+) -> dict[str, Any]:
     if kind not in JOB_HANDLERS:
         raise ValueError(f"Unknown job kind '{kind}'. Registered: {sorted(JOB_HANDLERS)}")
+    body = dict(payload or {})
+    eng = (engine or "auto").lower().strip()
+    if eng == "auto":
+        try:
+            from app.prefect_bridge import prefect_status
+
+            eng = "prefect" if prefect_status().get("ready") else "local"
+        except Exception:
+            eng = "local"
+    if eng not in ("local", "prefect"):
+        raise ValueError("engine must be local, prefect, or auto")
+    body["_engine"] = eng
     jid = new_id()
     c = get_conn()
     c.execute(
         "INSERT INTO jobs (id, kind, status, payload_json, result_json, error, created_at) "
         "VALUES (?, ?, 'pending', ?, '{}', '', ?)",
-        (jid, kind, json.dumps(payload or {}), now()),
+        (jid, kind, json.dumps(body), now()),
     )
     c.commit()
     if _queue is not None:
@@ -116,7 +137,15 @@ async def _run_one(job_id: str) -> None:
         if not handler:
             raise ValueError(f"No handler registered for kind '{job['kind']}'")
         payload = json.loads(job.get("payload_json") or "{}")
-        result = await handler(payload)
+        engine = (payload.pop("_engine", None) or "local").lower()
+        if engine == "prefect":
+            from app.prefect_bridge import run_kind_via_prefect
+
+            result = await run_kind_via_prefect(job["kind"], payload)
+        else:
+            result = await handler(payload)
+            if isinstance(result, dict):
+                result = {**result, "engine": "local"}
         c.execute(
             "UPDATE jobs SET status='done', result_json=?, finished_at=? WHERE id=?",
             (json.dumps(result or {}), now(), job_id),
@@ -143,13 +172,49 @@ async def _worker_loop() -> None:
 async def _scheduler_loop() -> None:
     # Stagger first run slightly so it doesn't compete with app startup.
     await asyncio.sleep(15)
+    global _last_kev_sync, _last_xdr_sync, _last_wazuh_sync
     while True:
+        now_t = time.time()
         try:
-            if "kev_sync" in JOB_HANDLERS and not _has_pending_or_running("kev_sync"):
+            if (
+                "kev_sync" in JOB_HANDLERS
+                and now_t - _last_kev_sync >= KEV_SYNC_INTERVAL_SEC
+                and not _has_pending_or_running("kev_sync")
+            ):
+                _last_kev_sync = now_t
                 enqueue_job("kev_sync", {"scheduled": True})
         except Exception:
             pass
-        await asyncio.sleep(KEV_SYNC_INTERVAL_SEC)
+        try:
+            from app.config import settings
+
+            interval = max(300, int(settings.xdr_sync_interval_sec))
+            if (
+                "xdr_sync" in JOB_HANDLERS
+                and now_t - _last_xdr_sync >= interval
+                and not _has_pending_or_running("xdr_sync")
+            ):
+                _last_xdr_sync = now_t
+                enqueue_job("xdr_sync", {"scheduled": True})
+        except Exception:
+            pass
+        try:
+            from app.config import settings
+
+            from app.connectors import wazuh as wazuh_conn
+
+            w_interval = max(300, int(getattr(settings, "wazuh_sync_interval_sec", 1800) or 1800))
+            if (
+                "wazuh_sync" in JOB_HANDLERS
+                and wazuh_conn.is_configured()
+                and now_t - _last_wazuh_sync >= w_interval
+                and not _has_pending_or_running("wazuh_sync")
+            ):
+                _last_wazuh_sync = now_t
+                enqueue_job("wazuh_sync", {"scheduled": True})
+        except Exception:
+            pass
+        await asyncio.sleep(_SCHEDULER_TICK_SEC)
 
 
 def start_background_jobs() -> None:
@@ -195,6 +260,28 @@ async def _job_kev_sync(payload: dict[str, Any]) -> dict[str, Any]:
     t0 = time.time()
     feed = await fetch_cisa_kev(limit=payload.get("limit", 50))
     return {"count": feed.get("count"), "cached": feed.get("cached"), "duration_sec": round(time.time() - t0, 2)}
+
+
+@register_job("xdr_sync")
+async def _job_xdr_sync(payload: dict[str, Any]) -> dict[str, Any]:
+    """Poll all configured XDR/EDR vendors and ingest new detections/patch gaps."""
+    from app.xdr import sync_all
+
+    t0 = time.time()
+    result = await sync_all(payload.get("user_id", "local"))
+    result["duration_sec"] = round(time.time() - t0, 2)
+    return result
+
+
+@register_job("wazuh_sync")
+async def _job_wazuh_sync(payload: dict[str, Any]) -> dict[str, Any]:
+    """Pull Wazuh agents + alerts into SecuraIQ (authorized manager/indexer)."""
+    from app.wazuh import sync as wazuh_sync
+
+    t0 = time.time()
+    result = await wazuh_sync(payload.get("user_id", "local"))
+    result["duration_sec"] = round(time.time() - t0, 2)
+    return result
 
 
 @register_job("report_export")

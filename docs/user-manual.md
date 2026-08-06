@@ -23,19 +23,23 @@ Authorized AI Security OS for labs, owned systems, CTFs, blue-team workflows, an
 
 ## 2. Start the application
 
+No manual `.env` setup is required. The scripts create `.venv`, install deps, and copy `.env.example` → `.env` if needed. Optional keys (models, Jira, Wazuh) can be set later in **Settings**.
+
 ### Windows
 
 ```powershell
 .\scripts\run_proper.ps1
 ```
 
-Quick start: `.\scripts\start.ps1`
+Already installed once? `.\scripts\start.ps1`
 
 ### Linux / macOS
 
 ```bash
 bash scripts/run_proper.sh
 ```
+
+Already installed once? `bash scripts/start.sh`
 
 Then open **http://127.0.0.1:8080**.
 

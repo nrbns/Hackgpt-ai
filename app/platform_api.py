@@ -21,6 +21,7 @@ from app.enterprise import (
 )
 from app.free_security_apis import (
     catalog_summary,
+    check_password_pwned,
     generate_password,
     lookup_filterlists,
     lookup_greynoise,
@@ -143,9 +144,28 @@ async def intel_uk_police(user: Annotated[AuthUser, Depends(require_user)]):
         raise HTTPException(status_code=502, detail=f"UK Police API unavailable: {exc}") from exc
 
 
+class PasswordCheckBody(BaseModel):
+    password: str = Field(..., min_length=1, max_length=256)
+
+
 @router.get("/intel/password")
 async def intel_password(user: Annotated[AuthUser, Depends(require_user)], length: int = 16):
+    """Generate a random password locally (does not check exposure)."""
     return await generate_password(length=length)
+
+
+@router.post("/intel/password/check")
+async def intel_password_check(
+    user: Annotated[AuthUser, Depends(require_user)],
+    body: PasswordCheckBody,
+):
+    """Check password exposure via HIBP k-anonymity. Send password in JSON body only — never as a query param."""
+    try:
+        return await check_password_pwned(body.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Password check unavailable: {exc}") from exc
 
 
 @router.get("/reports/risks.xlsx")

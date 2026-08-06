@@ -6,6 +6,7 @@ data/chroma/
 data/*.db
 data/*.db-*
 data/uploads/
+data/kpi_snaps/
 tools/ollama/
 chat_test_output.txt
 *.log

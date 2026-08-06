@@ -39,6 +39,7 @@ from app.prompts import (
     THINKING_QUALITY_PROMPT,
     THREAT_HUNT_MODE_PROMPT,
     TOOLS_BEHAVIOR_PROMPT,
+    XDR_MODE_PROMPT,
 )
 from app.auth import resolve_user
 from app.backends import hermes_reachable, openai_compat_reachable
@@ -50,6 +51,8 @@ from app.ops_api import router as ops_router
 from app.commercial_ext_api import router as commercial_ext_router
 from app.platform_api import router as platform_router
 from app.billing_api import router as billing_router
+from app.xdr_api import router as xdr_router
+from app.wazuh_api import router as wazuh_router
 from app.commercial_ext import ensure_org_schema
 from app.gap_analysis import ensure_gap_schema
 from app.db import init_schema
@@ -101,6 +104,12 @@ async def lifespan(app: FastAPI):
         ensure_intel_cache_schema()
     except Exception as exc:
         print(f"DB/auth bootstrap: {exc}")
+    try:
+        from app.enterprise import apply_workspace_zero_start
+
+        apply_workspace_zero_start()
+    except Exception as exc:
+        print(f"Workspace zero-start skipped: {exc}")
     try:
         # Knowledge index is opt-in (Re-index) so first boot stays empty / fast
         if getattr(settings, "rag_auto_ingest", False):
@@ -195,6 +204,8 @@ app.include_router(ops_router)
 app.include_router(commercial_ext_router)
 app.include_router(platform_router)
 app.include_router(billing_router)
+app.include_router(xdr_router)
+app.include_router(wazuh_router)
 
 _PUBLIC_API_PREFIXES = (
     "/api/auth/login",
@@ -250,6 +261,7 @@ class ChatRequest(BaseModel):
         "awareness",
         "purple",
         "threat_hunt",
+        "xdr",
         "ir",
         "cloud",
         "appsec",
@@ -328,6 +340,7 @@ MODE_RAG_TOP_K = {
     "awareness": 5,
     "purple": 5,
     "threat_hunt": 5,
+    "xdr": 5,
     "ir": 5,
     "cloud": 5,
     "appsec": 5,
@@ -347,6 +360,7 @@ MODE_PROMPTS = {
     "awareness": AWARENESS_MODE_PROMPT,
     "purple": PURPLE_MODE_PROMPT,
     "threat_hunt": THREAT_HUNT_MODE_PROMPT,
+    "xdr": XDR_MODE_PROMPT,
     "ir": IR_MODE_PROMPT,
     "cloud": CLOUD_MODE_PROMPT,
     "appsec": APPSEC_MODE_PROMPT,
@@ -432,6 +446,12 @@ QUICK_PROMPTS = {
         "Sigma pack for unusual service creation",
         "Hunt for Pass-the-Hash indicators in Windows logs",
     ],
+    "xdr": [
+        "Correlate an EDR ransomware staging alert with identity and email signals",
+        "XDR triage: suspicious PowerShell + unusual OAuth consent on same user",
+        "Build an attack chain from host, IP, and hash IOCs in our SOC queue",
+        "False-positive tuning for noisy XDR lateral-movement detections",
+    ],
     "ir": [
         "Ransomware detected on one finance laptop — first 60 minutes",
         "Business email compromise playbook for M365",
@@ -508,6 +528,7 @@ async def _iter_build_messages(req: ChatRequest, user_id: str = "local"):
         "ciso",
         "awareness",
         "threat_hunt",
+        "xdr",
         "cloud",
         "appsec",
         "ir",
@@ -564,6 +585,7 @@ async def _iter_build_messages(req: ChatRequest, user_id: str = "local"):
         "blueteam",
         "purple",
         "threat_hunt",
+        "xdr",
         "ir",
         "cloud",
         "appsec",
@@ -954,15 +976,17 @@ async def api_tools_run_stream(req: ToolsRunRequest):
 
 
 class JobEnqueueRequest(BaseModel):
-    kind: Literal["kev_sync", "report_export"]
+    kind: Literal["kev_sync", "report_export", "xdr_sync", "wazuh_sync"]
     payload: dict[str, Any] = Field(default_factory=dict)
+    engine: Literal["auto", "local", "prefect"] = "auto"
 
 
 @app.get("/api/jobs")
 async def jobs_list(limit: int = 50, kind: str | None = None):
     from app.jobs import list_jobs
+    from app.prefect_bridge import prefect_status
 
-    return {"jobs": list_jobs(limit=limit, kind=kind)}
+    return {"jobs": list_jobs(limit=limit, kind=kind), "prefect": prefect_status()}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -987,9 +1011,16 @@ async def jobs_enqueue(req: JobEnqueueRequest, request: Request):
     if req.kind == "report_export":
         payload.setdefault("user_id", user.id if user else "local")
     try:
-        return enqueue_job(req.kind, payload)
+        return enqueue_job(req.kind, payload, engine=req.engine)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/prefect/status")
+async def prefect_status_api():
+    from app.prefect_bridge import prefect_status
+
+    return prefect_status()
 
 
 @app.get("/api/finetune")

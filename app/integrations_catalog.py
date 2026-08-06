@@ -23,8 +23,9 @@ MVP_STACK: list[dict[str, str]] = [
     {"category": "IaC", "tool": "Checkov", "status": "import"},
     {"category": "DAST", "tool": "OWASP ZAP + Nuclei", "status": "path+import"},
     {"category": "Threat intel", "tool": "MITRE + NVD + CISA KEV", "status": "shipped"},
-    {"category": "SIEM", "tool": "Wazuh", "status": "planned"},
+    {"category": "SIEM", "tool": "Wazuh", "status": "shipped"},
     {"category": "Automation", "tool": "n8n via webhooks", "status": "shipped"},
+    {"category": "Automation", "tool": "Prefect job flows", "status": "shipped"},
     {"category": "Case mgmt", "tool": "TheHive", "status": "planned"},
     {"category": "Identity", "tool": "Keycloak / Authentik (OIDC)", "status": "shipped"},
     {"category": "Database", "tool": "SQLite now → PostgreSQL", "status": "partial"},
@@ -105,15 +106,20 @@ CATALOG: list[dict[str, Any]] = [
     {"id": "urlhaus", "name": "URLhaus", "category": "intel", "status": "partial", "hint": "Set URLHAUS_API_KEY"},
     {"id": "emailrep", "name": "EmailRep", "category": "intel", "status": "partial", "hint": "Set EMAILREP_API_KEY"},
     # SIEM / SOAR / IR / EDR
-    {"id": "wazuh", "name": "Wazuh", "category": "siem", "status": "planned"},
+    {"id": "wazuh", "name": "Wazuh", "category": "siem", "status": "shipped", "hint": "Set WAZUH_BASE_URL / USER / PASSWORD — sync agents + alerts on SOC"},
     {"id": "elastic", "name": "Elastic Stack", "category": "siem", "status": "planned"},
     {"id": "graylog", "name": "Graylog", "category": "siem", "status": "planned"},
     {"id": "security_onion", "name": "Security Onion", "category": "siem", "status": "planned"},
     {"id": "shuffle", "name": "Shuffle", "category": "soar", "status": "planned"},
     {"id": "stackstorm", "name": "StackStorm", "category": "soar", "status": "planned"},
     {"id": "n8n", "name": "n8n", "category": "soar", "status": "shipped", "hint": "Outbound webhooks"},
+    {"id": "prefect", "name": "Prefect", "category": "soar", "status": "shipped", "hint": "Optional PREFECT_ENABLED — wraps kev_sync / xdr_sync / report_export flows"},
     {"id": "thehive", "name": "TheHive", "category": "ir", "status": "planned"},
     {"id": "cortex", "name": "Cortex", "category": "ir", "status": "planned"},
+    {"id": "sophos", "name": "Sophos Central", "category": "edr", "status": "shipped", "hint": "Set SOPHOS_CLIENT_ID/SOPHOS_CLIENT_SECRET — alerts ingested via GET /api/xdr/status"},
+    {"id": "crowdstrike", "name": "CrowdStrike Falcon", "category": "edr", "status": "shipped", "hint": "Set CROWDSTRIKE_CLIENT_ID/CROWDSTRIKE_CLIENT_SECRET — detections ingested via GET /api/xdr/status"},
+    {"id": "sentinelone", "name": "SentinelOne", "category": "edr", "status": "shipped", "hint": "Set SENTINELONE_API_TOKEN/SENTINELONE_BASE_URL — threats ingested via GET /api/xdr/status"},
+    {"id": "defender_endpoint", "name": "Microsoft Defender for Endpoint", "category": "edr", "status": "shipped", "hint": "Set DEFENDER_TENANT_ID/DEFENDER_CLIENT_ID/DEFENDER_CLIENT_SECRET — alerts + missing-patch (TVM) data"},
     {"id": "velociraptor", "name": "Velociraptor", "category": "edr", "status": "planned"},
     {"id": "osquery", "name": "Osquery", "category": "edr", "status": "planned"},
     # Cloud
@@ -245,6 +251,10 @@ def resolve_ui_action(item: dict[str, Any]) -> dict[str, str]:
         and cat in {"sast", "sca", "secrets", "iac", "dast", "vuln_mgmt", "container"}
     ):
         return {"kind": "workspace", "target": "vulns", "label": "Import scan"}
+    if cat == "edr" and status == "shipped":
+        return {"kind": "workspace", "target": "soc", "label": "Open SOC"}
+    if iid == "wazuh" or (cat == "siem" and status == "shipped"):
+        return {"kind": "settings", "label": "Configure Wazuh", "focus": "wazuh"}
     if iid in INTEL_IDS or cat == "intel":
         return {"kind": "workspace", "target": "intel", "label": "Open intel"}
     if cat == "compliance":
@@ -304,7 +314,8 @@ def catalog_payload() -> dict[str, Any]:
             {"id": "audit", "name": "Audit logs", "status": "shipped"},
             {"id": "api_keys", "name": "API keys", "status": "shipped"},
             {"id": "webhooks", "name": "Webhooks", "status": "shipped"},
-            {"id": "automation", "name": "Workflow automation", "status": "partial"},
+            {"id": "automation", "name": "Workflow automation", "status": "shipped"},
+            {"id": "prefect", "name": "Prefect orchestration", "status": "shipped"},
             {"id": "report_schedules", "name": "Report scheduling", "status": "planned"},
             {"id": "white_label", "name": "White-labeling", "status": "planned"},
             {"id": "orgs", "name": "Organization & projects", "status": "shipped"},
@@ -322,6 +333,7 @@ def catalog_payload() -> dict[str, Any]:
         "groups": groups,
         "agents": [
             {"name": "SOC Analyst", "mode": "blueteam", "prompt": "Act as SOC Analyst: summarize open incidents and critical vulns, recommend next 3 actions"},
+            {"name": "XDR Analyst", "mode": "xdr", "prompt": "Act as XDR Analyst: correlate endpoint, identity, email, and network signals for our open critical findings into an attack chain with verdict and response steps"},
             {"name": "Threat Hunter", "mode": "threat_hunt", "prompt": "Act as Threat Hunter: prioritize hunts from our critical findings and intel watchlist"},
             {"name": "Malware Analyst", "mode": "blueteam", "prompt": "Act as Malware Analyst: outline a safe sandboxed triage workflow for a suspicious sample (authorized lab only)"},
             {"name": "Compliance Officer", "mode": "ciso", "prompt": "Act as Compliance Officer: review framework gaps and evidence needed this week"},
@@ -355,6 +367,8 @@ def _mvp_ui_action(m: dict[str, str]) -> dict[str, str]:
         return {"kind": "workspace", "target": "intel", "label": "Open"}
     if cat == "ai" or "ollama" in tool or "openrouter" in tool:
         return {"kind": "settings", "label": "AI settings", "focus": "ai"}
+    if "wazuh" in tool or cat == "siem":
+        return {"kind": "settings", "label": "Configure", "focus": "wazuh"}
     if status in ACTIONABLE_STATUSES:
         return {"kind": "info", "label": "Available"}
     return {"kind": "planned", "label": "Planned"}

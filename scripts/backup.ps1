@@ -1,4 +1,4 @@
-# SecuraIQ backup (Windows) — copies SQLite DB + chroma index + uploads.
+# SecuraIQ backup (Windows) - copies SQLite DB + chroma index + uploads.
 # Usage: .\scripts\backup.ps1 [-BackupRoot backups]
 param(
     [string]$BackupRoot = "backups"
@@ -18,11 +18,11 @@ if (Test-Path $DbPath) {
     if ($sqlite3) {
         & sqlite3 $DbPath ".backup '$OutDir\securaiq.db'"
     } else {
-        Write-Warning "sqlite3 CLI not found — falling back to a plain file copy (stop the app first to avoid a WAL-inconsistent copy)."
+        Write-Warning "sqlite3 CLI not found - falling back to a plain file copy (stop the app first to avoid a WAL-inconsistent copy)."
         Copy-Item $DbPath (Join-Path $OutDir "securaiq.db")
     }
 } else {
-    Write-Warning "$DbPath not found — skipping DB backup."
+    Write-Warning "$DbPath not found - skipping DB backup."
 }
 
 $ChromaDir = Join-Path $DataDir "chroma"
@@ -37,5 +37,5 @@ if (Test-Path $UploadsDir) {
     Compress-Archive -Path $UploadsDir -DestinationPath (Join-Path $OutDir "uploads.zip") -Force
 }
 
-Write-Host "NOTE: .env (secrets) is intentionally NOT included — back it up separately."
+Write-Host "NOTE: .env (secrets) is intentionally NOT included - back it up separately."
 Write-Host "Backup complete: $OutDir"

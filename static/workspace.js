@@ -1069,16 +1069,21 @@
     qs("intelFeedMsrc")?.addEventListener("click", () => showIntelFeed("/api/intel/msrc", "MSRC"));
     qs("intelFeedFilterlists")?.addEventListener("click", () => showIntelFeed("/api/intel/filterlists", "FilterLists"));
     qs("intelFeedPassword")?.addEventListener("click", async () => {
-      const pwd = prompt("Check password exposure (uses k-anonymity API — not stored):");
+      const pwd = prompt("Check password exposure (HIBP k-anonymity — not stored or shown):");
       if (!pwd) return;
       const out = qs("intelFeedOut");
       if (!out) return;
       out.classList.remove("hidden");
       out.textContent = "Checking…";
-      const res = await fetch(`/api/intel/password?password=${encodeURIComponent(pwd)}`, { headers: authHeaders() });
+      // POST body only — never put passwords in the URL/query string
+      const res = await fetch("/api/intel/password/check", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pwd }),
+      });
       const data = await res.json().catch(() => ({}));
       out.textContent = res.ok
-        ? `Exposed: ${data.exposed ? "yes" : "no"} · count: ${data.count ?? 0}`
+        ? `Exposed: ${data.exposed ? "yes" : "no"} · breach count: ${data.count ?? 0}\n${data.note || ""}`
         : data.detail || `HTTP ${res.status}`;
     });
   }
@@ -1224,11 +1229,139 @@
     });
   }
 
+  async function renderXdrPanel() {
+    const el = qs("xdrPanelBody");
+    if (!el) return;
+    try {
+      const [statusRes, detRes, patchRes] = await Promise.all([
+        fetch("/api/xdr/status", { headers: authHeaders() }),
+        fetch("/api/xdr/detections?limit=8", { headers: authHeaders() }),
+        fetch("/api/xdr/patches", { headers: authHeaders() }),
+      ]);
+      const statusData = await statusRes.json();
+      const detData = await detRes.json();
+      const patchData = await patchRes.json();
+      const vendors = statusData.vendors || {};
+      const vendorLabels = { sophos: "Sophos", crowdstrike: "CrowdStrike", sentinelone: "SentinelOne", defender: "Defender" };
+      const vendorChips = `<ul class="integ-status-list">${Object.entries(vendors)
+        .map(
+          ([id, v]) =>
+            `<li class="${v.configured ? "ok" : "muted"}"><span>${escapeHtml(vendorLabels[id] || id)}</span><strong>${
+              v.configured ? "Connected" : "Not configured"
+            }</strong></li>`
+        )
+        .join("")}</ul>`;
+      const anyConfigured = Object.values(vendors).some((v) => v.configured);
+      const events = detData.events || [];
+      const eventsHtml = events.length
+        ? events
+            .map(
+              (e) =>
+                `<li><strong>${escapeHtml(e.severity)}</strong> [${escapeHtml(e.vendor)}] ${escapeHtml(e.title)}${
+                  e.host ? ` — <code>${escapeHtml(e.host)}</code>` : ""
+                }</li>`
+            )
+            .join("")
+        : `<li class="hint">${anyConfigured ? "No detections synced yet" : "Connect an EDR vendor in Settings to see live detections here"}</li>`;
+      const patchTotal = patchData.total_missing_patches || 0;
+      el.innerHTML = `
+        ${vendorChips}
+        <div class="cc-kpi-grid" style="margin:0.5rem 0">
+          <article class="cc-kpi"><span>Missing patches (open)</span><strong>${patchTotal}</strong></article>
+          <article class="cc-kpi"><span>Hosts with patch gaps</span><strong>${patchData.hosts_with_gaps || 0}</strong></article>
+        </div>
+        <p class="hint">Recent detections</p>
+        <ul class="cc-list">${eventsHtml}</ul>
+        <p class="hint">Set vendor credentials in Settings (Sophos/CrowdStrike/SentinelOne/Defender) — detections and missing-patch data sync automatically every ${Math.round(
+          (window.__xdrIntervalSec || 1800) / 60
+        )} min, or click "Sync now".</p>`;
+    } catch (err) {
+      el.innerHTML = `<p class="hint">XDR panel unavailable: ${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  async function renderWazuhPanel() {
+    const el = qs("wazuhPanelBody");
+    if (!el) return;
+    try {
+      const [stRes, agRes, alRes] = await Promise.all([
+        fetch("/api/wazuh/status", { headers: authHeaders() }),
+        fetch("/api/wazuh/agents?limit=12", { headers: authHeaders() }),
+        fetch("/api/wazuh/alerts?limit=8", { headers: authHeaders() }),
+      ]);
+      const st = await stRes.json().catch(() => ({}));
+      const ag = await agRes.json().catch(() => ({}));
+      const al = await alRes.json().catch(() => ({}));
+      const ping = st.ping || {};
+      const agents = ag.agents || [];
+      const events = al.events || [];
+      const statusChip = st.configured
+        ? ping.ok
+          ? `<span class="auto-job-status status-done">connected</span>`
+          : `<span class="auto-job-status status-error">auth/error</span>`
+        : `<span class="auto-job-status status-planned">not configured</span>`;
+      const agentsHtml = agents.length
+        ? agents
+            .map(
+              (a) =>
+                `<li><strong>${escapeHtml(a.status || "?")}</strong> ${escapeHtml(a.name || a.agent_id || "")}
+                ${a.ip ? ` · <code>${escapeHtml(a.ip)}</code>` : ""}
+                ${a.os ? ` · ${escapeHtml(a.os)}` : ""}</li>`
+            )
+            .join("")
+        : `<li class="hint">${st.configured ? "No agents synced yet — click Sync Wazuh" : "Set Wazuh credentials in Settings"}</li>`;
+      const alertsHtml = events.length
+        ? events
+            .map(
+              (e) =>
+                `<li><strong>${escapeHtml(e.severity)}</strong> ${escapeHtml(e.title || "")}${
+                  e.host ? ` — <code>${escapeHtml(e.host)}</code>` : ""
+                }</li>`
+            )
+            .join("")
+        : `<li class="hint">${
+            st.configured
+              ? st.indexer_configured
+                ? "No alerts yet"
+                : "No Indexer — showing agent/vuln signals after sync"
+              : "Configure Wazuh to pull SIEM data"
+          }</li>`;
+      el.innerHTML = `
+        <p>${statusChip}
+          ${st.base_url ? `<span class="hint">${escapeHtml(st.base_url)}</span>` : ""}
+          ${st.indexer_configured ? '<span class="hint">Indexer on</span>' : '<span class="hint">Indexer off</span>'}
+          ${ping.api_version ? `<span class="hint">API ${escapeHtml(ping.api_version)}</span>` : ""}
+          ${ping.error && st.configured ? `<span class="hint">${escapeHtml(ping.error)}</span>` : ""}
+        </p>
+        <div class="ws-grid-2">
+          <div>
+            <p class="hint">Agents (${agents.length})</p>
+            <ul class="cc-list">${agentsHtml}</ul>
+          </div>
+          <div>
+            <p class="hint">Recent Wazuh events</p>
+            <ul class="cc-list">${alertsHtml}</ul>
+          </div>
+        </div>
+        <p class="hint">Settings → Wazuh SIEM. Optional Indexer URL enables full alert search on wazuh-alerts*.</p>`;
+    } catch (err) {
+      el.innerHTML = `<p class="hint">Wazuh panel unavailable: ${escapeHtml(err.message)}</p>`;
+    }
+  }
+
   async function renderSocPage() {
     const body = qs("socPageBody");
     if (!body) return;
-    const res = await fetch("/api/soc", { headers: authHeaders() });
-    const data = await res.json();
+    body.innerHTML = `<p class="hint">Loading…</p>`;
+    let data = {};
+    try {
+      const res = await fetch("/api/soc", { headers: authHeaders() });
+      data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `SOC failed (${res.status})`);
+    } catch (err) {
+      body.innerHTML = `<p class="hint">Could not load SOC: ${escapeHtml(err.message || String(err))}</p>`;
+      return;
+    }
     const incidents = data.incidents || [];
     const alerts = data.alerts || [];
     body.innerHTML = `
@@ -1269,7 +1402,46 @@
             <button type="submit">Create</button>
           </form>
         </section>
-      </div>`;
+      </div>
+      <section class="cc-panel" id="xdrPanel" style="margin-top:1rem">
+        <header><h2>XDR / EDR</h2><button type="button" class="btn-secondary" id="xdrSyncBtn">Sync now</button></header>
+        <div id="xdrPanelBody"><p class="hint">Loading…</p></div>
+      </section>
+      <section class="cc-panel" id="wazuhPanel" style="margin-top:1rem">
+        <header><h2>Wazuh SIEM</h2><button type="button" class="btn-secondary" id="wazuhSyncBtn">Sync Wazuh</button></header>
+        <div id="wazuhPanelBody"><p class="hint">Loading…</p></div>
+      </section>`;
+    renderXdrPanel();
+    renderWazuhPanel();
+    qs("xdrSyncBtn")?.addEventListener("click", async () => {
+      const btn = qs("xdrSyncBtn");
+      if (btn) { btn.disabled = true; btn.textContent = "Syncing…"; }
+      try {
+        await fetch("/api/xdr/sync", { method: "POST", headers: authHeaders() });
+      } catch {
+        /* job runs async */
+      }
+      setTimeout(renderXdrPanel, 2500);
+      if (btn) { btn.disabled = false; btn.textContent = "Sync now"; }
+    });
+    qs("wazuhSyncBtn")?.addEventListener("click", async () => {
+      const btn = qs("wazuhSyncBtn");
+      if (btn) { btn.disabled = true; btn.textContent = "Syncing…"; }
+      try {
+        const res = await fetch("/api/wazuh/sync", { method: "POST", headers: authHeaders() });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok && typeof notifyUser === "function") {
+          notifyUser(`**Wazuh sync failed:** ${data.detail || res.status}`);
+        } else if (typeof notifyUser === "function") {
+          notifyUser(`**Wazuh sync queued** · job \`${(data.job && data.job.id) || "?"}\``);
+        }
+      } catch (err) {
+        if (typeof notifyUser === "function") notifyUser(`**Wazuh sync error:** ${err.message || err}`);
+      }
+      setTimeout(renderWazuhPanel, 2800);
+      setTimeout(renderXdrPanel, 2800);
+      if (btn) { btn.disabled = false; btn.textContent = "Sync Wazuh"; }
+    });
     qs("incidentForm")?.addEventListener("submit", async (e) => {
       e.preventDefault();
       await fetch("/api/incidents", {
@@ -1302,6 +1474,8 @@
       });
     });
   }
+
+  async function renderEvidencePage() {
     const body = qs("evidencePageBody");
     if (!body) return;
     const [filesRes, linksRes, remsRes] = await Promise.all([
@@ -1979,6 +2153,7 @@
           tools: "setLocalToolsEnabled",
           keys: "apiKeyName",
           audit: "auditLogList",
+          wazuh: "setWazuhUrl",
         };
         const targetId = focusMap[focus] || (focus ? `set${focus[0].toUpperCase()}${focus.slice(1)}` : null);
         if (targetId) {
@@ -2540,16 +2715,77 @@
   function renderAutomationPage() {
     const body = qs("automationPageBody");
     if (!body) return;
-    const jobs = [
-      { name: "Scan import → triage", status: "Ready", last: "On demand", trigger: "Manual / webhook" },
-      { name: "Critical → Jira", status: "Partial", last: "Uses Jira connect", trigger: "Triage+Jira" },
-      { name: "Board report export", status: "Ready", last: "Reports hub", trigger: "Manual" },
-      { name: "Slack notify", status: "Planned", last: "—", trigger: "Webhook" },
-    ];
+    body.innerHTML = `<p class="hint">Loading jobs…</p>`;
+    refreshAutomationPage();
+  }
+
+  async function refreshAutomationPage() {
+    const body = qs("automationPageBody");
+    if (!body) return;
+    let jobs = [];
+    let prefect = {};
+    try {
+      const res = await fetch("/api/jobs?limit=40", { headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      jobs = data.jobs || [];
+      prefect = data.prefect || {};
+      if (!res.ok) throw new Error(data.detail || `Jobs failed (${res.status})`);
+    } catch (err) {
+      body.innerHTML = `<p class="hint">Could not load jobs: ${escapeHtml(err.message || String(err))}</p>`;
+      return;
+    }
+    if (!prefect.installed && !prefect.ready) {
+      try {
+        const pr = await fetch("/api/prefect/status", { headers: authHeaders() });
+        prefect = (await pr.json().catch(() => ({}))) || prefect;
+      } catch {
+        /* ignore */
+      }
+    }
+    const engineDefault = prefect.ready ? "prefect" : "local";
+    const fmtWhen = (ts) => {
+      if (ts == null || ts === "") return "-";
+      const n = Number(ts);
+      const d = Number.isFinite(n) && n > 1e11 ? new Date(n) : Number.isFinite(n) ? new Date(n * 1000) : new Date(ts);
+      return Number.isNaN(d.getTime()) ? String(ts) : d.toLocaleString();
+    };
+    const jobRows =
+      jobs.length > 0
+        ? jobs
+            .map((j) => {
+              const st = String(j.status || "unknown").toLowerCase();
+              const eng = (j.payload && j.payload._engine) || (j.result && j.result.engine) || "-";
+              const summary =
+                j.error ||
+                (j.result && (j.result.path || j.result.count != null || j.result.duration_sec != null)
+                  ? JSON.stringify(j.result).slice(0, 120)
+                  : "");
+              return `<li data-job-id="${escapeHtml(j.id)}">
+                  <div>
+                    <strong>${escapeHtml(j.kind || "?")}</strong>
+                    <span class="hint">${escapeHtml(eng)} · ${escapeHtml(fmtWhen(j.created_at))}</span>
+                    ${summary ? `<span class="hint">${escapeHtml(String(summary).slice(0, 140))}</span>` : ""}
+                  </div>
+                  <span class="auto-job-status status-${escapeHtml(st)}">${escapeHtml(st)}</span>
+                  <span class="hint">${escapeHtml(fmtWhen(j.finished_at || j.started_at))}</span>
+                </li>`;
+            })
+            .join("")
+        : `<li class="hint">No runs yet - enqueue KEV sync, XDR sync, or a board report below.</li>`;
+    const logLines = jobs
+      .slice(0, 12)
+      .map((j) => {
+        const st = j.status || "?";
+        const when = fmtWhen(j.finished_at || j.started_at || j.created_at);
+        return `<div class="auto-log-line"><code>${escapeHtml(when)}</code> <strong>${escapeHtml(
+          j.kind || ""
+        )}</strong> ${escapeHtml(st)}${j.error ? ` - ${escapeHtml(String(j.error).slice(0, 80))}` : ""}</div>`;
+      })
+      .join("");
     body.innerHTML = `
       <section class="cc-panel auto-flow-panel">
         <header><h2>Golden-path workflow</h2>
-          <p class="hint">Visual pipeline for authorized scan → decision → ticket → verify.</p>
+          <p class="hint">Visual pipeline for authorized scan → decision → ticket → verify. Jobs below power the automation spine.</p>
         </header>
         <div class="auto-flow" role="list">
           ${["Trigger", "Scan", "AI triage", "Risk", "Approval", "Ticket", "Notify", "Close"]
@@ -2562,45 +2798,96 @@
             .join("")}
         </div>
       </section>
+      <section class="cc-panel">
+        <header><h2>Prefect</h2>
+          <p class="hint">${escapeHtml(prefect.hint || "Optional job orchestrator")}</p>
+        </header>
+        <p>
+          <span class="auto-job-status status-${prefect.ready ? "done" : prefect.installed ? "partial" : "planned"}">
+            ${prefect.ready ? "ready" : prefect.installed ? "installed" : "not installed"}
+          </span>
+          ${prefect.version ? `<span class="hint">v${escapeHtml(prefect.version)}</span>` : ""}
+          ${prefect.api_url ? `<span class="hint">${escapeHtml(prefect.api_url)}</span>` : ""}
+        </p>
+        <div class="cc-action-row auto-run-row">
+          <label class="hint">Engine
+            <select id="autoJobEngine" class="composer-select">
+              <option value="auto">auto (${escapeHtml(engineDefault)})</option>
+              <option value="local">local</option>
+              <option value="prefect" ${prefect.installed ? "" : "disabled"}>prefect</option>
+            </select>
+          </label>
+          <button type="button" class="btn-primary-cc" data-job-kind="kev_sync">Run KEV sync</button>
+          <button type="button" class="btn-secondary" data-job-kind="xdr_sync">Run XDR sync</button>
+          <button type="button" class="btn-secondary" data-job-kind="wazuh_sync">Run Wazuh sync</button>
+          <button type="button" class="btn-secondary" data-job-kind="report_export">Export board PDF</button>
+        </div>
+      </section>
       <div class="auto-grid">
         <section class="cc-panel">
           <header><h2>Jobs</h2></header>
-          <ul class="auto-job-list">
-            ${jobs
-              .map(
-                (j) => `<li>
-                  <div><strong>${escapeHtml(j.name)}</strong><span class="hint">${escapeHtml(j.trigger)}</span></div>
-                  <span class="auto-job-status status-${escapeHtml(j.status.toLowerCase())}">${escapeHtml(j.status)}</span>
-                  <span class="hint">${escapeHtml(j.last)}</span>
-                </li>`
-              )
-              .join("")}
-          </ul>
+          <ul class="auto-job-list">${jobRows}</ul>
         </section>
         <section class="cc-panel">
           <header><h2>Triggers &amp; webhooks</h2></header>
-          <p class="hint">Wire scanner webhooks and chatops under Integrations. Execution logs appear after the first run.</p>
+          <p class="hint">Wire scanner webhooks and chatops under Integrations. Prefect wraps the same handlers when enabled.</p>
           <div class="cc-action-row">
             <button type="button" class="cc-action" data-workspace="integrations">Open integrations</button>
-            <button type="button" class="btn-secondary" id="autoOpenReports" data-workspace="reports">Reports</button>
+            <button type="button" class="btn-secondary" data-workspace="reports">Reports</button>
           </div>
         </section>
         <section class="cc-panel">
           <header><h2>Execution logs</h2></header>
           <div class="auto-log">
-            <p class="hint">No automated runs yet — import a scan or run Triage+Jira to populate the pipeline.</p>
+            ${logLines || `<p class="hint">No automated runs yet - enqueue a job above.</p>`}
           </div>
         </section>
       </div>`;
     body.querySelectorAll("[data-workspace]").forEach((el) => {
       el.addEventListener("click", () => showWorkspace(el.getAttribute("data-workspace")));
     });
-    qs("automationAskDesign")?.addEventListener("click", () => {
-      const mode = qs("automationAskDesign").getAttribute("data-mode") || "ciso";
-      const prompt = qs("automationAskDesign").getAttribute("data-prompt") || "";
-      if (typeof window.runNavPrompt === "function") window.runNavPrompt(mode, prompt, { stay: true });
+    body.querySelectorAll("[data-job-kind]").forEach((btn) => {
+      btn.addEventListener("click", () => enqueueAutomationJob(btn.getAttribute("data-job-kind")));
     });
   }
+
+  async function enqueueAutomationJob(kind) {
+    if (!kind) return;
+    const engine = qs("autoJobEngine")?.value || "auto";
+    try {
+      const res = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, engine, payload: {} }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(typeof data.detail === "string" ? data.detail : data.detail?.[0]?.msg || `Enqueue failed (${res.status})`);
+        return;
+      }
+      if (typeof notifyUser === "function") {
+        notifyUser(`**Job queued:** \`${kind}\` (${engine}) · id \`${data.id || "?"}\``);
+      }
+      setTimeout(() => refreshAutomationPage(), 600);
+      setTimeout(() => refreshAutomationPage(), 2500);
+    } catch (err) {
+      alert(err.message || "Enqueue failed");
+    }
+  }
+
+  function wireAutomationControls() {
+    if (window.__securaiqAutoWired) return;
+    window.__securaiqAutoWired = true;
+    qs("automationAskDesign")?.addEventListener("click", () => {
+      const btn = qs("automationAskDesign");
+      const mode = btn?.getAttribute("data-mode") || "ciso";
+      const prompt = btn?.getAttribute("data-prompt") || "";
+      if (typeof window.runNavPrompt === "function") window.runNavPrompt(mode, prompt, { stay: true });
+    });
+    qs("automationRefreshJobs")?.addEventListener("click", () => refreshAutomationPage());
+  }
+  wireAutomationControls();
+  window.refreshAutomationPage = refreshAutomationPage;
 
   function wireWorkspaceNav() {
     if (window.__securaiqWsNavWired) return;

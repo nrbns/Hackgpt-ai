@@ -89,6 +89,13 @@ TOOL_CATALOG: dict[str, ToolSpec] = {
         needs_target=False,
         category="intel",
     ),
+    "hardening_baseline": ToolSpec(
+        "hardening_baseline", "Hardening & patch-exposure baseline", "builtin",
+        "CIS-style scored checklist: TLS config, security headers, email auth, "
+        "and risky exposed services — plus missing-patch counts from any "
+        "connected XDR/EDR (Sophos/CrowdStrike/SentinelOne/Defender)",
+        category="hardening",
+    ),
     # --- External (detected via PATH) ---
     "nmap": ToolSpec(
         "nmap", "Nmap", "external",

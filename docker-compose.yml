@@ -59,6 +59,17 @@ services:
     restart: unless-stopped
     profiles: ["vectors"]
 
+  # Optional Prefect server for multi-worker job orchestration
+  prefect-server:
+    image: prefecthq/prefect:3-latest
+    command: prefect server start --host 0.0.0.0
+    ports:
+      - "4200:4200"
+    environment:
+      PREFECT_SERVER_API_HOST: "0.0.0.0"
+    restart: unless-stopped
+    profiles: ["prefect"]
+
 volumes:
   securaiq-data:
   postgres-data:

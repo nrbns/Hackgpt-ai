@@ -1,4 +1,4 @@
-# Ollama setup helper for SecuraIQ (Windows PowerShell)
+﻿# Ollama setup helper for SecuraIQ (Windows PowerShell)
 # Usage: .\scripts\setup_ollama.ps1
 
 $ErrorActionPreference = "Stop"

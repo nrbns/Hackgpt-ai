@@ -1368,6 +1368,9 @@ def reset_workspace(user_id: str, *, clear_rag: bool = False) -> dict[str, Any]:
         "webhooks",
         "evidence_links",
         "engagements",
+        "notifications",
+        "action_approvals",
+        "usage_events",
     ]
     for table in tables:
         try:
@@ -1375,6 +1378,15 @@ def reset_workspace(user_id: str, *, clear_rag: bool = False) -> dict[str, Any]:
             counts[table] = int(cur.rowcount or 0)
         except Exception:
             counts[table] = counts.get(table, 0)
+
+    # Global lab tables (no user_id) — clear on local zero-start so SOC stays empty
+    if user_id == "local":
+        for table in ("xdr_events", "jobs", "wazuh_agents"):
+            try:
+                cur = c.execute(f"DELETE FROM {table}")
+                counts[table] = int(cur.rowcount or 0)
+            except Exception:
+                counts[table] = counts.get(table, 0)
 
     # Organizations owned / joined by this user
     try:
@@ -1432,6 +1444,57 @@ def reset_workspace(user_id: str, *, clear_rag: bool = False) -> dict[str, Any]:
             rag_cleared = False
 
     return {"ok": True, "deleted": counts, "rag_cleared": rag_cleared}
+
+
+def apply_workspace_zero_start() -> dict[str, Any] | None:
+    """Nil / zero boot for open local mode — Mission Control starts empty."""
+    from app.config import settings as _settings
+
+    if _settings.auth_enabled or not getattr(_settings, "workspace_zero_start", True):
+        return None
+
+    user_ids: set[str] = {"local"}
+    c = get_conn()
+    for table in (
+        "assets",
+        "risks",
+        "vulnerabilities",
+        "engagements",
+        "gap_assessments",
+        "incidents",
+        "playbooks",
+        "campaigns",
+        "notifications",
+        "chats",
+    ):
+        try:
+            for row in c.execute(f"SELECT DISTINCT user_id FROM {table}"):
+                uid = row[0] if not isinstance(row, dict) else row.get("user_id")
+                if uid:
+                    user_ids.add(str(uid))
+        except Exception:
+            continue
+
+    result: dict[str, Any] = {"users": [], "deleted": {}}
+    for uid in sorted(user_ids):
+        wiped = reset_workspace(uid, clear_rag=False)
+        result["users"].append(uid)
+        result["deleted"][uid] = wiped.get("deleted") or {}
+
+    # Clear KPI snap files
+    try:
+        snap_dir = Path(_settings.data_dir) / "kpi_snaps"
+        if snap_dir.is_dir():
+            for snap in snap_dir.glob("*.json"):
+                snap.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    print(
+        "Workspace: zero-start applied (nil UI). "
+        "Set WORKSPACE_ZERO_START=false to keep data across restarts."
+    )
+    return result
 
 
 def ensure_default_playbooks(user_id: str) -> None:

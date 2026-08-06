@@ -103,8 +103,9 @@ Administration → Orgs · Settings · Account
 - [x] Office reports: DOCX + XLSX (plus existing PDF/MD)  
 - [x] Optional Qdrant compose profile  
 - [x] Webhooks automation stub (n8n/Temporal bridges)  
+- [x] Wazuh SIEM connector (manager JWT + optional Indexer; SOC sync)  
+- [ ] TheHive connector (Month 3+)  
 - [ ] Stronger executive trend charts  
-- [ ] Wazuh / TheHive connectors (Month 3+)  
 
 See also: [open-source-architecture.md](./open-source-architecture.md) · [enterprise-integrations.md](./enterprise-integrations.md) · [ai-router.md](./ai-router.md)
 

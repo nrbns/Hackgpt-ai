@@ -103,6 +103,7 @@ def classify_intent(message: str, mode: str = "default") -> str:
         "tabletop": "compliance",
         "research": "threat_intel",
         "threat_hunt": "threat_intel",
+        "xdr": "threat_intel",
         "malware": "threat_intel",
         "cloud": "cloud",
         "assess": "scan",
@@ -128,7 +129,23 @@ def classify_intent(message: str, mode: str = "default") -> str:
     return "general"
 
 
-def agent_for_intent(intent: str) -> str:
+def agent_for_intent(intent: str, mode: str = "default") -> str:
+    mode = (mode or "default").lower()
+    mode_agent = {
+        "xdr": "XDR Analyst",
+        "threat_hunt": "Threat Hunter",
+        "blueteam": "SOC Analyst",
+        "ir": "Incident Responder",
+        "malware": "Malware Analyst",
+        "ciso": "Compliance Officer",
+        "appsec": "Secure Code Reviewer",
+        "cloud": "Cloud Security Advisor",
+        "assess": "Risk Advisor",
+        "awareness": "Awareness Lead",
+        "tabletop": "Tabletop Facilitator",
+    }
+    if mode in mode_agent:
+        return mode_agent[mode]
     return {
         "code": "Secure Code Reviewer",
         "compliance": "Compliance Officer",
@@ -190,7 +207,7 @@ def route_task(
 ) -> dict[str, Any]:
     """Plan a route for this question (does not mutate settings unless caller applies)."""
     intent = classify_intent(message, mode)
-    agent = agent_for_intent(intent)
+    agent = agent_for_intent(intent, mode)
     backend, model = preferred_backend_for_intent(intent)
     use_router = settings.router_enabled if apply_cloud is None else apply_cloud
 

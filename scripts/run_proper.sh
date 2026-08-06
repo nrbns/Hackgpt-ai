@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 # One-command setup + start for SecuraIQ (Linux/macOS)
+# Secure localhost by default; pass --lan for Wi-Fi devices
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/common.sh
+
+LAN=0
+for arg in "$@"; do
+  case "$arg" in
+    --lan|-Lan) LAN=1 ;;
+  esac
+done
 
 echo "SecuraIQ setup"
 ensure_venv
@@ -30,8 +38,20 @@ fi
 echo "Indexing RAG knowledge base..."
 python scripts/ingest_rag.py
 
+if [ "$LAN" -eq 1 ]; then
+  set_env_value HOST 0.0.0.0
+else
+  set_env_value HOST 127.0.0.1
+  set_env_value CORS_ORIGINS "http://127.0.0.1:8080,http://localhost:8080"
+fi
+
 stop_port_8080
 
 echo ""
-echo "Starting SecuraIQ at http://localhost:8080"
+if [ "$LAN" -eq 1 ]; then
+  echo "Starting SecuraIQ (LAN mode) at http://0.0.0.0:8080"
+else
+  echo "Starting SecuraIQ (secure — localhost) at http://127.0.0.1:8080"
+  echo "For phones: ./scripts/run_proper.sh --lan"
+fi
 python run.py

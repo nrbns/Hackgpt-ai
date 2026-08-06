@@ -1,30 +1,77 @@
-# One-command setup + start for SecuraIQ (Windows)
+# One-command setup + start for SecuraIQ (Windows) — zero-config, no manual .env
+param(
+    [switch]$Lan
+)
+
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location (Join-Path $root "..")
 
 Write-Host "SecuraIQ setup" -ForegroundColor Cyan
 
-if (-not (Test-Path ".venv")) {
+function Find-Python {
+    foreach ($cmd in @("python", "py")) {
+        $exe = Get-Command $cmd -ErrorAction SilentlyContinue
+        if (-not $exe) { continue }
+        try {
+            if ($cmd -eq "py") {
+                $ver = & py -3 -c "import sys; print(sys.version_info[0])" 2>$null
+                if ($ver -eq "3") { return @{ Exe = "py"; Args = @("-3") } }
+            } else {
+                $ver = & python -c "import sys; print(sys.version_info[0])" 2>$null
+                if ($ver -eq "3") { return @{ Exe = "python"; Args = @() } }
+            }
+        } catch { }
+    }
+    throw "Python 3.11+ not found. Install from https://www.python.org/downloads/ and tick 'Add python.exe to PATH'."
+}
+
+function Set-EnvLine {
+    param([string[]]$Lines, [string]$Key, [string]$Value)
+    $pattern = "^" + [regex]::Escape($Key) + "=.*"
+    $replacement = "$Key=$Value"
+    $found = $false
+    $out = foreach ($line in $Lines) {
+        if ($line -match $pattern) {
+            $found = $true
+            $replacement
+        } else {
+            $line
+        }
+    }
+    if (-not $found) { $out += $replacement }
+    return ,$out
+}
+
+$py = Find-Python
+
+if (-not (Test-Path ".venv\Scripts\python.exe")) {
     Write-Host "Creating virtual environment..."
-    python -m venv .venv
+    if ($py.Args.Count) {
+        & $py.Exe @($py.Args + @("-m", "venv", ".venv"))
+    } else {
+        & $py.Exe -m venv .venv
+    }
 }
 
 Write-Host "Installing dependencies..."
-& .\.venv\Scripts\pip install -r requirements.txt -q
-& .\.venv\Scripts\pip install torch transformers accelerate -q
+& .\.venv\Scripts\python.exe -m pip install --upgrade pip -q
+& .\.venv\Scripts\pip.exe install -r requirements.txt -q
 
+if (-not (Test-Path ".env.example")) {
+    throw "Missing .env.example - clone the full SecuraIQ repo."
+}
 if (-not (Test-Path ".env")) {
     Copy-Item .env.example .env
-    Write-Host "Created .env from .env.example"
+    Write-Host "Created .env from .env.example (no manual editing needed)"
 }
 
 Write-Host "Indexing RAG knowledge base..."
-& .\.venv\Scripts\python scripts\ingest_rag.py
+& .\.venv\Scripts\python.exe scripts\ingest_rag.py
 
 $ollama = Get-Command ollama -ErrorAction SilentlyContinue
 if ($ollama) {
-    Write-Host "Ollama found — configuring ollama backend."
+    Write-Host "Ollama found - configuring ollama backend."
     & .\scripts\use_ollama.ps1 | Out-Null
     $models = & ollama list 2>$null
     if ($models -match "tinyllama") {
@@ -34,18 +81,39 @@ if ($ollama) {
         & ollama pull tinyllama
     }
 } else {
-    Write-Host "Ollama not found — using HuggingFace CPU model (Qwen2.5-0.5B)." -ForegroundColor Yellow
-    $content = Get-Content ".env"
-    $content = $content -replace "^MODEL_BACKEND=.*", "MODEL_BACKEND=huggingface"
-    $content = $content -replace "^HF_MODEL=.*", "HF_MODEL=Qwen/Qwen2.5-0.5B-Instruct"
-    $content | Set-Content ".env"
+    Write-Host "Ollama not found - using configured cloud/local HF backend from .env.example." -ForegroundColor Yellow
 }
 
-$portUsers = Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue
+$envLines = @(Get-Content ".env" -Encoding utf8)
+if ($Lan) {
+    $envLines = Set-EnvLine $envLines "HOST" "0.0.0.0"
+} else {
+    $envLines = Set-EnvLine $envLines "HOST" "127.0.0.1"
+    $envLines = Set-EnvLine $envLines "CORS_ORIGINS" "http://127.0.0.1:8080,http://localhost:8080"
+}
+$envLines = Set-EnvLine $envLines "AUTH_ALLOW_REGISTER" "false"
+$envLines = Set-EnvLine $envLines "WORKSPACE_ZERO_START" "true"
+$utf8Bom = New-Object System.Text.UTF8Encoding $true
+[System.IO.File]::WriteAllLines((Join-Path (Get-Location) ".env"), $envLines, $utf8Bom)
+
+# Only stop processes that look like SecuraIQ / uvicorn on 8080
+$portUsers = Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue |
+    Where-Object { $_.State -eq "Listen" }
 foreach ($conn in $portUsers) {
-    Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
+    $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+    if ($proc -and ($proc.ProcessName -match "python|uvicorn")) {
+        Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host ""
-Write-Host "Starting SecuraIQ at http://localhost:8080" -ForegroundColor Green
-& .\.venv\Scripts\python run.py
+if ($Lan) {
+    Write-Host "Starting SecuraIQ (LAN mode)" -ForegroundColor Yellow
+    Write-Host "  http://127.0.0.1:8080  (+ LAN IP for phones)"
+} else {
+    Write-Host "Starting SecuraIQ (localhost)" -ForegroundColor Green
+    Write-Host "  http://127.0.0.1:8080"
+    Write-Host "  For phones: .\start.cmd -Lan"
+}
+Write-Host "No .env editing required. Optional keys: Settings in the UI."
+& .\.venv\Scripts\python.exe run.py

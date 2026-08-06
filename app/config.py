@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     hermes_model: str = "hermes-agent"
     hermes_api_key: str = "change-me-local-dev"
     # Stable memory scope for Hermes (X-Hermes-Session-Key); optional
-    hermes_session_key: str = "securaiq-pentest"
+    hermes_session_key: str = ""  # set in Settings / .env; no shared default
     hermes_show_tool_progress: bool = True
     hf_model: str = "Qwen/Qwen2.5-0.5B-Instruct"
     hf_token: str = ""
@@ -43,13 +43,16 @@ class Settings(BaseSettings):
     unsloth_adapter_dir: str = "./models/securaiq-unsloth"
     unsloth_max_seq_length: int = 2048
     unsloth_load_in_4bit: bool = True
-    host: str = "127.0.0.1"
+    host: str = "127.0.0.1"  # localhost-only by default; use HOST=0.0.0.0 or start -Lan for LAN
     port: int = 8080
     chroma_persist_dir: str = "./data/chroma"
     data_dir: str = "./data"
     embedding_model: str = "all-MiniLM-L6-v2"
     # When false, knowledge files are not indexed until the user clicks Re-index (empty/fast start).
     rag_auto_ingest: bool = False
+    # When true and auth is off, wipe the local workspace on each server start (nil / zero UI).
+    # Set false to keep assets/findings across restarts in open local mode.
+    workspace_zero_start: bool = True
     # Optional Qdrant vector store (compose profile). Empty = use Chroma only.
     qdrant_url: str = ""
     qdrant_collection: str = "securaiq_knowledge"
@@ -67,7 +70,7 @@ class Settings(BaseSettings):
     local_tools_allow_heavy: bool = False  # nuclei/nikto/ffuf only when instructed
     # Commercial / team foundations
     auth_enabled: bool = False
-    auth_allow_register: bool = True
+    auth_allow_register: bool = False  # invite-only when auth is on; enable explicitly if needed
     bootstrap_admin_username: str = "admin"
     bootstrap_admin_password: str = ""
     upload_max_mb: int = 15
@@ -115,7 +118,7 @@ class Settings(BaseSettings):
     database_url: str = ""  # empty = SQLite at DATA_DIR/securaiq.db
     redis_url: str = ""
     # Security hardening
-    cors_origins: str = "http://127.0.0.1:8080,http://localhost:8080"
+    cors_origins: str = "http://127.0.0.1:8080,http://localhost:8080"  # restrictive; use * only with LAN bind
     rate_limit_per_minute: int = 180
     rate_limit_auth_per_minute: int = 20
     rate_limit_chat_per_minute: int = 45
@@ -135,6 +138,36 @@ class Settings(BaseSettings):
     siem_hec_token: str = ""         # set if siem_forward_url is a Splunk HEC collector
     siem_syslog_host: str = ""
     siem_syslog_port: int = 514
+    # XDR / EDR connectors (optional — each vendor activates only when its own
+    # credentials are set; sync interval applies to all configured vendors)
+    xdr_sync_interval_sec: int = 1800
+    xdr_auto_create_incidents: bool = True  # critical/high detections -> incidents table
+    # Prefect orchestration (optional — local asyncio jobs remain the default)
+    prefect_enabled: bool = False
+    prefect_api_url: str = ""  # empty = ephemeral local Prefect when enabled
+    # Wazuh SIEM (manager API + optional Indexer for alert pull)
+    wazuh_base_url: str = ""  # e.g. https://wazuh.example:55000
+    wazuh_user: str = ""
+    wazuh_password: str = ""
+    wazuh_verify_ssl: bool = False
+    wazuh_sync_interval_sec: int = 1800
+    wazuh_indexer_url: str = ""  # e.g. https://indexer.example:9200
+    wazuh_indexer_user: str = ""
+    wazuh_indexer_password: str = ""
+    # Sophos Central (OAuth2 client credentials — id.sophos.com)
+    sophos_client_id: str = ""
+    sophos_client_secret: str = ""
+    # CrowdStrike Falcon (OAuth2 client credentials)
+    crowdstrike_client_id: str = ""
+    crowdstrike_client_secret: str = ""
+    crowdstrike_base_url: str = "https://api.crowdstrike.com"
+    # SentinelOne (static API token)
+    sentinelone_api_token: str = ""
+    sentinelone_base_url: str = ""  # e.g. https://<tenant>.sentinelone.net
+    # Microsoft Defender for Endpoint (Entra ID app registration)
+    defender_tenant_id: str = ""
+    defender_client_id: str = ""
+    defender_client_secret: str = ""
 
 
 settings = Settings()
@@ -165,7 +198,11 @@ except Exception:
 
 def cors_origin_list() -> list[str]:
     raw = (settings.cors_origins or "").strip()
-    if not raw or raw == "*":
-        # Local-dev convenience when explicitly wildcarded
+    if not raw:
+        return [
+            f"http://127.0.0.1:{settings.port}",
+            f"http://localhost:{settings.port}",
+        ]
+    if raw == "*":
         return ["*"]
     return [o.strip() for o in raw.split(",") if o.strip()]

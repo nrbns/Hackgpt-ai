@@ -269,6 +269,23 @@ def init_schema(conn: sqlite3.Connection | None = None) -> None:
             emailed INTEGER NOT NULL DEFAULT 0,
             created_at REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS xdr_events (
+            id TEXT PRIMARY KEY,
+            vendor TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'detection',
+            severity TEXT NOT NULL DEFAULT 'medium',
+            host TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'open',
+            linked_incident_id TEXT,
+            linked_vuln_id TEXT,
+            raw_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            UNIQUE(vendor, external_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_xdr_events_created ON xdr_events(created_at DESC);
         """
     )
     c.commit()

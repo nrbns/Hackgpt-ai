@@ -87,6 +87,16 @@ def public_settings() -> dict[str, Any]:
         "mfa_required_for_admin": settings.mfa_required_for_admin,
         "database_url_set": bool(settings.database_url),
         "redis_url_set": bool(settings.redis_url),
+        "prefect_enabled": bool(getattr(settings, "prefect_enabled", False)),
+        "prefect_api_url": getattr(settings, "prefect_api_url", "") or "",
+        "wazuh_base_url": getattr(settings, "wazuh_base_url", "") or "",
+        "wazuh_user": getattr(settings, "wazuh_user", "") or "",
+        "wazuh_password_set": bool(getattr(settings, "wazuh_password", "")),
+        "wazuh_verify_ssl": bool(getattr(settings, "wazuh_verify_ssl", False)),
+        "wazuh_sync_interval_sec": int(getattr(settings, "wazuh_sync_interval_sec", 1800) or 1800),
+        "wazuh_indexer_url": getattr(settings, "wazuh_indexer_url", "") or "",
+        "wazuh_indexer_user": getattr(settings, "wazuh_indexer_user", "") or "",
+        "wazuh_indexer_password_set": bool(getattr(settings, "wazuh_indexer_password", "")),
     }
     # Defense-in-depth: never allow raw secret keys in the payload
     forbidden = {
@@ -171,6 +181,16 @@ _WRITABLE: dict[str, tuple[str, type]] = {
     "mfa_required_for_admin": ("MFA_REQUIRED_FOR_ADMIN", bool),
     "database_url": ("DATABASE_URL", str),
     "redis_url": ("REDIS_URL", str),
+    "prefect_enabled": ("PREFECT_ENABLED", bool),
+    "prefect_api_url": ("PREFECT_API_URL", str),
+    "wazuh_base_url": ("WAZUH_BASE_URL", str),
+    "wazuh_user": ("WAZUH_USER", str),
+    "wazuh_password": ("WAZUH_PASSWORD", str),
+    "wazuh_verify_ssl": ("WAZUH_VERIFY_SSL", bool),
+    "wazuh_sync_interval_sec": ("WAZUH_SYNC_INTERVAL_SEC", int),
+    "wazuh_indexer_url": ("WAZUH_INDEXER_URL", str),
+    "wazuh_indexer_user": ("WAZUH_INDEXER_USER", str),
+    "wazuh_indexer_password": ("WAZUH_INDEXER_PASSWORD", str),
 }
 
 

@@ -354,10 +354,10 @@ def main() -> int:
 
         # Modes include awareness + ciso
         modes = c.get(f"{BASE}/api/modes").json().get("modes") or []
-        for m in ("awareness", "ciso", "assess", "purple", "threat_hunt", "ir", "cloud", "appsec", "tabletop"):
+        for m in ("awareness", "ciso", "assess", "purple", "threat_hunt", "xdr", "ir", "cloud", "appsec", "tabletop"):
             if m not in modes:
                 fail(f"mode missing {m}")
-        print("OK modes include purple/IR/cloud/appsec/tabletop set")
+        print("OK modes include purple/IR/cloud/appsec/tabletop/xdr set")
 
         # Audit
         audit = c.get(f"{BASE}/api/audit").json()

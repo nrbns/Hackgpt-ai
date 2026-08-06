@@ -41,7 +41,7 @@ Each catalog item includes a `ui_action` so Mission Control can **Connect** to t
 | IaC | Checkov | **import** |
 | DAST | OWASP ZAP + Nuclei | PATH + ZAP **import** |
 | Threat intel | MITRE + NVD + CISA KEV + Free APIs Security | Shipped (`/api/intel/*`) |
-| SIEM | Wazuh | Planned (webhook ingest later) |
+| SIEM | Wazuh | Shipped (manager JWT + optional Indexer alert pull; SOC sync) |
 | Automation | n8n | Webhooks shipped |
 | Case mgmt | TheHive | Planned |
 | Identity | Keycloak / Authentik | Planned (SSO Month 3) |

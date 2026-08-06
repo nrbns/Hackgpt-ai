@@ -122,6 +122,7 @@ def main() -> int:
             "default",
             "purple",
             "threat_hunt",
+            "xdr",
             "ir",
             "cloud",
             "appsec",

@@ -37,7 +37,8 @@ _TOOL_WORD_RE = re.compile(
     r"traceroute|tracert|ping|openssl|wafw00f|ports?|dns|tls|http|robots|tech|"
     r"cve_lookup|headers?(?:\s+security)?|zap|zaproxy|sqlmap|wpscan|masscan|"
     r"rustscan|openvas|greenbone|gvm|burp|acunetix|email_auth|phishing_url|suite_guide|"
-    r"spf|dmarc|dkim|phish(?:ing)?|awareness)\b",
+    r"spf|dmarc|dkim|phish(?:ing)?|awareness|hardening(?:_baseline)?|patch(?:es|ing|"
+    r"\s+compliance)?|xdr|edr)\b",
     re.IGNORECASE,
 )
 _RUN_HINT_RE = re.compile(
@@ -108,6 +109,14 @@ def parse_tool_request(
             "phish": "phishing_url",
             "phishing": "phishing_url",
             "awareness": "phishing_url",
+            "hardening": "hardening_baseline",
+            "hardening_baseline": "hardening_baseline",
+            "patch": "hardening_baseline",
+            "patches": "hardening_baseline",
+            "patching": "hardening_baseline",
+            "patch compliance": "hardening_baseline",
+            "xdr": "hardening_baseline",
+            "edr": "hardening_baseline",
         }.get(raw, raw.replace(" ", "_"))
         if alias in TOOL_CATALOG:
             mentioned.append(alias)
@@ -541,6 +550,136 @@ Always: written scope, rate limits, detection notes, remediation owners.
     return {"ok": True, "output": text}
 
 
+_RISKY_PORTS: dict[int, str] = {
+    21: "FTP (unencrypted; prefer SFTP/FTPS or disable)",
+    23: "Telnet (unencrypted remote shell; disable, use SSH)",
+    135: "MSRPC (Windows RPC; should not face untrusted networks)",
+    139: "NetBIOS (should not face untrusted networks)",
+    445: "SMB (frequent ransomware/lateral-movement vector when exposed)",
+    3389: "RDP (brute-force/ransomware target; put behind VPN + MFA)",
+    5900: "VNC (often weak/no auth; put behind VPN)",
+    6379: "Redis (frequently unauthenticated by default)",
+    9200: "Elasticsearch (frequently unauthenticated by default)",
+    27017: "MongoDB (frequently unauthenticated by default)",
+    3306: "MySQL (should not face untrusted networks)",
+    5432: "PostgreSQL (should not face untrusted networks)",
+}
+
+_HEADER_CHECKS = (
+    "strict-transport-security",
+    "content-security-policy",
+    "x-frame-options",
+    "x-content-type-options",
+    "referrer-policy",
+    "permissions-policy",
+)
+
+
+async def _tool_hardening_baseline(host: str, ip: str, open_ports: list[int] | None) -> dict[str, Any]:
+    """Composite CIS-style hardening/patch-exposure baseline.
+
+    Combines signals SecuraIQ can verify directly against any authorized
+    target (TLS config, HTTP security headers, SPF/DMARC, exposed risky
+    services) with patch-compliance data already ingested from any connected
+    XDR/EDR vendor for this host, if that host has been seen there.
+    """
+    findings: list[str] = []
+    passed = 0
+    checked = 0
+
+    # 1) TLS
+    checked += 1
+    tls_result = await _tool_tls(ip, open_ports)
+    if tls_result.get("ok"):
+        try:
+            tls_data = json.loads(tls_result.get("output") or "{}")
+        except Exception:
+            tls_data = {}
+        ver = tls_data.get("tls", "")
+        if ver in ("TLSv1.2", "TLSv1.3"):
+            passed += 1
+            findings.append(f"[PASS] TLS version {ver}")
+        elif ver:
+            findings.append(f"[FAIL] Outdated TLS version {ver} — upgrade to TLS 1.2+")
+        else:
+            findings.append("[SKIP] TLS: no cert data returned")
+    else:
+        findings.append(f"[SKIP] TLS check failed: {tls_result.get('error', 'no HTTPS service')}")
+
+    # 2) HTTP security headers
+    urls = _guess_base_urls(ip, open_ports)[:1]
+    if urls:
+        r, err = await _http_get(urls[0])
+        if r is not None:
+            for h in _HEADER_CHECKS:
+                checked += 1
+                if r.headers.get(h):
+                    passed += 1
+                    findings.append(f"[PASS] Header present: {h}")
+                else:
+                    findings.append(f"[FAIL] Header missing: {h}")
+        else:
+            findings.append(f"[SKIP] Headers check: {err}")
+
+    # 3) Email auth (SPF/DMARC) — only meaningful for a domain, not a bare IP
+    if host and not re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host):
+        checked += 1
+        auth_result = await _tool_email_auth(host)
+        out = (auth_result.get("output") or "").lower()
+        if "spf" in out and "none" not in out.split("spf")[1][:40].lower():
+            passed += 1
+            findings.append("[PASS] SPF record present")
+        else:
+            findings.append("[FAIL] SPF record missing or unresolved")
+        checked += 1
+        if "dmarc" in out and "none" not in out.split("dmarc")[1][:60].lower():
+            passed += 1
+            findings.append("[PASS] DMARC record present")
+        else:
+            findings.append("[FAIL] DMARC record missing or unresolved")
+
+    # 4) Risky exposed services (from the port probe already run this session)
+    exposed_risky = [p for p in (open_ports or []) if p in _RISKY_PORTS]
+    checked += 1
+    if not exposed_risky:
+        passed += 1
+        findings.append("[PASS] No high-risk services in the scanned port set")
+    else:
+        for p in exposed_risky:
+            findings.append(f"[FAIL] Exposed risky port {p}/tcp — {_RISKY_PORTS[p]}")
+
+    # 5) Patch compliance — pulled from whatever XDR/EDR vendors are connected
+    try:
+        from app.xdr import patch_compliance_summary, status as xdr_status
+
+        vendors = xdr_status()
+        active = [v for v, s in vendors.items() if s.get("configured")]
+        if not active:
+            findings.append(
+                "[INFO] Patch compliance: no XDR/EDR vendor configured — connect Sophos, "
+                "CrowdStrike, SentinelOne, or Microsoft Defender in Settings to get real "
+                "missing-patch data instead of this remote heuristic baseline."
+            )
+        else:
+            summary = patch_compliance_summary()
+            host_gaps = (summary.get("by_host") or {}).get(host) or (summary.get("by_host") or {}).get(ip)
+            if host_gaps:
+                findings.append(f"[FAIL] Missing patches for this host (from XDR): {host_gaps}")
+            else:
+                findings.append(
+                    f"[INFO] Patch compliance: no missing-patch data for {host or ip} yet "
+                    f"({summary.get('hosts_with_gaps', 0)} other host(s) have gaps) — "
+                    "run POST /api/xdr/sync or wait for the scheduled sync."
+                )
+    except Exception:
+        findings.append("[INFO] Patch compliance: XDR module unavailable")
+
+    score = round((passed / checked) * 100) if checked else 0
+    grade = "A" if score >= 90 else "B" if score >= 75 else "C" if score >= 60 else "D" if score >= 40 else "F"
+    header = f"Hardening baseline for {host or ip}: score={score}/100 (grade {grade}), {passed}/{checked} controls passed"
+    return {"ok": True, "output": header + "\n" + "\n".join(findings), "score": score, "grade": grade}
+
+
 async def _run_external(tool_id: str, target: str, ip: str, open_ports: list[int] | None) -> dict[str, Any]:
     spec = TOOL_CATALOG[tool_id]
     binary = resolve_binary(spec)
@@ -792,6 +931,8 @@ async def iter_security_tools(
                 result = await _tool_tech(ip, ports_hint)
             elif tid == "whois":
                 result = await _tool_whois(host, ip)
+            elif tid == "hardening_baseline":
+                result = await _tool_hardening_baseline(host, ip, ports_hint)
             elif spec.kind == "external":
                 if not is_available(tid):
                     result = {"ok": False, "error": "not installed on PATH", "output": ""}

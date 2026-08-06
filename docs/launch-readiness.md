@@ -9,7 +9,7 @@ Overall launch readiness: **~6.4 / 10** (was 5.5 — see per-area deltas below; 
 | Vision | 9.8 | AI Security OS — orchestrate tools, evidence, GRC, agents |
 | UI/UX | 8.8 | Mission Control direction strong; needs workflow polish + design system |
 | AI capabilities | 8.6 (was 8.0) | Router + guardrails + RAG path exist; citations/confidence indicators and human-approval gating now shipped (see AI section below) |
-| Security features | 6.9 | Scanner **import** adapters live; GitHub/Jira/ServiceNow/Slack/Teams connectors shipped; Wazuh/TheHive/cloud posture (AWS/Azure/GCP) still planned — those need your cloud/SIEM accounts to build against |
+| Security features | 7.2 (was 6.9) | Scanner **import** adapters live; GitHub/Jira/ServiceNow/Slack/Teams connectors shipped; **EDR/XDR connectors shipped** (Sophos Central, CrowdStrike Falcon, SentinelOne, Microsoft Defender for Endpoint — each activates once you set its own credentials); **hardening/patch-exposure baseline tool shipped** (`hardening_baseline` in the tools registry — scored TLS/headers/email-auth/exposed-services check, plus real missing-patch data once an EDR vendor is connected); Wazuh/TheHive/cloud posture (AWS/Azure/GCP) still planned — those need your cloud/SIEM accounts to build against |
 | Compliance | 5.5 | Framework **catalogs** + gap analysis shipped; evidence/audit workflows incomplete |
 | Backend architecture | 8.2 (was 7.5) | Rate limiting confirmed live, secrets encrypted at rest, backup/DR scripts + runbook, CI security scanning, SIEM log forwarding, background job runner all shipped this pass |
 | Enterprise readiness | 7.0 (was 5.5) | MFA enforcement (not just UI hint), usage metering + plan model, notifications, multi-project lifecycle now shipped; SCIM and live payment processing still missing |
@@ -17,6 +17,17 @@ Overall launch readiness: **~6.4 / 10** (was 5.5 — see per-area deltas below; 
 | **Launch readiness** | **6.4** | Closed beta candidate; public launch still blocked on live connectors, payment processing, and legal sign-off |
 
 See also: [commercial-roadmap.md](./commercial-roadmap.md) · [enterprise-integrations.md](./enterprise-integrations.md)
+
+---
+
+## XDR/EDR & patch hardening (new this pass)
+
+- `app/connectors/{sophos,crowdstrike,sentinelone,defender}.py` — direct REST clients (no vendor SDKs), each gated by its own `is_configured()` so a partial rollout (e.g. only Sophos) is normal, not degraded.
+- `app/xdr.py` — polls every configured vendor, dedupes against the new `xdr_events` table, and opens a real incident (critical/high detections) or vulnerability row (missing patches) through the existing `app.ops.create_incident` / `app.enterprise.create_vulnerability` paths — so notifications, Slack/Teams alerts, and the audit log all fire the same way they do for human-created findings.
+- Background sync via the `xdr_sync` job (registered in `app/jobs.py`, default every 30 min, `XDR_SYNC_INTERVAL_SEC`). Manual trigger: `POST /api/xdr/sync`. Status/feed: `GET /api/xdr/status`, `GET /api/xdr/detections`, `GET /api/xdr/patches`.
+- SOC workspace now shows a live "XDR / EDR" panel: vendor connection status, missing-patch counts, and recent detections, with a "Sync now" button.
+- `hardening_baseline` — a new builtin tool in the VAPT tools registry (shows up automatically in the Tools Palette, no separate UI code needed). Scores TLS version, HTTP security headers, SPF/DMARC, and exposed risky ports (Telnet/SMB/RDP/unauth Redis-Mongo-Elasticsearch/etc.) against any authorized target, and folds in real per-host missing-patch data from whichever EDR vendor is connected. **Not tested against a live target this session** — the sandbox used to build this has no working shell (see Known gaps below); the code path composes existing, already-verified tool primitives (`_tool_tls`, `_tool_email_auth`, the port probe) so the mechanics are sound, but a live run against a real host is still outstanding.
+- **Honest gap:** none of the four vendor clients have been exercised against a real tenant — I don't have Sophos/CrowdStrike/SentinelOne/Defender credentials to test with. The auth flows and endpoints match each vendor's current public API docs, but "code matches the docs" isn't the same as "verified working." Test each one against a real (ideally trial/sandbox) tenant before relying on it for alerting.
 
 ---
 

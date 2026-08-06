@@ -1799,6 +1799,9 @@ function openAiTab(name) {
   if (name === "files" && typeof window.refreshAiFilesTab === "function") window.refreshAiFilesTab();
   if (name === "memory" && typeof window.refreshAiMemoryTab === "function") window.refreshAiMemoryTab();
   if (name === "tasks" && typeof window.refreshAiTasksTab === "function") window.refreshAiTasksTab();
+  if (name === "automation" && typeof window.refreshAutomationPage === "function") {
+    window.refreshAutomationPage();
+  }
   if (name === "canvas") {
     const ta = document.getElementById("aiCanvasNotes");
     if (ta && !ta.value) {
@@ -2174,6 +2177,8 @@ async function loadCommandCenter() {
     if (emptyWorkspace) {
       try {
         localStorage.removeItem("securaiq.kpi.snap");
+        localStorage.removeItem("securaiq.chats.v1");
+        localStorage.removeItem("securaiq.checklist.integrations");
       } catch {
         /* ignore */
       }
@@ -2285,7 +2290,7 @@ async function loadCommandCenter() {
     if (lastScan) {
       const d = new Date(Number(lastScan) * (Number(lastScan) < 1e12 ? 1000 : 1));
       setTxt("mcLastScan", Number.isNaN(d.getTime()) ? String(lastScan) : d.toLocaleString());
-    } else setTxt("mcLastScan", "No scans yet");
+    } else setTxt("mcLastScan", emptyWorkspace ? "Never" : "No scans yet");
     const today = mc.today || {};
     setTxt(
       "mcTodaySummary",
@@ -3002,7 +3007,21 @@ function appendMessage(role, content, isHtml = false) {
 function resizeInput() {
   if (!inputEl) return;
   inputEl.style.height = "auto";
-  inputEl.style.height = `${Math.min(inputEl.scrollHeight, window.innerHeight * 0.28)}px`;
+  const cap = Math.min(
+    inputEl.scrollHeight,
+    (window.visualViewport?.height || window.innerHeight) * 0.28
+  );
+  inputEl.style.height = `${cap}px`;
+}
+
+function syncFloatingComposerToViewport() {
+  const wrap = composerWrapEl;
+  if (!wrap || !wrap.classList.contains("is-floating") || wrap.classList.contains("is-chat")) return;
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const keyboardPad = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  wrap.style.setProperty("--vv-keyboard", `${keyboardPad}px`);
+  wrap.style.bottom = `calc(1rem + var(--safe-bottom) + ${keyboardPad}px)`;
 }
 
 function closeSidebar() {
@@ -3459,6 +3478,16 @@ async function loadSettingsForm() {
     setVal("setGithubWebhookSecret", "");
     setVal("setDatabaseUrl", "");
     setVal("setRedisUrl", "");
+    setVal("setWazuhUrl", s.wazuh_base_url || "");
+    setVal("setWazuhUser", s.wazuh_user || "");
+    setVal("setWazuhPassword", "");
+    setVal("setWazuhSyncInterval", s.wazuh_sync_interval_sec ?? 1800);
+    setVal("setWazuhIndexerUrl", s.wazuh_indexer_url || "");
+    setVal("setWazuhIndexerUser", s.wazuh_indexer_user || "");
+    setVal("setWazuhIndexerPassword", "");
+    setChecked("setWazuhVerifySsl", !!s.wazuh_verify_ssl);
+    setHint("wazuhPasswordHint", s.wazuh_password_set);
+    setHint("wazuhIndexerPasswordHint", s.wazuh_indexer_password_set);
     setHint("oidcSecretHint", s.oidc_client_secret_set);
     setHint("githubWebhookHint", s.github_webhook_secret_set ? "Saved: •••••••• (hidden)" : "Not set — enables GitHub webhook");
     setHint("databaseUrlHint", s.database_url_set);
@@ -3537,6 +3566,14 @@ async function saveSettings(event) {
     github_webhook_secret: document.getElementById("setGithubWebhookSecret")?.value.trim() || "",
     database_url: document.getElementById("setDatabaseUrl")?.value.trim() || "",
     redis_url: document.getElementById("setRedisUrl")?.value.trim() || "",
+    wazuh_base_url: document.getElementById("setWazuhUrl")?.value.trim() || "",
+    wazuh_user: document.getElementById("setWazuhUser")?.value.trim() || "",
+    wazuh_password: document.getElementById("setWazuhPassword")?.value.trim() || "",
+    wazuh_verify_ssl: document.getElementById("setWazuhVerifySsl")?.checked ?? false,
+    wazuh_sync_interval_sec: Number(document.getElementById("setWazuhSyncInterval")?.value) || 1800,
+    wazuh_indexer_url: document.getElementById("setWazuhIndexerUrl")?.value.trim() || "",
+    wazuh_indexer_user: document.getElementById("setWazuhIndexerUser")?.value.trim() || "",
+    wazuh_indexer_password: document.getElementById("setWazuhIndexerPassword")?.value.trim() || "",
   };
   try {
     const res = await fetch("/api/settings", {
@@ -4327,14 +4364,27 @@ on(document.getElementById("mfaEnrollBtn"), "click", async () => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     const secretEl = document.getElementById("mfaOtpSecret");
-    if (secretEl) secretEl.textContent = data.secret || "";
+    if (secretEl) {
+      secretEl.value = data.secret || "";
+      secretEl.type = "password";
+    }
+    const reveal = document.getElementById("mfaRevealSecret");
+    if (reveal) reveal.textContent = "Show secret";
     document.getElementById("mfaEnrollBlock")?.classList.remove("hidden");
     document.getElementById("mfaEnrollBtn")?.classList.add("hidden");
     document.getElementById("mfaAccountHint").textContent =
-      "Scan the secret in your authenticator app, then enter a verification code.";
+      "Copy the secret into your authenticator app (hidden by default), then enter a verification code.";
   } catch (err) {
     appendMessage("assistant", renderMarkdown(`**MFA enroll failed:** ${err.message}`), true);
   }
+});
+on(document.getElementById("mfaRevealSecret"), "click", () => {
+  const secretEl = document.getElementById("mfaOtpSecret");
+  const btn = document.getElementById("mfaRevealSecret");
+  if (!secretEl) return;
+  const showing = secretEl.type === "text";
+  secretEl.type = showing ? "password" : "text";
+  if (btn) btn.textContent = showing ? "Show secret" : "Hide secret";
 });
 on(document.getElementById("mfaConfirmBtn"), "click", async () => {
   const code = document.getElementById("mfaConfirmCode")?.value?.trim() || "";
@@ -4412,6 +4462,14 @@ on(hermesNewSessionBtn, "click", newHermesSession);
 on(hermesRefreshStatusBtn, "click", refreshHermesStatus);
 on(menuToggle, "click", toggleMenu);
 on(sidebarBackdrop, "click", closeSidebar);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", syncFloatingComposerToViewport);
+  window.visualViewport.addEventListener("scroll", syncFloatingComposerToViewport);
+}
+window.addEventListener("resize", () => {
+  if (window.matchMedia("(min-width: 901px)").matches) closeSidebar();
+  syncFloatingComposerToViewport();
+});
 on(newChatBtn, "click", () => {
   showView("chat");
   serverChatId = null;
@@ -4648,12 +4706,15 @@ async function refreshNotifBadge() {
 
 async function toggleNotifPanel() {
   const panel = document.getElementById("notifPanel");
+  const btn = document.getElementById("notifBtn");
   if (!panel) return;
   if (!panel.classList.contains("hidden")) {
     panel.classList.add("hidden");
+    btn?.setAttribute("aria-expanded", "false");
     return;
   }
   panel.classList.remove("hidden");
+  btn?.setAttribute("aria-expanded", "true");
   const list = document.getElementById("notifList");
   if (list) list.innerHTML = '<p class="hint">Loading…</p>';
   const data = await fetchNotifications();
@@ -4678,8 +4739,12 @@ on(document.getElementById("notifMarkAllRead"), "click", async (e) => {
 });
 document.addEventListener("click", (e) => {
   const panel = document.getElementById("notifPanel");
+  const btn = document.getElementById("notifBtn");
   const wrap = e.target.closest?.(".notif-wrap");
-  if (panel && !panel.classList.contains("hidden") && !wrap) panel.classList.add("hidden");
+  if (panel && !panel.classList.contains("hidden") && !wrap) {
+    panel.classList.add("hidden");
+    btn?.setAttribute("aria-expanded", "false");
+  }
 });
 
 refreshNotifBadge();

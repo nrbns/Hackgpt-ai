@@ -295,6 +295,40 @@ async def generate_password(*, length: int = 16) -> dict[str, Any]:
     }
 
 
+async def check_password_pwned(password: str) -> dict[str, Any]:
+    """HIBP Pwned Passwords range API (k-anonymity). Never sends the full password."""
+    import hashlib
+
+    pwd = (password or "").strip()
+    if not pwd:
+        raise ValueError("password required")
+    if len(pwd) > 256:
+        raise ValueError("password too long")
+    digest = hashlib.sha1(pwd.encode("utf-8")).hexdigest().upper()
+    prefix, suffix = digest[:5], digest[5:]
+    async with httpx.AsyncClient(timeout=20.0, headers=UA) as client:
+        r = await client.get(f"https://api.pwnedpasswords.com/range/{prefix}")
+        r.raise_for_status()
+        body = r.text
+    count = 0
+    for line in body.splitlines():
+        parts = line.split(":")
+        if len(parts) != 2:
+            continue
+        if parts[0].strip().upper() == suffix:
+            try:
+                count = int(parts[1].strip())
+            except ValueError:
+                count = 1
+            break
+    return {
+        "source": "hibp_pwnedpasswords",
+        "exposed": count > 0,
+        "count": count,
+        "note": "Checked via SHA-1 prefix only (k-anonymity). Password is not stored or logged by SecuraIQ.",
+    }
+
+
 async def lookup_abuseipdb(ip: str) -> dict[str, Any]:
     key = _key("abuseipdb_api_key")
     if not key:

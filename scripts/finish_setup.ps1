@@ -27,7 +27,7 @@ if (Get-Command ollama -ErrorAction SilentlyContinue) {
     Write-Host "Ollama detected. Installed models:"
     ollama list
 } else {
-    Write-Host "Ollama not installed — get it from https://ollama.com" -ForegroundColor Yellow
+    Write-Host "Ollama not installed - get it from https://ollama.com" -ForegroundColor Yellow
 }
 
 Write-Host ""
