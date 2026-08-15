@@ -48,6 +48,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if path in {"/api/health", "/api/realtime"}:
             return await call_next(request)
         client = request.client.host if request.client else "unknown"
+        # Local lab: don't throttle this machine's own UI/scripts
+        if client in {"127.0.0.1", "::1", "localhost"}:
+            return await call_next(request)
         limit = self._limit_for(path)
         bucket = "auth" if "auth" in path else ("chat" if "chat" in path or "tools" in path else "api")
         key = f"{client}:{bucket}"

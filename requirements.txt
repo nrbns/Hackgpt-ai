@@ -27,5 +27,8 @@ cryptography>=42.0.0
 # Optional: error reporting (set SENTRY_DSN to enable — see app/error_reporting.py)
 # sentry-sdk>=2.0.0
 
+# Optional: multi-worker realtime bus (set REDIS_URL)
+# redis>=5.0.0
+
 # Optional: Prefect job orchestration (set PREFECT_ENABLED=true)
 # prefect>=3.0,<4

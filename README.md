@@ -109,6 +109,7 @@ Set `WORKSPACE_ZERO_START=false` (or use secured mode) to keep assets and findin
 - **Gap analysis** — ISO / NIST / CIS controls + remediations
 - **Vuln import** — CSV / JSON / XML + lab fixtures
 - **SOC / XDR** — incidents, detections, optional **Wazuh** sync
+- **Inventory** — optional network discovery sync into Assets
 - **Threat intel** — KEV, NVD, free intel APIs, password exposure check (k-anonymity)
 - **Automation** — background jobs + optional Prefect
 - **RAG** — local knowledge base (Re-index in UI)
@@ -126,6 +127,8 @@ First start prefers **Ollama** if installed, otherwise the configured Hugging Fa
 | Unsloth | `.\scripts\use_unsloth.ps1` | `bash scripts/use_unsloth.sh` |
 | Hugging Face | `.\scripts\use_huggingface.ps1` | `bash scripts/use_huggingface.sh` |
 | Wazuh SIEM | `.\scripts\use_wazuh.cmd` | — (prompted SecureString password) |
+| Network inventory | `.\scripts\use_openaudit.cmd` | — (prompted SecureString password) |
+| HardeningKitty | `.\scripts\use_hardeningkitty.cmd -Download` | — |
 
 ---
 
@@ -171,6 +174,10 @@ With the server running:
 | `POST /api/chat` | Streaming chat |
 | `GET /api/platform` | OS + LAN URLs |
 | `GET /api/wazuh/status` | Wazuh connector |
+| `GET /api/openaudit/status` | Network inventory connector |
+| `POST /api/openaudit/sync` | Queue inventory device sync |
+| `GET /api/hardeningkitty/status` | HardeningKitty / CIS workflow |
+| `POST /api/hardeningkitty/audit` | Local Windows Audit (not HailMary) |
 | `POST /api/intel/password/check` | HIBP k-anonymity (body only) |
 
 Full OpenAPI: http://127.0.0.1:8080/docs

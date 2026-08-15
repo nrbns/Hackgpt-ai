@@ -144,7 +144,9 @@ def main() -> int:
         sampj = samples.json()
         if "samples" not in sampj:
             fail(f"vuln samples payload {sampj}")
-        print("OK vulnerabilities/samples count=", len(sampj.get("samples") or []))
+        if sampj.get("disabled") and sampj.get("samples") != []:
+            fail(f"vuln samples should be empty when disabled: {sampj}")
+        print("OK vulnerabilities/samples disabled=", bool(sampj.get("disabled")), "count=", len(sampj.get("samples") or []))
 
         settings = c.get(f"{BASE}/api/settings").json()
         marker_url = "https://integration-searxng.test"

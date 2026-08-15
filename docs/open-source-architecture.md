@@ -37,7 +37,7 @@ See the full tool catalog and MVP matrix: [enterprise-integrations.md](./enterpr
 | Frontend | FastAPI static Mission Control | Shipped |
 | Intel | CISA KEV + NVD (ToS-aware) | Shipped sync |
 | Scanners | Trivy · Semgrep · Gitleaks · Grype · Checkov · Bandit · SonarQube · ZAP | Shipped adapters |
-| Compliance | ISO 27001/27701, NIST CSF, CIS, SOC 2, PCI, HIPAA, GDPR, ASVS | Shipped catalogs |
+| Compliance | ISO 27001:2022/27701:2025, NIST CSF 2.0, 800-53/171, CMMC L2, CIS v8.1, SOC 2, PCI 4.0.1, HIPAA, GDPR, NIS2, ASVS 5.0, Top 10:2025 | Shipped catalogs |
 | Reports | PDF + Markdown + **DOCX/XLSX** | Shipped |
 | Automation | Webhooks + Jira; n8n/Temporal | Webhooks + Jira shipped |
 | Observability | Prometheus/Grafana later | Planned |

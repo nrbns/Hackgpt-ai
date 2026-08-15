@@ -1,0 +1,326 @@
+{
+  "id": "nist_800_171",
+  "name": "NIST SP 800-171 (CUI protection subset)",
+  "version": "Rev. 2 / Rev. 3 transition",
+  "description": "NIST SP 800-171 practices for protecting Controlled Unclassified Information (CMMC Level 2 aligned).",
+  "controls": [
+    {
+      "id": "3.1.1",
+      "title": "Limit system access to authorized users",
+      "domain": "Access Control",
+      "keywords": [
+        "access control",
+        "authorized users",
+        "least privilege"
+      ]
+    },
+    {
+      "id": "3.1.2",
+      "title": "Limit system access to types of transactions and functions",
+      "domain": "Access Control",
+      "keywords": [
+        "role based",
+        "transaction limit",
+        "need to know"
+      ]
+    },
+    {
+      "id": "3.1.5",
+      "title": "Employ least privilege",
+      "domain": "Access Control",
+      "keywords": [
+        "least privilege",
+        "privileged accounts"
+      ]
+    },
+    {
+      "id": "3.1.12",
+      "title": "Monitor and control remote access",
+      "domain": "Access Control",
+      "keywords": [
+        "remote access",
+        "VPN",
+        "MFA"
+      ]
+    },
+    {
+      "id": "3.1.13",
+      "title": "Employ cryptographic mechanisms for remote access sessions",
+      "domain": "Access Control",
+      "keywords": [
+        "remote encryption",
+        "TLS",
+        "VPN crypto"
+      ]
+    },
+    {
+      "id": "3.2.1",
+      "title": "Ensure managers and users are aware of security risks",
+      "domain": "Awareness",
+      "keywords": [
+        "awareness",
+        "training",
+        "CUI handling"
+      ]
+    },
+    {
+      "id": "3.2.2",
+      "title": "Ensure personnel are trained to carry out security duties",
+      "domain": "Awareness",
+      "keywords": [
+        "role-based training",
+        "security duties"
+      ]
+    },
+    {
+      "id": "3.3.1",
+      "title": "Create and retain system audit logs",
+      "domain": "Audit",
+      "keywords": [
+        "audit log",
+        "logging",
+        "retention"
+      ]
+    },
+    {
+      "id": "3.3.2",
+      "title": "Ensure actions can be uniquely traced to users",
+      "domain": "Audit",
+      "keywords": [
+        "accountability",
+        "unique ID",
+        "non-repudiation"
+      ]
+    },
+    {
+      "id": "3.4.1",
+      "title": "Establish and maintain baseline configurations",
+      "domain": "Configuration",
+      "keywords": [
+        "baseline",
+        "hardening",
+        "CMDB"
+      ]
+    },
+    {
+      "id": "3.4.2",
+      "title": "Establish and enforce security configuration settings",
+      "domain": "Configuration",
+      "keywords": [
+        "secure configuration",
+        "CIS",
+        "STIG"
+      ]
+    },
+    {
+      "id": "3.4.7",
+      "title": "Restrict, disable, or prevent use of nonessential programs",
+      "domain": "Configuration",
+      "keywords": [
+        "least functionality",
+        "application control"
+      ]
+    },
+    {
+      "id": "3.5.1",
+      "title": "Identify system users and processes",
+      "domain": "Identification",
+      "keywords": [
+        "identity",
+        "authentication",
+        "MFA"
+      ]
+    },
+    {
+      "id": "3.5.2",
+      "title": "Authenticate before allowing access",
+      "domain": "Identification",
+      "keywords": [
+        "authenticate",
+        "credentials",
+        "SSO"
+      ]
+    },
+    {
+      "id": "3.5.3",
+      "title": "Use multifactor authentication for local and network access",
+      "domain": "Identification",
+      "keywords": [
+        "MFA",
+        "multi-factor"
+      ]
+    },
+    {
+      "id": "3.6.1",
+      "title": "Establish operational incident-handling capability",
+      "domain": "Incident Response",
+      "keywords": [
+        "incident response",
+        "IR plan",
+        "CSIRT"
+      ]
+    },
+    {
+      "id": "3.6.2",
+      "title": "Track, document, and report incidents",
+      "domain": "Incident Response",
+      "keywords": [
+        "incident tracking",
+        "report incident"
+      ]
+    },
+    {
+      "id": "3.7.1",
+      "title": "Perform maintenance on organizational systems",
+      "domain": "Maintenance",
+      "keywords": [
+        "maintenance",
+        "controlled maintenance"
+      ]
+    },
+    {
+      "id": "3.7.2",
+      "title": "Provide controls on tools and personnel for maintenance",
+      "domain": "Maintenance",
+      "keywords": [
+        "maintenance tools",
+        "vendor access"
+      ]
+    },
+    {
+      "id": "3.8.1",
+      "title": "Protect media containing CUI",
+      "domain": "Media",
+      "keywords": [
+        "media protection",
+        "CUI media",
+        "encryption"
+      ]
+    },
+    {
+      "id": "3.8.3",
+      "title": "Sanitize or destroy CUI media before disposal",
+      "domain": "Media",
+      "keywords": [
+        "sanitize",
+        "wipe",
+        "disposal"
+      ]
+    },
+    {
+      "id": "3.9.1",
+      "title": "Screen individuals prior to authorizing access",
+      "domain": "Personnel",
+      "keywords": [
+        "screening",
+        "background check"
+      ]
+    },
+    {
+      "id": "3.9.2",
+      "title": "Ensure CUI access is terminated when no longer needed",
+      "domain": "Personnel",
+      "keywords": [
+        "termination",
+        "offboarding"
+      ]
+    },
+    {
+      "id": "3.10.1",
+      "title": "Limit physical access to systems and equipment",
+      "domain": "Physical",
+      "keywords": [
+        "physical access",
+        "facility",
+        "badge"
+      ]
+    },
+    {
+      "id": "3.11.1",
+      "title": "Periodically assess risk",
+      "domain": "Risk",
+      "keywords": [
+        "risk assessment",
+        "risk register"
+      ]
+    },
+    {
+      "id": "3.11.2",
+      "title": "Scan for vulnerabilities and remediate",
+      "domain": "Risk",
+      "keywords": [
+        "vulnerability",
+        "scan",
+        "remediation"
+      ]
+    },
+    {
+      "id": "3.12.1",
+      "title": "Periodically assess security controls",
+      "domain": "Assessment",
+      "keywords": [
+        "control assessment",
+        "security assessment"
+      ]
+    },
+    {
+      "id": "3.13.1",
+      "title": "Monitor and control communications at boundaries",
+      "domain": "System Protection",
+      "keywords": [
+        "boundary",
+        "firewall",
+        "IDS"
+      ]
+    },
+    {
+      "id": "3.13.8",
+      "title": "Implement cryptographic mechanisms to prevent unauthorized disclosure",
+      "domain": "System Protection",
+      "keywords": [
+        "encryption",
+        "CUI encryption",
+        "TLS"
+      ]
+    },
+    {
+      "id": "3.13.11",
+      "title": "Employ FIPS-validated cryptography when required",
+      "domain": "System Protection",
+      "keywords": [
+        "FIPS",
+        "cryptography",
+        "validated crypto"
+      ]
+    },
+    {
+      "id": "3.14.1",
+      "title": "Identify and correct system flaws",
+      "domain": "System Integrity",
+      "keywords": [
+        "patch",
+        "flaw remediation",
+        "CVE"
+      ]
+    },
+    {
+      "id": "3.14.2",
+      "title": "Provide protection from malicious code",
+      "domain": "System Integrity",
+      "keywords": [
+        "anti-malware",
+        "EDR"
+      ]
+    },
+    {
+      "id": "3.14.3",
+      "title": "Monitor system security alerts and advisories",
+      "domain": "System Integrity",
+      "keywords": [
+        "security alerts",
+        "advisories",
+        "monitoring"
+      ]
+    }
+  ]
+}

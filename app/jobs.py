@@ -35,10 +35,14 @@ _worker_task: asyncio.Task | None = None
 _scheduler_task: asyncio.Task | None = None
 
 KEV_SYNC_INTERVAL_SEC = 6 * 3600  # matches the 12h KEV cache TTL with margin
-_SCHEDULER_TICK_SEC = 300  # poll granularity; each job kind tracks its own interval below
+_SCHEDULER_TICK_SEC = 60  # wake scheduled syncs quickly for near-realtime connectors
 _last_kev_sync = 0.0
 _last_xdr_sync = 0.0
 _last_wazuh_sync = 0.0
+_last_openaudit_sync = 0.0
+_last_thehive_sync = 0.0
+_last_cloud_posture_sync = 0.0
+_last_sonarqube_sync = 0.0
 
 
 def register_job(kind: str):
@@ -81,6 +85,12 @@ def enqueue_job(
     c.commit()
     if _queue is not None:
         _queue.put_nowait(jid)
+    try:
+        from app.realtime_bus import publish
+
+        publish(type="job", id=jid, kind=kind, status="pending")
+    except Exception:
+        pass
     return get_job(jid)  # type: ignore[return-value]
 
 
@@ -151,12 +161,24 @@ async def _run_one(job_id: str) -> None:
             (json.dumps(result or {}), now(), job_id),
         )
         c.commit()
+        try:
+            from app.realtime_bus import publish
+
+            publish(type="job", id=job_id, kind=job.get("kind"), status="done")
+        except Exception:
+            pass
     except Exception as exc:  # noqa: BLE001 — job errors must never crash the worker
         c.execute(
             "UPDATE jobs SET status='error', error=?, finished_at=? WHERE id=?",
             (f"{exc}\n{traceback.format_exc()[-2000:]}", now(), job_id),
         )
         c.commit()
+        try:
+            from app.realtime_bus import publish
+
+            publish(type="job", id=job_id, kind=job.get("kind"), status="error")
+        except Exception:
+            pass
 
 
 async def _worker_loop() -> None:
@@ -172,7 +194,8 @@ async def _worker_loop() -> None:
 async def _scheduler_loop() -> None:
     # Stagger first run slightly so it doesn't compete with app startup.
     await asyncio.sleep(15)
-    global _last_kev_sync, _last_xdr_sync, _last_wazuh_sync
+    global _last_kev_sync, _last_xdr_sync, _last_wazuh_sync, _last_openaudit_sync
+    global _last_thehive_sync, _last_cloud_posture_sync, _last_sonarqube_sync
     while True:
         now_t = time.time()
         try:
@@ -212,6 +235,73 @@ async def _scheduler_loop() -> None:
             ):
                 _last_wazuh_sync = now_t
                 enqueue_job("wazuh_sync", {"scheduled": True})
+        except Exception:
+            pass
+        try:
+            from app.config import settings
+
+            from app.connectors import openaudit as oa_conn
+
+            oa_interval = max(300, int(getattr(settings, "openaudit_sync_interval_sec", 3600) or 3600))
+            if (
+                "openaudit_sync" in JOB_HANDLERS
+                and oa_conn.is_configured()
+                and now_t - _last_openaudit_sync >= oa_interval
+                and not _has_pending_or_running("openaudit_sync")
+            ):
+                _last_openaudit_sync = now_t
+                enqueue_job("openaudit_sync", {"scheduled": True})
+        except Exception:
+            pass
+        try:
+            from app.config import settings
+
+            from app.connectors import thehive as th_conn
+
+            th_interval = max(300, int(getattr(settings, "thehive_sync_interval_sec", 1800) or 1800))
+            if (
+                "thehive_sync" in JOB_HANDLERS
+                and th_conn.is_configured()
+                and now_t - _last_thehive_sync >= th_interval
+                and not _has_pending_or_running("thehive_sync")
+            ):
+                _last_thehive_sync = now_t
+                enqueue_job("thehive_sync", {"scheduled": True, "user_id": "local"})
+        except Exception:
+            pass
+        try:
+            from app.config import settings
+
+            from app.cloud_posture import status as cloud_status
+
+            cp_interval = max(
+                300, int(getattr(settings, "cloud_posture_sync_interval_sec", 3600) or 3600)
+            )
+            cp = cloud_status()
+            if (
+                "cloud_posture_sync" in JOB_HANDLERS
+                and int(cp.get("configured_count") or 0) > 0
+                and now_t - _last_cloud_posture_sync >= cp_interval
+                and not _has_pending_or_running("cloud_posture_sync")
+            ):
+                _last_cloud_posture_sync = now_t
+                enqueue_job("cloud_posture_sync", {"scheduled": True, "user_id": "local"})
+        except Exception:
+            pass
+        try:
+            from app.config import settings
+
+            from app.connectors import sonarqube as sonar_conn
+
+            sq_interval = max(300, int(getattr(settings, "sonarqube_sync_interval_sec", 3600) or 3600))
+            if (
+                "sonarqube_sync" in JOB_HANDLERS
+                and sonar_conn.is_configured()
+                and now_t - _last_sonarqube_sync >= sq_interval
+                and not _has_pending_or_running("sonarqube_sync")
+            ):
+                _last_sonarqube_sync = now_t
+                enqueue_job("sonarqube_sync", {"scheduled": True, "user_id": "local"})
         except Exception:
             pass
         await asyncio.sleep(_SCHEDULER_TICK_SEC)
@@ -255,11 +345,31 @@ async def stop_background_jobs() -> None:
 
 @register_job("kev_sync")
 async def _job_kev_sync(payload: dict[str, Any]) -> dict[str, Any]:
-    from app.intel_feeds import fetch_cisa_kev
+    from app.intel_feeds import alert_watchlist_on_kev, fetch_cisa_kev
 
     t0 = time.time()
+    user_id = payload.get("user_id") or "local"
     feed = await fetch_cisa_kev(limit=payload.get("limit", 50))
-    return {"count": feed.get("count"), "cached": feed.get("cached"), "duration_sec": round(time.time() - t0, 2)}
+    watch = await alert_watchlist_on_kev(user_id, feed=feed)
+    try:
+        from app.realtime_bus import publish
+
+        publish(
+            type="intel",
+            source="kev_sync",
+            count=feed.get("count"),
+            cached=feed.get("cached"),
+            watch_matches=watch.get("watch_matches"),
+            user_id=user_id,
+        )
+    except Exception:
+        pass
+    return {
+        "count": feed.get("count"),
+        "cached": feed.get("cached"),
+        "watch": watch,
+        "duration_sec": round(time.time() - t0, 2),
+    }
 
 
 @register_job("xdr_sync")
@@ -280,6 +390,66 @@ async def _job_wazuh_sync(payload: dict[str, Any]) -> dict[str, Any]:
 
     t0 = time.time()
     result = await wazuh_sync(payload.get("user_id", "local"))
+    result["duration_sec"] = round(time.time() - t0, 2)
+    return result
+
+
+@register_job("openaudit_sync")
+async def _job_openaudit_sync(payload: dict[str, Any]) -> dict[str, Any]:
+    """Pull Open-AudIT devices into SecuraIQ assets."""
+    from app.openaudit import sync as openaudit_sync
+
+    t0 = time.time()
+    result = await openaudit_sync(payload.get("user_id", "local"))
+    result["duration_sec"] = round(time.time() - t0, 2)
+    return result
+
+
+@register_job("thehive_sync")
+async def _job_thehive_sync(payload: dict[str, Any]) -> dict[str, Any]:
+    """Pull TheHive cases into SecuraIQ incidents."""
+    from app.thehive import sync as thehive_sync
+
+    t0 = time.time()
+    result = await thehive_sync(payload.get("user_id", "local"))
+    result["duration_sec"] = round(time.time() - t0, 2)
+    return result
+
+
+@register_job("cloud_posture_sync")
+async def _job_cloud_posture_sync(payload: dict[str, Any]) -> dict[str, Any]:
+    """Pull AWS/Azure/GCP posture findings into vulnerabilities."""
+    from app.cloud_posture import sync_all
+
+    t0 = time.time()
+    result = await sync_all(payload.get("user_id", "local"))
+    result["duration_sec"] = round(time.time() - t0, 2)
+    return result
+
+
+@register_job("sonarqube_sync")
+async def _job_sonarqube_sync(payload: dict[str, Any]) -> dict[str, Any]:
+    """Pull SonarQube / SonarCloud issues into the vulnerability register."""
+    from app.sonarqube import sync as sonar_sync
+
+    t0 = time.time()
+    result = await sonar_sync(payload.get("user_id", "local"))
+    result["duration_sec"] = round(time.time() - t0, 2)
+    return result
+
+
+@register_job("hardeningkitty_audit")
+async def _job_hardeningkitty_audit(payload: dict[str, Any]) -> dict[str, Any]:
+    """Run HardeningKitty Audit/Config on this Windows host (authorized labs)."""
+    from app.hardeningkitty import run_audit
+
+    t0 = time.time()
+    result = await run_audit(
+        mode=payload.get("mode") or "Audit",
+        finding_list=payload.get("finding_list") or None,
+        import_findings=bool(payload.get("import_findings", True)),
+        user_id=payload.get("user_id", "local"),
+    )
     result["duration_sec"] = round(time.time() - t0, 2)
     return result
 

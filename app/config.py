@@ -100,6 +100,15 @@ class Settings(BaseSettings):
     malwarebazaar_api_key: str = ""
     emailrep_api_key: str = ""
     github_webhook_secret: str = ""
+    gitlab_webhook_secret: str = ""
+    # STIX/TAXII 2.1 — optional pull from a TAXII collection (MISP/ISAC/etc.)
+    taxii_api_root: str = ""  # e.g. https://cti.example/taxii2/root
+    taxii_collection_id: str = ""
+    taxii_username: str = ""
+    taxii_password: str = ""
+    # Shared secret for lab/vendor push ingest (XDR + Wazuh webhooks).
+    # Header: X-SecuraIQ-Ingest. Required when AUTH_ENABLED=true.
+    ingest_webhook_secret: str = ""
     slack_webhook_url: str = ""
     teams_webhook_url: str = ""
     servicenow_instance_url: str = ""
@@ -114,6 +123,9 @@ class Settings(BaseSettings):
     oidc_client_secret: str = ""
     oidc_redirect_uri: str = "http://127.0.0.1:8080/api/auth/oidc/callback"
     oidc_scopes: str = "openid profile email"
+    # SCIM 2.0 user provisioning scaffold (Keycloak/Okta/Entra) — beta
+    scim_enabled: bool = False
+    scim_token: str = ""  # Bearer token IdPs send; required when scim_enabled
     # Infra (beta SaaS — Postgres/Redis via compose profiles)
     database_url: str = ""  # empty = SQLite at DATA_DIR/securaiq.db
     redis_url: str = ""
@@ -154,6 +166,39 @@ class Settings(BaseSettings):
     wazuh_indexer_url: str = ""  # e.g. https://indexer.example:9200
     wazuh_indexer_user: str = ""
     wazuh_indexer_password: str = ""
+    # Open-AudIT (network inventory — cookie session API)
+    openaudit_base_url: str = ""  # e.g. http://192.168.56.10
+    openaudit_user: str = ""
+    openaudit_password: str = ""
+    openaudit_api_prefix: str = "/open-audit/index.php"
+    openaudit_verify_ssl: bool = False
+    openaudit_sync_interval_sec: int = 3600
+    # HardeningKitty (Windows CIS / baseline audit — local PowerShell module)
+    hardeningkitty_module_path: str = ""  # dir containing HardeningKitty.psm1
+    hardeningkitty_list: str = ""  # optional finding list filename or absolute path
+    # SonarQube / SonarCloud (SAST — live issues API + JSON import)
+    sonarqube_base_url: str = ""  # e.g. https://sonar.example.com or https://sonarcloud.io
+    sonarqube_token: str = ""
+    sonarqube_project_key: str = ""  # optional componentKeys filter
+    sonarqube_verify_ssl: bool = True
+    sonarqube_sync_interval_sec: int = 3600
+    sonarqube_issue_types: str = "VULNERABILITY,SECURITY_HOTSPOT,BUG"
+    # TheHive case management
+    thehive_base_url: str = ""
+    thehive_api_key: str = ""
+    thehive_verify_ssl: bool = False
+    thehive_sync_interval_sec: int = 1800
+    # Cloud posture (AWS Security Hub / Azure Defender for Cloud / GCP SCC)
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_region: str = "us-east-1"
+    azure_tenant_id: str = ""
+    azure_client_id: str = ""
+    azure_client_secret: str = ""
+    azure_subscription_id: str = ""
+    gcp_project_id: str = ""
+    gcp_service_account_json: str = ""  # path to SA JSON
+    cloud_posture_sync_interval_sec: int = 3600
     # Sophos Central (OAuth2 client credentials — id.sophos.com)
     sophos_client_id: str = ""
     sophos_client_secret: str = ""
@@ -161,6 +206,15 @@ class Settings(BaseSettings):
     crowdstrike_client_id: str = ""
     crowdstrike_client_secret: str = ""
     crowdstrike_base_url: str = "https://api.crowdstrike.com"
+    # Hold open the Falcon Streaming API for real-time push instead of only
+    # polling every xdr_sync_interval_sec; needs the "Event streams: Read"
+    # scope on the API client. Auto-backs off to the poll job if unavailable.
+    crowdstrike_streaming_enabled: bool = True
+    # Sophos / SentinelOne / Defender have no Falcon-style client-held stream.
+    # Near-realtime poll (default 60s) supplements the slow xdr_sync job; true
+    # push without polling still works via POST /api/xdr/ingest.
+    xdr_near_realtime_enabled: bool = True
+    xdr_near_realtime_interval_sec: int = 60
     # SentinelOne (static API token)
     sentinelone_api_token: str = ""
     sentinelone_base_url: str = ""  # e.g. https://<tenant>.sentinelone.net
@@ -168,6 +222,10 @@ class Settings(BaseSettings):
     defender_tenant_id: str = ""
     defender_client_id: str = ""
     defender_client_secret: str = ""
+    # Advanced hunting: auto (Graph then legacy), graph, or legacy MTP API
+    # https://learn.microsoft.com/en-us/graph/api/security-security-runhuntingquery
+    # https://learn.microsoft.com/en-us/defender-xdr/api-advanced-hunting
+    defender_hunting_api: str = "auto"
 
 
 settings = Settings()

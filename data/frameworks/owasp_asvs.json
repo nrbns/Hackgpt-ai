@@ -1,19 +1,286 @@
 {
   "id": "owasp_asvs",
-  "name": "OWASP ASVS 4.0 (level 1 subset)",
-  "version": "4.0",
+  "name": "OWASP ASVS 5.0 (chapter subset)",
+  "version": "5.0.0",
+  "description": "OWASP Application Security Verification Standard 5.0.0 (May 2025) — priority chapter requirements for AppSec verification.",
   "controls": [
-    {"id": "V1.1", "title": "Secure software development lifecycle", "domain": "Architecture", "keywords": ["SDLC", "threat model", "security requirements"]},
-    {"id": "V2.1", "title": "Password security", "domain": "Authentication", "keywords": ["password", "hashing", "bcrypt", "argon2"]},
-    {"id": "V2.2", "title": "General authenticator security", "domain": "Authentication", "keywords": ["MFA", "authenticator", "OTP", "WebAuthn"]},
-    {"id": "V3.1", "title": "Session management", "domain": "Session", "keywords": ["session", "cookie", "timeout", "logout"]},
-    {"id": "V4.1", "title": "General access control", "domain": "Access", "keywords": ["authorization", "IDOR", "access control", "RBAC"]},
-    {"id": "V5.1", "title": "Input validation", "domain": "Validation", "keywords": ["input validation", "injection", "XSS", "sanitization"]},
-    {"id": "V5.3", "title": "Output encoding and injection prevention", "domain": "Validation", "keywords": ["output encoding", "SQL injection", "command injection"]},
-    {"id": "V7.1", "title": "Log content", "domain": "Logging", "keywords": ["security logging", "audit", "failed login"]},
-    {"id": "V8.1", "title": "General data protection", "domain": "Data", "keywords": ["PII", "data protection", "encryption", "retention"]},
-    {"id": "V9.1", "title": "Communications security", "domain": "Network", "keywords": ["TLS", "HTTPS", "certificate", "HSTS"]},
-    {"id": "V10.1", "title": "Malicious code detection", "domain": "Malware", "keywords": ["malware", "dependency scan", "SCA"]},
-    {"id": "V14.1", "title": "Build and configuration", "domain": "Config", "keywords": ["secure defaults", "hardening", "secrets management"]}
+    {
+      "id": "1.1",
+      "title": "Encoding and sanitization — injection prevention",
+      "domain": "V1 Encoding",
+      "keywords": [
+        "output encoding",
+        "sanitization",
+        "XSS",
+        "injection prevention"
+      ]
+    },
+    {
+      "id": "1.2",
+      "title": "Encoding for different contexts",
+      "domain": "V1 Encoding",
+      "keywords": [
+        "HTML encoding",
+        "JavaScript encoding",
+        "URL encoding"
+      ]
+    },
+    {
+      "id": "2.1",
+      "title": "Input validation and business logic",
+      "domain": "V2 Validation",
+      "keywords": [
+        "input validation",
+        "business logic",
+        "allowlist"
+      ]
+    },
+    {
+      "id": "2.2",
+      "title": "Anti-automation and abuse controls",
+      "domain": "V2 Validation",
+      "keywords": [
+        "rate limit",
+        "CAPTCHA",
+        "abuse prevention"
+      ]
+    },
+    {
+      "id": "3.1",
+      "title": "Web frontend security headers and cookies",
+      "domain": "V3 Frontend",
+      "keywords": [
+        "CSP",
+        "security headers",
+        "cookie flags",
+        "SameSite"
+      ]
+    },
+    {
+      "id": "3.2",
+      "title": "Origin separation and third-party scripts",
+      "domain": "V3 Frontend",
+      "keywords": [
+        "origin",
+        "SRI",
+        "third-party script",
+        "iframe"
+      ]
+    },
+    {
+      "id": "4.1",
+      "title": "API and web service message validation",
+      "domain": "V4 API",
+      "keywords": [
+        "API validation",
+        "schema validation",
+        "REST",
+        "GraphQL"
+      ]
+    },
+    {
+      "id": "4.2",
+      "title": "API authentication and authorization",
+      "domain": "V4 API",
+      "keywords": [
+        "API auth",
+        "API key",
+        "OAuth API",
+        "mTLS"
+      ]
+    },
+    {
+      "id": "5.1",
+      "title": "File upload and download handling",
+      "domain": "V5 Files",
+      "keywords": [
+        "file upload",
+        "content type",
+        "path traversal",
+        "malware scan"
+      ]
+    },
+    {
+      "id": "6.1",
+      "title": "Password and authenticator security",
+      "domain": "V6 Authentication",
+      "keywords": [
+        "password",
+        "hashing",
+        "argon2",
+        "bcrypt"
+      ]
+    },
+    {
+      "id": "6.2",
+      "title": "Multi-factor authentication",
+      "domain": "V6 Authentication",
+      "keywords": [
+        "MFA",
+        "OTP",
+        "WebAuthn",
+        "passkeys"
+      ]
+    },
+    {
+      "id": "6.3",
+      "title": "Credential recovery and lifecycle",
+      "domain": "V6 Authentication",
+      "keywords": [
+        "password reset",
+        "account recovery",
+        "credential lifecycle"
+      ]
+    },
+    {
+      "id": "7.1",
+      "title": "Session generation and binding",
+      "domain": "V7 Session",
+      "keywords": [
+        "session",
+        "session ID",
+        "cookie",
+        "logout"
+      ]
+    },
+    {
+      "id": "7.2",
+      "title": "Session timeout and termination",
+      "domain": "V7 Session",
+      "keywords": [
+        "session timeout",
+        "idle timeout",
+        "invalidate session"
+      ]
+    },
+    {
+      "id": "8.1",
+      "title": "Access control and authorization",
+      "domain": "V8 Authorization",
+      "keywords": [
+        "authorization",
+        "IDOR",
+        "RBAC",
+        "access control"
+      ]
+    },
+    {
+      "id": "8.2",
+      "title": "Function and data-level authorization",
+      "domain": "V8 Authorization",
+      "keywords": [
+        "object-level authz",
+        "BOLA",
+        "privilege escalation"
+      ]
+    },
+    {
+      "id": "9.1",
+      "title": "Self-contained token creation and validation",
+      "domain": "V9 Tokens",
+      "keywords": [
+        "JWT",
+        "JWS",
+        "token validation",
+        "algorithm confusion"
+      ]
+    },
+    {
+      "id": "10.1",
+      "title": "OAuth and OIDC flows",
+      "domain": "V10 OAuth",
+      "keywords": [
+        "OAuth",
+        "OIDC",
+        "authorization code",
+        "PKCE"
+      ]
+    },
+    {
+      "id": "10.2",
+      "title": "Client registration and consent",
+      "domain": "V10 OAuth",
+      "keywords": [
+        "consent",
+        "client registration",
+        "redirect URI"
+      ]
+    },
+    {
+      "id": "11.1",
+      "title": "Cryptography and key management",
+      "domain": "V11 Crypto",
+      "keywords": [
+        "encryption",
+        "KMS",
+        "random",
+        "key management"
+      ]
+    },
+    {
+      "id": "12.1",
+      "title": "TLS and secure communications",
+      "domain": "V12 Comms",
+      "keywords": [
+        "TLS",
+        "HTTPS",
+        "certificate",
+        "HSTS"
+      ]
+    },
+    {
+      "id": "13.1",
+      "title": "Secure configuration and dependencies",
+      "domain": "V13 Config",
+      "keywords": [
+        "secure defaults",
+        "hardening",
+        "dependency",
+        "secrets management"
+      ]
+    },
+    {
+      "id": "14.1",
+      "title": "Data protection at rest and in transit",
+      "domain": "V14 Data",
+      "keywords": [
+        "PII",
+        "data protection",
+        "encryption",
+        "retention"
+      ]
+    },
+    {
+      "id": "15.1",
+      "title": "Secure coding and architecture practices",
+      "domain": "V15 Architecture",
+      "keywords": [
+        "threat model",
+        "secure design",
+        "SDLC",
+        "DevSecOps"
+      ]
+    },
+    {
+      "id": "16.1",
+      "title": "Security logging and error handling",
+      "domain": "V16 Logging",
+      "keywords": [
+        "security logging",
+        "audit",
+        "failed login",
+        "error handling"
+      ]
+    },
+    {
+      "id": "16.2",
+      "title": "Log integrity and sensitive data in logs",
+      "domain": "V16 Logging",
+      "keywords": [
+        "log integrity",
+        "PII in logs",
+        "log retention"
+      ]
+    }
   ]
 }

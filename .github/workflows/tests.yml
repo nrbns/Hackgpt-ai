@@ -1,0 +1,33 @@
+name: Tests
+
+# Unit/behavioral test suite (pytest) for SecuraIQ — scanner adapters (incl.
+# the Burp Suite XML importer), the realtime pub/sub bus, the integrations
+# catalog, config defaults, and tools-registry dispatch integrity. Runs on
+# every push/PR so a regression is caught in CI, not just when someone
+# remembers to run pytest locally.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: pytest (unit + behavioral)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        # Deliberately not the full requirements.txt — the test suite is
+        # scoped to avoid the heavy chromadb/sentence-transformers chain so
+        # CI stays fast. Add packages here only if a new test needs them.
+        run: pip install pydantic pydantic-settings httpx pytest pytest-asyncio
+      - name: Run test suite
+        run: pytest -v

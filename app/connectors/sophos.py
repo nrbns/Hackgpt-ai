@@ -10,6 +10,8 @@ Auth flow (OAuth2 client credentials, per Sophos's documented API):
   -> GET {dataRegion}/common/v1/alerts               (X-Tenant-ID header)
 
 No SDK — direct REST, matching the pattern used for the other connectors in this package.
+Live detections: `app/xdr_stream.py` runs a near-realtime poll of `fetch_detections`
+(default 60s). True vendor→SecuraIQ push without polling uses `POST /api/xdr/ingest`.
 """
 
 from __future__ import annotations

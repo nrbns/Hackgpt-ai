@@ -65,6 +65,13 @@ def create_incident(
         email=(severity in ("critical", "high")),
     )
 
+    try:
+        from app.realtime_bus import publish
+
+        publish(type="incident", id=iid, severity=severity, user_id=user_id)
+    except Exception:
+        pass
+
     if severity in ("critical", "high"):
         import asyncio
 
@@ -190,7 +197,14 @@ def add_intel_watch(user_id: str, *, kind: str, value: str, notes: str = "") -> 
     get_conn().commit()
     audit("intel_watch_add", user_id, {"id": wid, "value": value})
     row = get_conn().execute("SELECT * FROM intel_watch WHERE id = ?", (wid,)).fetchone()
-    return row_to_dict(row)  # type: ignore[return-value]
+    result = row_to_dict(row)
+    try:
+        from app.realtime_bus import publish
+
+        publish(type="intel_watch", id=wid, kind=kind, value=value, user_id=user_id)
+    except Exception:
+        pass
+    return result  # type: ignore[return-value]
 
 
 def list_intel_watch(user_id: str) -> list[dict[str, Any]]:
@@ -206,7 +220,15 @@ def delete_intel_watch(user_id: str, watch_id: str) -> bool:
         "DELETE FROM intel_watch WHERE id = ? AND user_id = ?", (watch_id, user_id)
     )
     get_conn().commit()
-    return bool(cur.rowcount)
+    ok = bool(cur.rowcount)
+    if ok:
+        try:
+            from app.realtime_bus import publish
+
+            publish(type="intel_watch", id=watch_id, deleted=True, user_id=user_id)
+        except Exception:
+            pass
+    return ok
 
 
 def reports_catalog(user_id: str) -> dict[str, Any]:
@@ -276,6 +298,14 @@ def reports_catalog(user_id: str) -> dict[str, Any]:
                 "title": f"Gap — {a.get('framework_id')} — {a.get('title')} ({a.get('compliance_percent')}%)",
                 "href": f"/api/gap/assessments/{a.get('id')}/export",
                 "kind": "gap",
+            }
+        )
+        items.append(
+            {
+                "id": f"audit-pack-{a.get('id')}",
+                "title": f"Audit pack ZIP — {a.get('framework_id')} — {a.get('title')}",
+                "href": f"/api/gap/assessments/{a.get('id')}/audit-pack",
+                "kind": "audit_pack",
             }
         )
     return {"reports": items, "count": len(items)}

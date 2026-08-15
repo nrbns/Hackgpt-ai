@@ -65,37 +65,54 @@ def _cache_get(feed: str, key: str, max_age_sec: float = 86400) -> dict[str, Any
         return None
 
 
+def _normalize_kev_items(raw_vulns: list[Any], *, limit: int = 40) -> list[dict[str, Any]]:
+    """Always return the same shape — cached raw CISA rows used to leak `cveID` vs `cve`."""
+    vulns = [v for v in (raw_vulns or []) if isinstance(v, dict)]
+    vulns = sorted(vulns, key=lambda x: x.get("dateAdded") or x.get("date_added") or "", reverse=True)
+    out: list[dict[str, Any]] = []
+    for v in vulns[: max(1, min(limit, 500))]:
+        # Fresh API rows use cveID; already-normalized cache rows use cve
+        cve = (v.get("cve") or v.get("cveID") or "").strip().upper()
+        if not cve:
+            continue
+        out.append(
+            {
+                "cve": cve,
+                "vendor": v.get("vendor") or v.get("vendorProject"),
+                "product": v.get("product"),
+                "name": v.get("name") or v.get("vulnerabilityName"),
+                "date_added": v.get("date_added") or v.get("dateAdded"),
+                "ransomware": v.get("ransomware") or v.get("knownRansomwareCampaignUse"),
+                "notes": (v.get("notes") or v.get("shortDescription") or "")[:400],
+            }
+        )
+    return out
+
+
 async def fetch_cisa_kev(*, limit: int = 40) -> dict[str, Any]:
     cached = _cache_get("kev", "catalog", max_age_sec=43200)
     if cached:
-        vulns = (cached.get("vulnerabilities") or [])[:limit]
-        return {"source": "cisa_kev", "cached": True, "count": len(vulns), "items": vulns}
+        items = _normalize_kev_items(cached.get("vulnerabilities") or cached.get("items") or [], limit=limit)
+        return {
+            "source": "cisa_kev",
+            "cached": True,
+            "catalog_version": cached.get("catalogVersion"),
+            "count": len(items),
+            "items": items,
+        }
 
     async with httpx.AsyncClient(timeout=45.0, follow_redirects=True) as client:
         r = await client.get(KEV_URL)
         r.raise_for_status()
         data = r.json()
     _cache_put("kev", "catalog", data)
-    vulns = (data.get("vulnerabilities") or [])[:limit]
-    # newest first if dates present
-    vulns = sorted(vulns, key=lambda x: x.get("dateAdded") or "", reverse=True)[:limit]
+    items = _normalize_kev_items(data.get("vulnerabilities") or [], limit=limit)
     return {
         "source": "cisa_kev",
         "cached": False,
         "catalog_version": data.get("catalogVersion"),
-        "count": len(vulns),
-        "items": [
-            {
-                "cve": v.get("cveID"),
-                "vendor": v.get("vendorProject"),
-                "product": v.get("product"),
-                "name": v.get("vulnerabilityName"),
-                "date_added": v.get("dateAdded"),
-                "ransomware": v.get("knownRansomwareCampaignUse"),
-                "notes": (v.get("shortDescription") or "")[:400],
-            }
-            for v in vulns
-        ],
+        "count": len(items),
+        "items": items,
     }
 
 
@@ -158,4 +175,79 @@ async def sync_kev_to_watchlist(user_id: str, *, limit: int = 25) -> dict[str, A
         existing.add(cve)
         added += 1
     audit("intel_kev_sync", user_id, {"added": added, "limit": limit})
+    try:
+        from app.realtime_bus import publish
+
+        publish(type="intel", source="kev_sync", added=added, user_id=user_id)
+    except Exception:
+        pass
     return {"ok": True, "added": added, "feed_count": feed.get("count"), "cached": feed.get("cached")}
+
+
+async def alert_watchlist_on_kev(user_id: str = "local", *, feed: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Match intel watchlist CVEs against CISA KEV; notify + publish on hits / newly added KEV rows."""
+    feed = feed or await fetch_cisa_kev(limit=200)
+    items = [i for i in (feed.get("items") or []) if isinstance(i, dict) and i.get("cve")]
+    by_cve = {(i.get("cve") or "").upper(): i for i in items}
+
+    # Track catalog membership so we can detect *new* KEV CVEs between syncs
+    prev = _cache_get("kev", "cve_set", max_age_sec=10**9) or {}
+    prev_set = {str(x).upper() for x in (prev.get("cves") or []) if x}
+    cur_set = set(by_cve.keys())
+    newly_added = (cur_set - prev_set) if prev_set else set()
+    _cache_put("kev", "cve_set", {"cves": sorted(cur_set)[:8000], "catalog_version": feed.get("catalog_version")})
+
+    watch = list_intel_watch(user_id)
+    watch_cves = {
+        (w.get("value") or "").upper(): w
+        for w in watch
+        if (w.get("value") or "").upper().startswith("CVE-")
+    }
+    matches = [by_cve[c] for c in watch_cves if c in by_cve]
+    new_hits = [by_cve[c] for c in newly_added if c in watch_cves]
+
+    if matches or newly_added:
+        try:
+            from app.realtime_bus import publish
+
+            publish(
+                type="intel",
+                source="kev",
+                watch_matches=len(matches),
+                newly_added=len(newly_added),
+                new_watch_hits=len(new_hits),
+                cached=bool(feed.get("cached")),
+                user_id=user_id,
+            )
+        except Exception:
+            pass
+
+    if new_hits or (matches and not prev_set):
+        # Notify on first-ever match set, or when a watched CVE newly enters KEV
+        from app.notifications import notify
+
+        hit_list = new_hits or matches[:5]
+        for item in hit_list[:8]:
+            cve = item.get("cve") or "?"
+            notify(
+                user_id,
+                "intel_watch",
+                f"Watchlist CVE on CISA KEV: {cve}",
+                f"{item.get('vendor') or ''} {item.get('product') or ''} · {item.get('name') or ''}".strip()[:400],
+                link="/#intel",
+                email=False,
+            )
+
+    audit(
+        "intel_kev_watch_check",
+        user_id,
+        {"matches": len(matches), "newly_added": len(newly_added), "new_hits": len(new_hits)},
+    )
+    return {
+        "ok": True,
+        "watch_matches": len(matches),
+        "newly_added_kev": len(newly_added),
+        "new_watch_hits": len(new_hits),
+        "match_cves": [m.get("cve") for m in matches[:20]],
+        "cached": feed.get("cached"),
+    }

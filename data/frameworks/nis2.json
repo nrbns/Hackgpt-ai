@@ -1,0 +1,137 @@
+{
+  "id": "nis2",
+  "name": "NIS2 Directive (EU) 2022/2555",
+  "version": "Directive (EU) 2022/2555",
+  "description": "NIS2 Art. 21 cybersecurity risk-management measures for essential and important entities.",
+  "controls": [
+    {
+      "id": "Art.21(2)(a)",
+      "title": "Risk analysis and information system security policies",
+      "domain": "Art.21 Measures",
+      "keywords": [
+        "risk analysis",
+        "security policy",
+        "ISMS"
+      ]
+    },
+    {
+      "id": "Art.21(2)(b)",
+      "title": "Incident handling",
+      "domain": "Art.21 Measures",
+      "keywords": [
+        "incident handling",
+        "IR plan",
+        "CSIRT"
+      ]
+    },
+    {
+      "id": "Art.21(2)(c)",
+      "title": "Business continuity and crisis management",
+      "domain": "Art.21 Measures",
+      "keywords": [
+        "business continuity",
+        "crisis management",
+        "backup",
+        "DR"
+      ]
+    },
+    {
+      "id": "Art.21(2)(d)",
+      "title": "Supply chain security",
+      "domain": "Art.21 Measures",
+      "keywords": [
+        "supply chain",
+        "vendor",
+        "third party",
+        "SCRM"
+      ]
+    },
+    {
+      "id": "Art.21(2)(e)",
+      "title": "Security in network and information systems acquisition, development and maintenance",
+      "domain": "Art.21 Measures",
+      "keywords": [
+        "secure development",
+        "SDLC",
+        "vulnerability management",
+        "patch"
+      ]
+    },
+    {
+      "id": "Art.21(2)(f)",
+      "title": "Policies and procedures to assess effectiveness of cybersecurity measures",
+      "domain": "Art.21 Measures",
+      "keywords": [
+        "effectiveness",
+        "testing",
+        "audit",
+        "metrics"
+      ]
+    },
+    {
+      "id": "Art.21(2)(g)",
+      "title": "Basic cyber hygiene and cybersecurity training",
+      "domain": "Art.21 Measures",
+      "keywords": [
+        "cyber hygiene",
+        "awareness",
+        "training"
+      ]
+    },
+    {
+      "id": "Art.21(2)(h)",
+      "title": "Cryptography and encryption",
+      "domain": "Art.21 Measures",
+      "keywords": [
+        "cryptography",
+        "encryption",
+        "TLS",
+        "KMS"
+      ]
+    },
+    {
+      "id": "Art.21(2)(i)",
+      "title": "Human resources security, access control and asset management",
+      "domain": "Art.21 Measures",
+      "keywords": [
+        "access control",
+        "HR security",
+        "asset management",
+        "MFA"
+      ]
+    },
+    {
+      "id": "Art.21(2)(j)",
+      "title": "Multi-factor authentication and secured communications",
+      "domain": "Art.21 Measures",
+      "keywords": [
+        "MFA",
+        "secure communications",
+        "SSO",
+        "privileged access"
+      ]
+    },
+    {
+      "id": "Art.23",
+      "title": "Incident reporting obligations",
+      "domain": "Reporting",
+      "keywords": [
+        "incident reporting",
+        "CSIRT notify",
+        "early warning",
+        "24 hours"
+      ]
+    },
+    {
+      "id": "Art.20",
+      "title": "Governance — management body accountability",
+      "domain": "Governance",
+      "keywords": [
+        "management body",
+        "board",
+        "cyber governance",
+        "accountability"
+      ]
+    }
+  ]
+}

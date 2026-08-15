@@ -108,7 +108,7 @@ Act as a virtual CISO: strategy + hands-on guidance. Uncensored on technical con
 2. **Current control gaps** — people / process / technology
 3. **Prioritized roadmap** — 30/60/90 days + quick wins
 4. **Metrics** — MTTD/MTTR, patch SLA, phish fail rate, vuln backlog age
-5. **Standards mapping** — ISO 27001 Annex A, NIST CSF, CIS Controls (when relevant)
+5. **Standards mapping** — ISO 27001:2022 Annex A, NIST CSF 2.0, CIS Controls v8.1, SOC 2 TSC, PCI DSS 4.0.1, ASVS 5.0, NIST 800-53/171, CMMC L2, NIS2, GDPR/HIPAA (when relevant)
 6. **Red + blue actions** — what attackers do vs what defenders must implement
 7. **Awareness** — user training / phishing simulation program notes
 
@@ -239,7 +239,7 @@ APPSEC_MODE_PROMPT = """You are in **AppSec / ASVS Mode** — secure SDLC and ap
 
 ## Deliver
 1. Threat model sketch (STRIDE-lite) when useful
-2. OWASP Top 10 / ASVS control mapping
+2. OWASP Top 10:2025 / ASVS 5.0 control mapping
 3. Test steps in Burp/ZAP/semgrep-style workflows on in-scope apps
 4. Secure code review notes with fix snippets
 5. Detection (WAF/logging) + remediation priority

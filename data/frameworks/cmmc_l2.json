@@ -1,0 +1,230 @@
+{
+  "id": "cmmc_l2",
+  "name": "CMMC 2.0 Level 2 (practice subset)",
+  "version": "2.0 Level 2",
+  "description": "CMMC 2.0 Level 2 practices aligned to NIST SP 800-171 for DFARS / CUI environments.",
+  "controls": [
+    {
+      "id": "AC.L2-3.1.1",
+      "title": "Limit system access to authorized users",
+      "domain": "Access Control",
+      "keywords": [
+        "access control",
+        "authorized users"
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.3",
+      "title": "Control CUI flow",
+      "domain": "Access Control",
+      "keywords": [
+        "CUI flow",
+        "information flow"
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.5",
+      "title": "Employ least privilege",
+      "domain": "Access Control",
+      "keywords": [
+        "least privilege",
+        "privileged"
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.12",
+      "title": "Monitor remote access sessions",
+      "domain": "Access Control",
+      "keywords": [
+        "remote access",
+        "VPN",
+        "MFA"
+      ]
+    },
+    {
+      "id": "AT.L2-3.2.1",
+      "title": "Security awareness",
+      "domain": "Awareness & Training",
+      "keywords": [
+        "awareness",
+        "training"
+      ]
+    },
+    {
+      "id": "AU.L2-3.3.1",
+      "title": "System auditing",
+      "domain": "Audit & Accountability",
+      "keywords": [
+        "audit log",
+        "logging"
+      ]
+    },
+    {
+      "id": "AU.L2-3.3.2",
+      "title": "User accountability",
+      "domain": "Audit & Accountability",
+      "keywords": [
+        "unique ID",
+        "accountability"
+      ]
+    },
+    {
+      "id": "CM.L2-3.4.1",
+      "title": "Baseline configurations",
+      "domain": "Configuration Management",
+      "keywords": [
+        "baseline",
+        "hardening"
+      ]
+    },
+    {
+      "id": "CM.L2-3.4.2",
+      "title": "Security configuration settings",
+      "domain": "Configuration Management",
+      "keywords": [
+        "secure configuration",
+        "CIS"
+      ]
+    },
+    {
+      "id": "IA.L2-3.5.3",
+      "title": "Multifactor authentication",
+      "domain": "Identification & Authentication",
+      "keywords": [
+        "MFA",
+        "multi-factor"
+      ]
+    },
+    {
+      "id": "IR.L2-3.6.1",
+      "title": "Incident handling",
+      "domain": "Incident Response",
+      "keywords": [
+        "incident response",
+        "IR plan"
+      ]
+    },
+    {
+      "id": "IR.L2-3.6.2",
+      "title": "Incident reporting",
+      "domain": "Incident Response",
+      "keywords": [
+        "incident reporting",
+        "notification"
+      ]
+    },
+    {
+      "id": "MA.L2-3.7.1",
+      "title": "System maintenance",
+      "domain": "Maintenance",
+      "keywords": [
+        "maintenance",
+        "controlled"
+      ]
+    },
+    {
+      "id": "MP.L2-3.8.3",
+      "title": "Media sanitization",
+      "domain": "Media Protection",
+      "keywords": [
+        "sanitize",
+        "wipe",
+        "CUI media"
+      ]
+    },
+    {
+      "id": "PE.L2-3.10.1",
+      "title": "Physical access",
+      "domain": "Physical Protection",
+      "keywords": [
+        "physical access",
+        "facility"
+      ]
+    },
+    {
+      "id": "PS.L2-3.9.2",
+      "title": "Personnel termination",
+      "domain": "Personnel Security",
+      "keywords": [
+        "termination",
+        "offboarding"
+      ]
+    },
+    {
+      "id": "RA.L2-3.11.2",
+      "title": "Vulnerability scanning",
+      "domain": "Risk Assessment",
+      "keywords": [
+        "vulnerability",
+        "scan",
+        "remediation"
+      ]
+    },
+    {
+      "id": "CA.L2-3.12.1",
+      "title": "Security control assessments",
+      "domain": "Security Assessment",
+      "keywords": [
+        "assessment",
+        "SSP",
+        "POA&M"
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.1",
+      "title": "Boundary protection",
+      "domain": "System & Communications",
+      "keywords": [
+        "firewall",
+        "boundary",
+        "segmentation"
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.8",
+      "title": "Cryptographic protection of CUI",
+      "domain": "System & Communications",
+      "keywords": [
+        "encryption",
+        "CUI",
+        "TLS"
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.11",
+      "title": "FIPS-validated cryptography",
+      "domain": "System & Communications",
+      "keywords": [
+        "FIPS",
+        "cryptography"
+      ]
+    },
+    {
+      "id": "SI.L2-3.14.1",
+      "title": "Flaw remediation",
+      "domain": "System & Information Integrity",
+      "keywords": [
+        "patch",
+        "CVE"
+      ]
+    },
+    {
+      "id": "SI.L2-3.14.2",
+      "title": "Malicious code protection",
+      "domain": "System & Information Integrity",
+      "keywords": [
+        "EDR",
+        "anti-malware"
+      ]
+    },
+    {
+      "id": "SI.L2-3.14.3",
+      "title": "Security alerts and advisories",
+      "domain": "System & Information Integrity",
+      "keywords": [
+        "monitoring",
+        "advisories"
+      ]
+    }
+  ]
+}

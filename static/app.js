@@ -467,6 +467,32 @@ async function exportCurrentChat() {
 function openGap() {
   gapModal?.classList.remove("hidden");
   gapResult?.classList.add("hidden");
+  loadGapFrameworks(true);
+}
+async function loadGapFrameworks(force = false) {
+  const sel = document.getElementById("gapFramework");
+  if (!sel) return;
+  if (!force && sel.dataset.loaded === "1" && sel.options.length > 3) return;
+  try {
+    const res = await fetch("/api/frameworks", { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    const frameworks = data.frameworks || [];
+    if (!frameworks.length) return;
+    const current = sel.value;
+    sel.innerHTML = frameworks
+      .map((f) => {
+        const label = f.version
+          ? `${f.name || f.id} (${f.version})`
+          : f.name || f.id;
+        const n = f.control_count != null ? ` · ${f.control_count} controls` : "";
+        return `<option value="${escapeHtml(f.id)}">${escapeHtml(label + n)}</option>`;
+      })
+      .join("");
+    if (current && [...sel.options].some((o) => o.value === current)) sel.value = current;
+    sel.dataset.loaded = "1";
+  } catch {
+    /* keep static fallback options */
+  }
 }
 function closeGap() {
   gapModal?.classList.add("hidden");
@@ -509,11 +535,18 @@ async function runGapAnalysis(e) {
     appendMessage(
       "assistant",
       renderMarkdown(
-        `**Gap analysis complete** — ${data.framework_name}: **${data.compliance_percent}%**\n\n${data.executive_summary}\n\nUse **Export report** in Gap analysis, or open **Dashboard**.`
+        `**Gap analysis complete** — ${data.framework_name}: **${data.compliance_percent}%**\n\n${data.executive_summary}\n\nOpen **Frameworks** to review controls, remediations, and evidence.`
       ),
       true
     );
     if (typeof loadCommandCenter === "function") loadCommandCenter();
+    if (typeof window.renderFrameworksPage === "function" && window.__securaiqWorkspaceView === "frameworks") {
+      try {
+        window.renderFrameworksPage();
+      } catch {
+        /* ignore */
+      }
+    }
   } catch (err) {
     appendMessage("assistant", renderMarkdown(`**Gap analysis failed:** ${err.message}`), true);
   } finally {
@@ -542,6 +575,10 @@ function renderGapResult(data) {
   gapResult.classList.remove("hidden");
   gapResult.innerHTML = `
     <div class="gap-score">${escapeHtml(data.compliance_percent)}% compliance</div>
+    <p class="hint">${escapeHtml(
+      (data.methodology && data.methodology.summary) ||
+        "Heuristic keyword score — not auditor-certified. Manual overrides raise confidence for that control only."
+    )}</p>
     <div class="gap-counts">
       <span class="gap-chip">implemented ${counts.implemented || 0}</span>
       <span class="gap-chip">partial ${counts.partial || 0}</span>
@@ -1036,12 +1073,45 @@ const THINK_STEPS = [
   { id: "model", label: "Compose the answer" },
 ];
 
-function setLiveState(state, phaseText, activity) {
-  if (!liveBarEl) return;
-  liveBarEl.classList.remove("live-on", "live-busy", "live-off");
-  liveBarEl.classList.add(state);
+function paintLiveDeck(state, phaseText, activity, data) {
+  const ticker = document.getElementById("liveTicker");
+  const rail = document.getElementById("railLive");
+  const apply = (el) => {
+    if (!el) return;
+    el.classList.remove("live-on", "live-busy", "live-off");
+    el.classList.add(state);
+    el.setAttribute("data-state", state);
+  };
+  apply(liveBarEl);
+  apply(ticker);
+  apply(rail);
   if (livePhaseEl && phaseText) livePhaseEl.textContent = phaseText;
   if (liveActivityEl && activity !== undefined) liveActivityEl.textContent = activity || "";
+  const tickerState = document.getElementById("tickerState");
+  if (tickerState) {
+    tickerState.textContent = state === "live-busy" ? "BUSY" : state === "live-on" ? "LIVE" : "HOLD";
+  }
+  const railText = document.getElementById("railLiveText");
+  if (railText) {
+    railText.textContent =
+      state === "live-busy" ? phaseText || "Pipeline" : state === "live-on" ? "Feed live" : "Feed hold";
+  }
+  const rt = data || window.__securaiqRealtime || {};
+  const jobsBusy = Number(rt.jobs_running || 0) + Number(rt.jobs_pending || 0);
+  const jobsEl = document.getElementById("tickerJobs");
+  if (jobsEl) jobsEl.textContent = `jobs ${jobsBusy}`;
+  const kpiEl = document.getElementById("tickerKpi");
+  if (kpiEl) {
+    const vulns = rt.kpis && rt.kpis.vulns_open != null ? rt.kpis.vulns_open : null;
+    const inc = rt.kpis && rt.kpis.incidents_open != null ? rt.kpis.incidents_open : null;
+    if (vulns != null || inc != null) {
+      kpiEl.textContent = `open ${vulns ?? "—"}v / ${inc ?? "—"}i`;
+    }
+  }
+}
+
+function setLiveState(state, phaseText, activity) {
+  paintLiveDeck(state, phaseText, activity);
 }
 
 function applyLiveMarker(phase) {
@@ -1072,8 +1142,8 @@ function startThinkingUI(bubble) {
   activeThinkingEl.innerHTML = `
     <div class="thinking-head">
       <span class="thinking-pulse" aria-hidden="true"></span>
-      <strong>Thinking</strong>
-      <span class="thinking-sub">planning a precise security answer</span>
+      <strong>Analysis pipeline</strong>
+      <span class="thinking-sub">routing an authorized control answer</span>
     </div>
     <ol class="thinking-steps">
       ${THINK_STEPS.map((s) => `<li data-step="${s.id}" class="pending">${s.label}</li>`).join("")}
@@ -1144,37 +1214,115 @@ function startRealtimeFeed() {
   }
   try {
     const es = new EventSource("/api/realtime");
+    window.__securaiqRealtimeEs = es;
     es.onopen = () => {
       if (!streaming) setLiveState("live-on", "Ready", "");
     };
     es.onmessage = (ev) => {
-      if (streaming || window.__securaiqStreaming) return;
       try {
         const data = JSON.parse(ev.data);
         if (data.error) {
-          setLiveState("live-off", "Feed error", data.error);
+          if (!streaming && !window.__securaiqStreaming) {
+            setLiveState("live-off", "Feed error", data.error);
+          }
           return;
         }
+        const prev = window.__securaiqRealtime || {};
+        window.__securaiqRealtime = data;
+        const push = data.push || null;
+        const pushType = push && push.type ? String(push.type) : "";
         const ready = data.backend_ready || data.backend_status === "loads_on_chat";
         const backend = data.backend || "model";
-        setLiveState(
-          ready ? "live-on" : "live-off",
-          ready ? `Ready · ${backend}` : "Backend offline",
-          data.model || ""
-        );
-        if (liveMetaEl) {
+        const jobsBusy = Number(data.jobs_running || 0) + Number(data.jobs_pending || 0);
+        const liveState = jobsBusy > 0 ? "live-busy" : ready ? "live-on" : "live-off";
+        // Keep badge/KPIs live even while chat streams; only soften the rail label.
+        if (!streaming && !window.__securaiqStreaming) {
+          setLiveState(
+            liveState,
+            jobsBusy > 0
+              ? `Live · ${jobsBusy} job${jobsBusy === 1 ? "" : "s"}`
+              : ready
+                ? `Live · ${backend}`
+                : "Backend hold",
+            data.model || ""
+          );
+          paintLiveDeck(liveState, null, data.model || "", data);
+        }
+        const pulseEl = document.getElementById("topLastSync");
+        if (pulseEl) pulseEl.textContent = `pulse ${new Date().toLocaleTimeString()}`;
+        if (liveMetaEl && !streaming && !window.__securaiqStreaming) {
           const bits = [];
           const tt = Number(data.tools_total || 0);
           const ta = Number(data.tools_available || 0);
           if (tt > 0) bits.push(`tools ${ta}/${tt}`);
           const rag = Number(data.rag_documents || 0);
           if (rag > 0) bits.push(`RAG ${rag}`);
+          if (jobsBusy > 0) bits.push(`jobs ${jobsBusy}`);
+          const hk = data.hardeningkitty || {};
+          if (hk.installed) bits.push(`HK ${hk.lists || 0}`);
+          const inv = data.inventory || {};
+          if (inv.configured) bits.push(`inv ${inv.devices_cached || 0}`);
+          if (pushType) bits.push(`push ${pushType}`);
           liveMetaEl.textContent = bits.join(" · ");
         }
         if (toolsStatusEl && data.tools_total != null) {
           const tt = Number(data.tools_total || 0);
           toolsStatusEl.textContent =
             tt > 0 ? `Tools ${data.tools_available || 0}/${tt} ready` : "Tools ready";
+        }
+        // Live KPI chips on Mission Control (no full reload)
+        const k = data.kpis || {};
+        const setKpi = (id, val) => {
+          const el = document.getElementById(id);
+          if (el && val != null) el.textContent = String(val);
+        };
+        setKpi("ccAssets", k.assets);
+        // Soft-refresh notifications badge from pulse
+        const badge = document.getElementById("notifBadge");
+        if (badge && data.notifications_unread != null) {
+          const n = Number(data.notifications_unread) || 0;
+          badge.hidden = n <= 0;
+          badge.textContent = n > 99 ? "99+" : String(n);
+        }
+        // Detect job completions → notify workspace to refresh
+        const prevJobs = JSON.stringify((prev.jobs_recent || []).map((j) => `${j.id}:${j.status}`));
+        const nextJobs = JSON.stringify((data.jobs_recent || []).map((j) => `${j.id}:${j.status}`));
+        const jobsChanged = (prevJobs && prevJobs !== nextJobs) || pushType === "job";
+        const kpisChanged =
+          JSON.stringify(prev.kpis || {}) !== JSON.stringify(k) ||
+          JSON.stringify(prev.inventory || {}) !== JSON.stringify(data.inventory || {}) ||
+          JSON.stringify(prev.hardeningkitty || {}) !== JSON.stringify(data.hardeningkitty || {});
+        const pushRefresh = !!pushType;
+        window.dispatchEvent(
+          new CustomEvent("securaiq:realtime", {
+            detail: {
+              ...data,
+              jobsChanged,
+              kpisChanged,
+              pushRefresh,
+              pushType,
+              heartbeat: !pushType,
+            },
+          })
+        );
+        applyRealtimeWorkspaceRefresh(data, {
+          jobsChanged,
+          kpisChanged,
+          pushRefresh,
+          pushType,
+          heartbeat: !pushType,
+        });
+        if (pushType === "notification" && typeof refreshNotifBadge === "function") {
+          clearTimeout(window.__securaiqNotifRtTimer);
+          window.__securaiqNotifRtTimer = setTimeout(() => {
+            refreshNotifBadge();
+            const panel = document.getElementById("notifPanel");
+            if (panel && !panel.hidden && typeof fetchNotifications === "function") {
+              fetchNotifications().then((d) => {
+                if (d && typeof renderNotifList === "function") renderNotifList(d);
+              });
+            }
+          }, 250);
         }
       } catch {
         /* ignore */
@@ -1189,6 +1337,53 @@ function startRealtimeFeed() {
     setLiveState("live-off", "Realtime offline", "");
   }
 }
+
+function applyRealtimeWorkspaceRefresh(data, flags) {
+  const view =
+    window.__securaiqWorkspaceView ||
+    (typeof currentView !== "undefined" ? currentView : "") ||
+    "";
+  if (flags.jobsChanged && typeof window.refreshAutomationPage === "function" && view === "automation") {
+    window.refreshAutomationPage();
+  }
+  if (
+    (flags.kpisChanged || flags.pushRefresh || flags.heartbeat) &&
+    view === "command" &&
+    typeof loadCommandCenter === "function"
+  ) {
+    clearTimeout(window.__securaiqCcRtTimer);
+    window.__securaiqCcRtTimer = setTimeout(() => loadCommandCenter(), flags.pushRefresh ? 500 : 1800);
+  }
+  if (flags.jobsChanged && typeof window.__securaiqOnJobPulse === "function") {
+    window.__securaiqOnJobPulse(data);
+  }
+  if ((flags.pushRefresh || flags.heartbeat) && typeof window.__securaiqOnPushPulse === "function") {
+    window.__securaiqOnPushPulse(data, flags);
+  }
+  // Universal: keep whatever panel is open in sync with the live bus
+  if (typeof window.__securaiqRefreshActiveView === "function") {
+    window.__securaiqRefreshActiveView(data, flags);
+  }
+}
+
+async function waitForJob(jobId, { timeoutMs = 180000, intervalMs = 1200 } = {}) {
+  if (!jobId) return null;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { headers: authHeaders() });
+      const job = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(job.detail || `HTTP ${res.status}`);
+      const st = (job.status || "").toLowerCase();
+      if (st === "done" || st === "error" || st === "failed") return job;
+    } catch (err) {
+      if (Date.now() - start > timeoutMs - intervalMs) throw err;
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return { id: jobId, status: "timeout" };
+}
+window.waitForJob = waitForJob;
 
 function getTheme() {
   const t = document.documentElement.getAttribute("data-theme");
@@ -1699,6 +1894,9 @@ function wireCommandCenterUi() {
   // Top enterprise nav
   on(document.getElementById("topSettingsBtn"), "click", () => openSettings());
   on(document.getElementById("topProfileBtn"), "click", () => openAuth());
+  on(document.getElementById("topOrgBtn"), "click", () => {
+    if (typeof window.showWorkspace === "function") window.showWorkspace("orgs");
+  });
   on(document.getElementById("topProjectsBtn"), "click", () => {
     document.getElementById("engagementSelect")?.focus();
     notifyUser("**Projects** — use the Project selector in the sidebar (engagements).");
@@ -1845,7 +2043,7 @@ window.openToolsPalette = openToolsPalette;
 async function renderToolsPalette() {
   if (!toolsPaletteGridEl) return;
   try {
-    const res = await fetch("/api/tools");
+    const res = await fetch("/api/tools", { headers: authHeaders() });
     const data = await res.json();
     toolsCatalogCache = data.tools || [];
     const byCat = {};
@@ -2108,7 +2306,7 @@ function showView(view, opts = {}) {
   }
   setNavActive(currentView);
   if (topbarChatTitleEl) {
-    topbarChatTitleEl.textContent = currentView === "command" ? "Mission Control" : (getCurrentChat()?.title || "AI Workspace");
+    topbarChatTitleEl.textContent = currentView === "command" ? "Control Board" : (getCurrentChat()?.title || "Assistant");
   }
   if (currentView === "command") {
     loadCommandCenter();
@@ -2182,7 +2380,7 @@ async function loadCommandCenter() {
       } catch {
         /* ignore */
       }
-      ["ccScoreTrend", "ccCompTrend", "ccCritTrend", "ccRiskTrend", "ccRemTrend", "ccAssetTrend"].forEach(
+      ["ccScoreTrend", "ccCompTrend", "ccCritTrend", "ccRiskTrend", "ccRemTrend", "ccAssetTrend", "ccIncidentTrend"].forEach(
         (id) => setTrend(id, "—", true)
       );
     } else if (trends.has_baseline) {
@@ -2192,6 +2390,7 @@ async function loadCommandCenter() {
       setTrend("ccRiskTrend", fmtApi(trends.risks_delta), false);
       setTrend("ccRemTrend", fmtApi(trends.rems_delta), false);
       setTrend("ccAssetTrend", fmtApi(trends.assets_delta), true);
+      setTrend("ccIncidentTrend", fmtApi(trends.incidents_delta), false);
     } else {
       const snapKey = "securaiq.kpi.snap";
       let prev = {};
@@ -2212,6 +2411,7 @@ async function loadCommandCenter() {
       setTrend("ccRiskTrend", delta(openRisks, "risks"), false);
       setTrend("ccRemTrend", delta(openRems, "rems"), false);
       setTrend("ccAssetTrend", delta(Number(data.assets_total || 0), "assets"), true);
+      setTrend("ccIncidentTrend", delta(Number(data.incidents_open || 0), "incidents"), false);
       localStorage.setItem(
         snapKey,
         JSON.stringify({
@@ -2221,6 +2421,7 @@ async function loadCommandCenter() {
           risks: openRisks,
           rems: openRems,
           assets: data.assets_total || 0,
+          incidents: data.incidents_open || 0,
           at: Date.now(),
         })
       );
@@ -2259,7 +2460,7 @@ async function loadCommandCenter() {
     const topProj = document.getElementById("topProjectName");
     if (topProj) topProj.textContent = engagementSelectEl?.selectedOptions?.[0]?.textContent || "Workspace";
     const syncEl = document.getElementById("topLastSync");
-    if (syncEl) syncEl.textContent = `Sync ${new Date().toLocaleTimeString()}`;
+    if (syncEl) syncEl.textContent = `pulse ${new Date().toLocaleTimeString()}`;
 
     // Mission context header
     const setTxt = (id, v) => {
@@ -2280,11 +2481,11 @@ async function loadCommandCenter() {
     }
     const aiSum = document.getElementById("mcAiSummary");
     if (aiSum) {
+      // One lead line only when empty — the Start-at-zero card carries the CTA (avoid triple repeat).
       aiSum.textContent =
-        brief.summary ||
-        (emptyWorkspace
-          ? "Your workspace starts at zero — import a scan or run gap analysis when ready."
-          : `Score ${index} · ${crit} critical/high · ${openRisks} open risks.`);
+        emptyWorkspace
+          ? "Your workspace is empty — pick a path below when you’re ready."
+          : brief.summary || `Score ${index} · ${crit} critical/high · ${openRisks} open risks.`;
     }
     const lastScan = mc.last_scan;
     if (lastScan) {
@@ -2292,14 +2493,20 @@ async function loadCommandCenter() {
       setTxt("mcLastScan", Number.isNaN(d.getTime()) ? String(lastScan) : d.toLocaleString());
     } else setTxt("mcLastScan", emptyWorkspace ? "Never" : "No scans yet");
     const today = mc.today || {};
-    setTxt(
-      "mcTodaySummary",
-      emptyWorkspace
-        ? "Empty by design — choose a path below when you’re ready."
-        : `Today: ${today.critical_findings || 0} critical/high · ${today.open_risks || 0} open risks · ${
-            today.open_actions || 0
-          } actions · ${today.open_incidents || 0} incidents`
-    );
+    const todayEl = document.getElementById("mcTodaySummary");
+    if (todayEl) {
+      if (emptyWorkspace) {
+        todayEl.textContent = "";
+        todayEl.hidden = true;
+        todayEl.classList.add("hidden");
+      } else {
+        todayEl.hidden = false;
+        todayEl.classList.remove("hidden");
+        todayEl.textContent = `Today: ${today.critical_findings || 0} critical/high · ${today.open_risks || 0} open risks · ${
+          today.open_actions || 0
+        } actions · ${today.open_incidents || 0} incidents`;
+      }
+    }
 
     const viewCommand = document.getElementById("viewCommand");
     const liveDash = document.getElementById("mcLiveDashboard");
@@ -2314,6 +2521,23 @@ async function loadCommandCenter() {
     }
 
     if (emptyWorkspace) {
+      const emptyLists = [
+        "ccTopRisks",
+        "ccTopVulns",
+        "ccRecommendedToday",
+        "ccTodayList",
+        "mcDecisionActions",
+        "mcWorkQueue",
+      ];
+      emptyLists.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = "";
+      });
+      ["wfImported", "wfTriaged", "wfActions", "wfClosed"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = "0";
+      });
+      if (fwEl) fwEl.textContent = "0";
       window.__securaiqCcLoading = false;
       return;
     }
@@ -2355,9 +2579,9 @@ async function loadCommandCenter() {
         : `<p class="hint">Empty queue — add risks, vulns, or a gap assessment to prioritize work.</p>`;
     }
 
-    const todayEl = document.getElementById("ccTodayList");
-    if (todayEl) {
-      todayEl.innerHTML = `
+    const todayListEl = document.getElementById("ccTodayList");
+    if (todayListEl) {
+      todayListEl.innerHTML = `
         <li><strong>${today.critical_findings || 0}</strong> critical / high findings</li>
         <li><strong>${today.open_risks || 0}</strong> open risks</li>
         <li><strong>${today.open_actions || 0}</strong> open remediation actions</li>
@@ -2385,6 +2609,38 @@ async function loadCommandCenter() {
         : `<li class="hint">No pending approvals — remediations and incidents needing human review appear here.</li>`;
       apEl.querySelectorAll("[data-workspace]").forEach((li) =>
         li.addEventListener("click", () => window.showWorkspace?.(li.getAttribute("data-workspace")))
+      );
+    }
+
+    // Correlation hotspots — VAPT + XDR + incident + control on same asset
+    const corrEl = document.getElementById("ccCorrelation");
+    const corrDoc = document.getElementById("ccCorrDoctrine");
+    const corr = data.correlation || {};
+    if (corrDoc && corr.doctrine) corrDoc.textContent = corr.doctrine;
+    if (corrEl) {
+      const spots = corr.hotspots || [];
+      if (spots.length) {
+        corrEl.innerHTML = spots
+          .slice(0, 8)
+          .map((h) => {
+            const c = h.counts || {};
+            return `<li class="cc-clickable" data-workspace="graph" data-corr="${escapeHtml(h.label || "")}">
+              <strong>${escapeHtml(h.label || "asset")}</strong>
+              <span class="wq-badge pri-medium">${h.disciplines || 0} disciplines</span>
+              <span class="hint">${escapeHtml(h.why || "")}</span>
+            </li>`;
+          })
+          .join("");
+      } else {
+        corrEl.innerHTML = `<li class="hint">No multi-discipline hotspots yet — import a scan, sync XDR, or open an incident on a named asset.</li>
+          <li><button type="button" class="cc-action" data-workspace="graph">Open knowledge graph</button></li>`;
+      }
+      corrEl.querySelectorAll("[data-workspace]").forEach((el) =>
+        el.addEventListener("click", () => {
+          const q = el.getAttribute("data-corr");
+          if (q) window.__securaiqGraphFocus = q;
+          window.showWorkspace?.(el.getAttribute("data-workspace"));
+        })
       );
     }
 
@@ -2747,17 +3003,37 @@ async function refreshMcIntegrations() {
   const sync = document.getElementById("ccIntegSync");
   if (!list) return;
   try {
-    const [setRes, toolsRes, hookRes] = await Promise.all([
+    const rt = window.__securaiqRealtime || {};
+    const [setRes, toolsRes, hookRes, wzRes, thRes, cloudRes] = await Promise.all([
       fetch("/api/settings", { headers: authHeaders() }),
-      fetch("/api/tools"),
+      fetch("/api/tools", { headers: authHeaders() }),
       fetch("/api/webhooks", { headers: authHeaders() }),
+      fetch("/api/wazuh/status", { headers: authHeaders() }),
+      fetch("/api/thehive/status", { headers: authHeaders() }),
+      fetch("/api/cloud/status", { headers: authHeaders() }),
     ]);
     const settings = await setRes.json().catch(() => ({}));
     const tools = await toolsRes.json().catch(() => ({}));
     const hooks = await hookRes.json().catch(() => ({}));
+    const wz = await wzRes.json().catch(() => ({}));
+    const th = await thRes.json().catch(() => ({}));
+    const cloud = await cloudRes.json().catch(() => ({}));
+    const hkLive = rt.hardeningkitty || {};
+    const invLive = rt.inventory || {};
     const rows = [
       ["Local tools", (tools.available_count || 0) > 0],
       ["Jira", Boolean(settings.jira_base_url && settings.jira_api_token_set)],
+      [
+        "Inventory",
+        Boolean(invLive.configured || (settings.openaudit_base_url && settings.openaudit_password_set)),
+      ],
+      [
+        "HardeningKitty",
+        Boolean(hkLive.installed || settings.hardeningkitty_module_path),
+      ],
+      ["Wazuh", Boolean(wz.configured)],
+      ["TheHive", Boolean(th.configured)],
+      ["Cloud posture", (cloud.configured_count || 0) > 0],
       ["Webhooks", (hooks.webhooks || []).length > 0],
       ["Web search", settings.web_search_enabled !== false],
       ["AI backend", Boolean(settings.model_backend)],
@@ -2768,7 +3044,14 @@ async function refreshMcIntegrations() {
           `<li class="${ok ? "ok" : ""}"><span>${escapeHtml(name)}</span><strong>${ok ? "connected" : "not set"}</strong></li>`
       )
       .join("");
-    if (sync) sync.textContent = `Last sync ${new Date().toLocaleTimeString()} · ${rows.filter((r) => r[1]).length} ready`;
+    if (sync) {
+      const extra = [];
+      if (hkLive.installed) extra.push(`HK ${hkLive.lists || 0} lists`);
+      if (invLive.configured) extra.push(`inv ${invLive.devices_cached || 0}`);
+      sync.textContent = `Last sync ${new Date().toLocaleTimeString()} · ${rows.filter((r) => r[1]).length} ready${
+        extra.length ? ` · ${extra.join(" · ")}` : ""
+      }`;
+    }
   } catch {
     list.innerHTML = `<li class="hint">Status unavailable</li>`;
   }
@@ -3205,7 +3488,7 @@ async function refreshSettingsToolsHint() {
   const hint = document.getElementById("settingsToolsHint");
   if (!hint) return;
   try {
-    const res = await fetch("/api/tools");
+    const res = await fetch("/api/tools", { headers: authHeaders() });
     const data = await res.json();
     const ready = (data.tools || []).filter((t) => t.available).map((t) => t.id);
     hint.textContent = `${data.available_count || 0}/${data.count || 0} tools ready — ${ready.join(", ") || "none"}`;
@@ -3257,7 +3540,7 @@ function toggleMenu() {
 async function loadPlatformTip() {
   if (!lanTipEl) return;
   try {
-    const res = await fetch("/api/platform");
+    const res = await fetch("/api/platform", { headers: authHeaders() });
     const p = await res.json();
     const urls = (p.lan_urls || []).map((u) => `<code>${u}</code>`).join(" · ");
     lanTipEl.innerHTML =
@@ -3281,7 +3564,7 @@ function renderQuickPrompts() {
 
 async function loadModes() {
   try {
-    const res = await fetch("/api/modes");
+    const res = await fetch("/api/modes", { headers: authHeaders() });
     const data = await res.json();
     quickPrompts = data.quick_prompts || {};
     renderQuickPrompts();
@@ -3292,7 +3575,7 @@ async function loadModes() {
 
 async function loadBackend() {
   try {
-    const res = await fetch("/api/backend");
+    const res = await fetch("/api/backend", { headers: authHeaders() });
     const data = await res.json();
     backendEl.value = data.backend;
   } catch {
@@ -3302,7 +3585,7 @@ async function loadBackend() {
 
 async function loadModels() {
   try {
-    const res = await fetch("/api/models");
+    const res = await fetch("/api/models", { headers: authHeaders() });
     const data = await res.json();
     modelEl.innerHTML = "";
     const backend = data.backend || backendEl.value;
@@ -3368,8 +3651,9 @@ function refreshModelStatusBar(backend, model, ready) {
 
 async function loadSettingsForm() {
   try {
-    const res = await fetch("/api/settings");
+    const res = await fetch("/api/settings", { headers: authHeaders() });
     const s = await res.json();
+    if (!res.ok) throw new Error(formatApiDetail(s.detail, `HTTP ${res.status}`));
     syncThemeSelect();
     const setChecked = (id, val) => {
       const el = document.getElementById(id);
@@ -3475,7 +3759,23 @@ async function loadSettingsForm() {
     setVal("setOidcClientSecret", "");
     setVal("setOidcRedirect", s.oidc_redirect_uri || "");
     setVal("setOidcScopes", s.oidc_scopes || "openid profile email");
+    setChecked("setScimEnabled", Boolean(s.scim_enabled));
+    setVal("setScimToken", "");
+    setHint("scimHint", s.scim_token_set);
+    const scimHintEl = document.getElementById("scimHint");
+    if (scimHintEl) {
+      scimHintEl.textContent = s.scim_enabled
+        ? s.scim_token_set
+          ? "SCIM ready — IdP base URL /scim/v2 (Users + minimal PATCH/DELETE; no Groups)"
+          : "SCIM enabled but token not set"
+        : "IdP base URL: /scim/v2 — Users CRUD when enabled (no Groups/Bulk yet)";
+    }
     setVal("setGithubWebhookSecret", "");
+    setVal("setGitlabWebhookSecret", "");
+    setVal("setTaxiiApiRoot", s.taxii_api_root || "");
+    setVal("setTaxiiCollectionId", s.taxii_collection_id || "");
+    setVal("setTaxiiUsername", s.taxii_username || "");
+    setVal("setTaxiiPassword", "");
     setVal("setDatabaseUrl", "");
     setVal("setRedisUrl", "");
     setVal("setWazuhUrl", s.wazuh_base_url || "");
@@ -3488,8 +3788,83 @@ async function loadSettingsForm() {
     setChecked("setWazuhVerifySsl", !!s.wazuh_verify_ssl);
     setHint("wazuhPasswordHint", s.wazuh_password_set);
     setHint("wazuhIndexerPasswordHint", s.wazuh_indexer_password_set);
+    setVal("setOaUrl", s.openaudit_base_url || "");
+    setVal("setOaUser", s.openaudit_user || "");
+    setVal("setOaPassword", "");
+    setVal("setOaPrefix", s.openaudit_api_prefix || "/open-audit/index.php");
+    setVal("setOaSyncInterval", s.openaudit_sync_interval_sec ?? 3600);
+    setChecked("setOaVerifySsl", !!s.openaudit_verify_ssl);
+    setHint("oaPasswordHint", s.openaudit_password_set);
+    setVal("setHkPath", s.hardeningkitty_module_path || "");
+    setVal("setHkList", s.hardeningkitty_list || "");
+    setVal("setSonarUrl", s.sonarqube_base_url || "");
+    setVal("setSonarToken", "");
+    setHint("sonarTokenHint", s.sonarqube_token_set);
+    setVal("setSonarProject", s.sonarqube_project_key || "");
+    setVal("setSonarTypes", s.sonarqube_issue_types || "VULNERABILITY,SECURITY_HOTSPOT,BUG");
+    setChecked("setSonarVerifySsl", s.sonarqube_verify_ssl !== false);
+    setVal("setSonarSyncInterval", s.sonarqube_sync_interval_sec ?? 3600);
+    setVal("setThUrl", s.thehive_base_url || "");
+    setVal("setThApiKey", "");
+    setChecked("setThVerifySsl", !!s.thehive_verify_ssl);
+    setHint("thApiKeyHint", s.thehive_api_key_set);
+    setVal("setAwsRegion", s.aws_region || "us-east-1");
+    setVal("setAwsKey", "");
+    setHint("awsKeyHint", s.aws_access_key_id_set);
+    setVal("setAwsSecret", "");
+    setHint("awsSecretHint", s.aws_secret_access_key_set);
+    setVal("setAzTenant", s.azure_tenant_id || "");
+    setVal("setAzClient", s.azure_client_id || "");
+    setVal("setAzSecret", "");
+    setHint("azSecretHint", s.azure_client_secret_set);
+    setVal("setAzSub", s.azure_subscription_id || "");
+    setVal("setGcpProject", s.gcp_project_id || "");
+    setVal("setGcpSa", s.gcp_service_account_json || "");
+    setVal("setSlackWebhook", "");
+    setHint("slackWebhookHint", s.slack_webhook_url_set);
+    setVal("setTeamsWebhook", "");
+    setHint("teamsWebhookHint", s.teams_webhook_url_set);
+    setVal("setSnUrl", s.servicenow_instance_url || "");
+    setVal("setSnUser", s.servicenow_username || "");
+    setVal("setSnPassword", "");
+    setHint("snPasswordHint", s.servicenow_password_set);
+    setVal("setSmtpHost", s.smtp_host || "");
+    setVal("setSmtpPort", s.smtp_port ?? 587);
+    setVal("setSmtpUser", s.smtp_username || "");
+    setVal("setSmtpPassword", "");
+    setHint("smtpPasswordHint", s.smtp_password_set);
+    setVal("setSmtpFrom", s.smtp_from || "");
+    setChecked("setSmtpTls", s.smtp_use_tls !== false);
+    setVal("setSophosClientId", s.sophos_client_id || "");
+    setVal("setSophosClientSecret", "");
+    setHint("sophosSecretHint", s.sophos_client_secret_set);
+    setVal("setCsClientId", s.crowdstrike_client_id || "");
+    setVal("setCsClientSecret", "");
+    setHint("csSecretHint", s.crowdstrike_client_secret_set);
+    setVal("setCsBaseUrl", s.crowdstrike_base_url || "https://api.crowdstrike.com");
+    setVal("setS1BaseUrl", s.sentinelone_base_url || "");
+    setVal("setS1Token", "");
+    setHint("s1TokenHint", s.sentinelone_api_token_set);
+    setVal("setDefTenant", s.defender_tenant_id || "");
+    setVal("setDefClient", s.defender_client_id || "");
+    setVal("setDefSecret", "");
+    setHint("defSecretHint", s.defender_client_secret_set);
+    const huntSel = document.getElementById("setDefHuntingApi");
+    if (huntSel) huntSel.value = s.defender_hunting_api || "auto";
+    setChecked("setPrefectEnabled", !!s.prefect_enabled);
+    setVal("setPrefectApiUrl", s.prefect_api_url || "");
     setHint("oidcSecretHint", s.oidc_client_secret_set);
     setHint("githubWebhookHint", s.github_webhook_secret_set ? "Saved: •••••••• (hidden)" : "Not set — enables GitHub webhook");
+    setHint("gitlabWebhookHint", s.gitlab_webhook_secret_set ? "Saved: •••••••• (hidden)" : "Not set — enables GitLab webhook");
+    const taxiiHintEl = document.getElementById("taxiiHint");
+    if (taxiiHintEl) {
+      const root = (s.taxii_api_root || "").trim();
+      const cid = (s.taxii_collection_id || "").trim();
+      taxiiHintEl.textContent =
+        root && cid
+          ? `TAXII ready${s.taxii_password_set || s.taxii_username ? " (auth set)" : ""} — poll from Threat Intel`
+          : "Optional — poll from Threat Intel → STIX / TAXII";
+    }
     setHint("databaseUrlHint", s.database_url_set);
     setHint("redisUrlHint", s.redis_url_set);
     await refreshMfaAccountPanel();
@@ -3563,7 +3938,14 @@ async function saveSettings(event) {
     oidc_client_secret: document.getElementById("setOidcClientSecret")?.value.trim() || "",
     oidc_redirect_uri: document.getElementById("setOidcRedirect")?.value.trim() || "",
     oidc_scopes: document.getElementById("setOidcScopes")?.value.trim() || "",
+    scim_enabled: document.getElementById("setScimEnabled")?.checked ?? false,
+    scim_token: document.getElementById("setScimToken")?.value.trim() || "",
     github_webhook_secret: document.getElementById("setGithubWebhookSecret")?.value.trim() || "",
+    gitlab_webhook_secret: document.getElementById("setGitlabWebhookSecret")?.value.trim() || "",
+    taxii_api_root: document.getElementById("setTaxiiApiRoot")?.value.trim() || "",
+    taxii_collection_id: document.getElementById("setTaxiiCollectionId")?.value.trim() || "",
+    taxii_username: document.getElementById("setTaxiiUsername")?.value.trim() || "",
+    taxii_password: document.getElementById("setTaxiiPassword")?.value.trim() || "",
     database_url: document.getElementById("setDatabaseUrl")?.value.trim() || "",
     redis_url: document.getElementById("setRedisUrl")?.value.trim() || "",
     wazuh_base_url: document.getElementById("setWazuhUrl")?.value.trim() || "",
@@ -3574,14 +3956,67 @@ async function saveSettings(event) {
     wazuh_indexer_url: document.getElementById("setWazuhIndexerUrl")?.value.trim() || "",
     wazuh_indexer_user: document.getElementById("setWazuhIndexerUser")?.value.trim() || "",
     wazuh_indexer_password: document.getElementById("setWazuhIndexerPassword")?.value.trim() || "",
+    openaudit_base_url: document.getElementById("setOaUrl")?.value.trim() || "",
+    openaudit_user: document.getElementById("setOaUser")?.value.trim() || "",
+    openaudit_password: document.getElementById("setOaPassword")?.value.trim() || "",
+    openaudit_api_prefix: document.getElementById("setOaPrefix")?.value.trim() || "/open-audit/index.php",
+    openaudit_verify_ssl: document.getElementById("setOaVerifySsl")?.checked ?? false,
+    openaudit_sync_interval_sec: Number(document.getElementById("setOaSyncInterval")?.value) || 3600,
+    hardeningkitty_module_path: document.getElementById("setHkPath")?.value.trim() || "",
+    hardeningkitty_list: document.getElementById("setHkList")?.value.trim() || "",
+    sonarqube_base_url: document.getElementById("setSonarUrl")?.value.trim() || "",
+    sonarqube_token: document.getElementById("setSonarToken")?.value.trim() || "",
+    sonarqube_project_key: document.getElementById("setSonarProject")?.value.trim() || "",
+    sonarqube_issue_types: document.getElementById("setSonarTypes")?.value.trim() || "VULNERABILITY,SECURITY_HOTSPOT,BUG",
+    sonarqube_verify_ssl: document.getElementById("setSonarVerifySsl")?.checked ?? true,
+    sonarqube_sync_interval_sec: Number(document.getElementById("setSonarSyncInterval")?.value) || 3600,
+    thehive_base_url: document.getElementById("setThUrl")?.value.trim() || "",
+    thehive_api_key: document.getElementById("setThApiKey")?.value.trim() || "",
+    thehive_verify_ssl: document.getElementById("setThVerifySsl")?.checked ?? false,
+    aws_region: document.getElementById("setAwsRegion")?.value.trim() || "us-east-1",
+    aws_access_key_id: document.getElementById("setAwsKey")?.value.trim() || "",
+    aws_secret_access_key: document.getElementById("setAwsSecret")?.value.trim() || "",
+    azure_tenant_id: document.getElementById("setAzTenant")?.value.trim() || "",
+    azure_client_id: document.getElementById("setAzClient")?.value.trim() || "",
+    azure_client_secret: document.getElementById("setAzSecret")?.value.trim() || "",
+    azure_subscription_id: document.getElementById("setAzSub")?.value.trim() || "",
+    gcp_project_id: document.getElementById("setGcpProject")?.value.trim() || "",
+    gcp_service_account_json: document.getElementById("setGcpSa")?.value.trim() || "",
+    slack_webhook_url: document.getElementById("setSlackWebhook")?.value.trim() || "",
+    teams_webhook_url: document.getElementById("setTeamsWebhook")?.value.trim() || "",
+    servicenow_instance_url: document.getElementById("setSnUrl")?.value.trim() || "",
+    servicenow_username: document.getElementById("setSnUser")?.value.trim() || "",
+    servicenow_password: document.getElementById("setSnPassword")?.value.trim() || "",
+    smtp_host: document.getElementById("setSmtpHost")?.value.trim() || "",
+    smtp_port: Number(document.getElementById("setSmtpPort")?.value) || 587,
+    smtp_username: document.getElementById("setSmtpUser")?.value.trim() || "",
+    smtp_password: document.getElementById("setSmtpPassword")?.value.trim() || "",
+    smtp_from: document.getElementById("setSmtpFrom")?.value.trim() || "",
+    smtp_use_tls: document.getElementById("setSmtpTls")?.checked ?? true,
+    sophos_client_id: document.getElementById("setSophosClientId")?.value.trim() || "",
+    sophos_client_secret: document.getElementById("setSophosClientSecret")?.value.trim() || "",
+    crowdstrike_client_id: document.getElementById("setCsClientId")?.value.trim() || "",
+    crowdstrike_client_secret: document.getElementById("setCsClientSecret")?.value.trim() || "",
+    crowdstrike_base_url: document.getElementById("setCsBaseUrl")?.value.trim() || "",
+    sentinelone_base_url: document.getElementById("setS1BaseUrl")?.value.trim() || "",
+    sentinelone_api_token: document.getElementById("setS1Token")?.value.trim() || "",
+    defender_tenant_id: document.getElementById("setDefTenant")?.value.trim() || "",
+    defender_client_id: document.getElementById("setDefClient")?.value.trim() || "",
+    defender_client_secret: document.getElementById("setDefSecret")?.value.trim() || "",
+    defender_hunting_api: document.getElementById("setDefHuntingApi")?.value || "auto",
+    prefect_enabled: document.getElementById("setPrefectEnabled")?.checked ?? false,
+    prefect_api_url: document.getElementById("setPrefectApiUrl")?.value.trim() || "",
   };
   try {
     const res = await fetch("/api/settings", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatApiDetail(err.detail, `HTTP ${res.status}`));
+    }
     // Mirror tool toggles into sidebar for this session
     if (localToolsEl) localToolsEl.checked = payload.local_tools_enabled;
     if (netAssessEl) netAssessEl.checked = payload.net_assess_enabled && (netAssessEl.checked || modeEl.value === "assess");
@@ -3601,7 +4036,7 @@ async function refreshHermesStatus() {
   if (!hint) return;
   hint.textContent = "Status: checking…";
   try {
-    const res = await fetch("/api/hermes/status");
+    const res = await fetch("/api/hermes/status", { headers: authHeaders() });
     const data = await res.json();
     if (!data.reachable) {
       hint.textContent = `Status: offline — ${data.error || "start hermes gateway"}`;
@@ -3634,7 +4069,7 @@ function newHermesSession() {
 
 async function refreshFinetuneHint() {
   try {
-    const res = await fetch("/api/finetune");
+    const res = await fetch("/api/finetune", { headers: authHeaders() });
     const job = await res.json();
     if (job.status === "idle") {
       finetuneHint.textContent = "Idle — trains on data/ethical_pentest_dataset.jsonl";
@@ -3654,7 +4089,7 @@ async function startUnslothTrain() {
   try {
     const res = await fetch("/api/finetune", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ engine: "unsloth", epochs }),
     });
     const data = await res.json();
@@ -3678,7 +4113,7 @@ async function switchModel(modelName) {
   if (backendEl.value !== "ollama") return;
   await fetch("/api/models/switch", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ model: modelName }),
   });
   checkHealth();
@@ -3687,7 +4122,7 @@ async function switchModel(modelName) {
 async function switchBackend(backend) {
   await fetch("/api/backend", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ backend }),
   });
   await loadModels();
@@ -3698,7 +4133,7 @@ async function ingestRag() {
   if (streaming) return;
   ingestBtn.disabled = true;
   try {
-    const res = await fetch("/api/ingest", { method: "POST" });
+    const res = await fetch("/api/ingest", { method: "POST", headers: authHeaders() });
     const data = await res.json();
     appendMessage(
       "assistant",
@@ -3728,7 +4163,7 @@ async function pullModel() {
   try {
     const res = await fetch("/api/models/pull", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ model: modelName }),
     });
     const reader = res.body.getReader();
@@ -3767,7 +4202,7 @@ async function preloadModel() {
   let fullText = `Preloading **${modelEl.value}**…\n\n`;
 
   try {
-    const res = await fetch("/api/models/preload", { method: "POST" });
+    const res = await fetch("/api/models/preload", { method: "POST", headers: authHeaders() });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     while (true) {
@@ -3795,7 +4230,7 @@ async function ensureWorkingBackend(healthData) {
   if (healthData.backend_ready) return false;
   autoSwitchAttempted = true;
   try {
-    const res = await fetch("/api/backends/probe");
+    const res = await fetch("/api/backends/probe", { headers: authHeaders() });
     const probe = await res.json();
     const next = probe.recommended;
     if (!next || next === healthData.backend) {
@@ -3819,7 +4254,7 @@ let lastHealthData = null;
 
 async function checkHealth() {
   try {
-    const res = await fetch("/api/health");
+    const res = await fetch("/api/health", { headers: authHeaders() });
     const data = await res.json();
     lastHealthData = data;
     const rag = data.rag_documents != null ? ` · RAG:${data.rag_documents}` : "";
@@ -4478,6 +4913,161 @@ on(newChatBtn, "click", () => {
 on(themeToggleBtn, "click", toggleTheme);
 on(themeToggleTopBtn, "click", toggleTheme);
 on(settingsForm, "submit", saveSettings);
+on(document.getElementById("setWazuhTestBtn"), "click", async () => {
+  const hint = document.getElementById("wazuhTestHint");
+  const btn = document.getElementById("setWazuhTestBtn");
+  if (hint) hint.textContent = "Testing…";
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch("/api/wazuh/status", { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(formatApiDetail(data.detail, `HTTP ${res.status}`));
+    const ping = data.ping || {};
+    if (!data.configured) {
+      if (hint) hint.textContent = "Not configured — save Manager URL, user, and password first.";
+    } else if (ping.ok) {
+      if (hint) {
+        hint.textContent = `Connected${data.base_url ? ` to ${data.base_url}` : ""}${
+          ping.api_version ? ` · API ${ping.api_version}` : ""
+        }${data.indexer_configured ? " · Indexer on" : " · Indexer off"}`;
+      }
+    } else {
+      if (hint) hint.textContent = ping.error || "Connection failed";
+    }
+  } catch (err) {
+    if (hint) hint.textContent = err.message || String(err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+on(document.getElementById("setOaTestBtn"), "click", async () => {
+  const hint = document.getElementById("oaTestHint");
+  const btn = document.getElementById("setOaTestBtn");
+  if (hint) hint.textContent = "Testing…";
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch("/api/openaudit/status", { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(formatApiDetail(data.detail, `HTTP ${res.status}`));
+    const ping = data.ping || {};
+    if (!data.configured) {
+      if (hint) hint.textContent = "Not configured — save URL, user, and password first.";
+    } else if (ping.ok) {
+      if (hint) {
+        hint.textContent = `Connected${ping.host ? ` to ${ping.host}` : ""}${
+          ping.devices_hint != null ? ` · ${ping.devices_hint} device(s)` : ""
+        }`;
+      }
+    } else {
+      if (hint) hint.textContent = ping.error || "Connection failed";
+    }
+  } catch (err) {
+    if (hint) hint.textContent = err.message || String(err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+on(document.getElementById("setHkTestBtn"), "click", async () => {
+  const hint = document.getElementById("hkTestHint");
+  const btn = document.getElementById("setHkTestBtn");
+  if (hint) hint.textContent = "Detecting…";
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch("/api/hardeningkitty/status", { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(formatApiDetail(data.detail, `HTTP ${res.status}`));
+    if (data.installed) {
+      if (data.module_path) setVal("setHkPath", data.module_path);
+      if (hint) {
+        hint.textContent = `Found · ${data.finding_lists || 0} lists (${data.cis_lists || 0} CIS) · ${data.module_path || ""}`;
+      }
+    } else {
+      if (hint) {
+        hint.textContent =
+          "Not found — run .\\scripts\\use_hardeningkitty.cmd or set module path, then Save.";
+      }
+    }
+  } catch (err) {
+    if (hint) hint.textContent = err.message || String(err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+on(document.getElementById("setSonarTestBtn"), "click", async () => {
+  const hint = document.getElementById("sonarTestHint");
+  const btn = document.getElementById("setSonarTestBtn");
+  if (hint) hint.textContent = "Testing…";
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch("/api/sonarqube/test", { method: "POST", headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(formatApiDetail(data.detail, `HTTP ${res.status}`));
+    if (data.ok) {
+      if (hint) hint.textContent = `Connected · ${data.status || "UP"}${data.version ? ` · v${data.version}` : ""}`;
+    } else {
+      if (hint) hint.textContent = data.error || "Not configured — save URL + token first";
+    }
+  } catch (err) {
+    if (hint) hint.textContent = err.message || String(err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+on(document.getElementById("setThTestBtn"), "click", async () => {
+  const hint = document.getElementById("thTestHint");
+  const btn = document.getElementById("setThTestBtn");
+  if (hint) hint.textContent = "Testing…";
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch("/api/thehive/status", { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(formatApiDetail(data.detail, `HTTP ${res.status}`));
+    const ping = data.ping || {};
+    if (!data.configured) {
+      if (hint) hint.textContent = "Not configured — save URL and API key first.";
+    } else if (ping.ok) {
+      if (hint) {
+        hint.textContent = `Connected${data.base_url ? ` to ${data.base_url}` : ""}${
+          data.cases_cached != null ? ` · ${data.cases_cached} case(s) cached` : ""
+        }`;
+      }
+    } else {
+      if (hint) hint.textContent = ping.error || "Connection failed";
+    }
+  } catch (err) {
+    if (hint) hint.textContent = err.message || String(err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+on(document.getElementById("setCloudTestBtn"), "click", async () => {
+  const hint = document.getElementById("cloudTestHint");
+  const btn = document.getElementById("setCloudTestBtn");
+  if (hint) hint.textContent = "Testing…";
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch("/api/cloud/status", { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(formatApiDetail(data.detail, `HTTP ${res.status}`));
+    const vendors = data.vendors || {};
+    const ping = data.ping || {};
+    const labels = { aws_security_hub: "AWS", azure_defender: "Azure", gcp_scc: "GCP" };
+    const parts = Object.entries(vendors).map(([id, v]) => {
+      if (!v.configured) return `${labels[id] || id}: not set`;
+      const p = ping[id] || {};
+      return `${labels[id] || id}: ${p.ok ? "ok" : p.error || "error"}`;
+    });
+    if ((data.configured_count || 0) === 0) {
+      if (hint) hint.textContent = "No cloud vendors configured — save AWS, Azure, or GCP credentials first.";
+    } else if (hint) {
+      hint.textContent = parts.join(" · ");
+    }
+  } catch (err) {
+    if (hint) hint.textContent = err.message || String(err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
 on(settingsTrainBtn, "click", startUnslothTrain);
 on(document.getElementById("settingsRefreshTools"), "click", () => {
   refreshSettingsToolsHint();
@@ -4631,13 +5221,19 @@ ensureActiveChat();
 refreshAuthStatus().then(loadEngagements);
 checkHealth().then(() => {
   showWelcome();
-  showView("command", { skipFocus: true });
+  showView("chat", { skipFocus: true });
 });
 wireCommandCenterUi();
 setInterval(checkHealth, 90000);
 setInterval(() => {
   if (currentView === "command") loadCommandCenter();
-}, 120000);
+}, 60000);
+// Fallback live refresh if SSE stalls — keeps open workspace panels warm
+setInterval(() => {
+  if (typeof window.__securaiqRefreshActiveView === "function") {
+    window.__securaiqRefreshActiveView({}, { heartbeat: true });
+  }
+}, 15000);
 resizeInput();
 
 /* ---- Notifications panel (bell icon) -------------------------------- */
@@ -4753,7 +5349,7 @@ setInterval(refreshNotifBadge, 45000);
 async function loadToolsStatus() {
   if (!toolsStatusEl) return;
   try {
-    const res = await fetch("/api/tools");
+    const res = await fetch("/api/tools", { headers: authHeaders() });
     const data = await res.json();
     const avail = data.available_count ?? 0;
     const total = data.count ?? 0;
@@ -4777,7 +5373,7 @@ async function loadToolsStatus() {
 async function showWelcome() {
   if (emptyLeadEl) {
     emptyLeadEl.textContent =
-      "Start from zero — ask a question, import a scan, or open Mission Control.";
+      "Ask about authorized security work — posture, compliance, findings, or remediations.";
   }
   syncEmptyState();
   renderChatList();

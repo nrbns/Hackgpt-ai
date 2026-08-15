@@ -1,0 +1,423 @@
+{
+  "id": "nist_800_53",
+  "name": "NIST SP 800-53 Rev. 5 (priority subset)",
+  "version": "Rev. 5",
+  "description": "NIST SP 800-53 Rev. 5 priority controls across AC–SR families (moderate-oriented).",
+  "controls": [
+    {
+      "id": "AC-2",
+      "title": "Account Management",
+      "domain": "AC",
+      "keywords": [
+        "account management",
+        "joiner",
+        "leaver",
+        "disable unused"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "title": "Access Enforcement",
+      "domain": "AC",
+      "keywords": [
+        "access enforcement",
+        "authorization",
+        "least privilege"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "title": "Least Privilege",
+      "domain": "AC",
+      "keywords": [
+        "least privilege",
+        "privileged",
+        "need to know"
+      ]
+    },
+    {
+      "id": "AC-17",
+      "title": "Remote Access",
+      "domain": "AC",
+      "keywords": [
+        "remote access",
+        "VPN",
+        "MFA remote"
+      ]
+    },
+    {
+      "id": "AT-2",
+      "title": "Literacy Training and Awareness",
+      "domain": "AT",
+      "keywords": [
+        "awareness",
+        "training",
+        "phishing"
+      ]
+    },
+    {
+      "id": "AU-2",
+      "title": "Event Logging",
+      "domain": "AU",
+      "keywords": [
+        "event logging",
+        "audit events",
+        "log sources"
+      ]
+    },
+    {
+      "id": "AU-3",
+      "title": "Content of Audit Records",
+      "domain": "AU",
+      "keywords": [
+        "audit content",
+        "who what when",
+        "log fields"
+      ]
+    },
+    {
+      "id": "AU-6",
+      "title": "Audit Record Review, Analysis, and Reporting",
+      "domain": "AU",
+      "keywords": [
+        "log review",
+        "SIEM",
+        "alerting"
+      ]
+    },
+    {
+      "id": "AU-12",
+      "title": "Audit Record Generation",
+      "domain": "AU",
+      "keywords": [
+        "audit generation",
+        "centralized logging"
+      ]
+    },
+    {
+      "id": "CA-2",
+      "title": "Control Assessments",
+      "domain": "CA",
+      "keywords": [
+        "control assessment",
+        "security assessment"
+      ]
+    },
+    {
+      "id": "CA-7",
+      "title": "Continuous Monitoring",
+      "domain": "CA",
+      "keywords": [
+        "continuous monitoring",
+        "CONMON",
+        "metrics"
+      ]
+    },
+    {
+      "id": "CM-2",
+      "title": "Baseline Configuration",
+      "domain": "CM",
+      "keywords": [
+        "baseline",
+        "hardening",
+        "secure configuration"
+      ]
+    },
+    {
+      "id": "CM-6",
+      "title": "Configuration Settings",
+      "domain": "CM",
+      "keywords": [
+        "configuration settings",
+        "CIS",
+        "STIG"
+      ]
+    },
+    {
+      "id": "CM-7",
+      "title": "Least Functionality",
+      "domain": "CM",
+      "keywords": [
+        "least functionality",
+        "disable services",
+        "hardening"
+      ]
+    },
+    {
+      "id": "CP-2",
+      "title": "Contingency Plan",
+      "domain": "CP",
+      "keywords": [
+        "contingency plan",
+        "BCP",
+        "DR"
+      ]
+    },
+    {
+      "id": "CP-9",
+      "title": "System Backup",
+      "domain": "CP",
+      "keywords": [
+        "backup",
+        "restore",
+        "backup testing"
+      ]
+    },
+    {
+      "id": "CP-10",
+      "title": "System Recovery and Reconstitution",
+      "domain": "CP",
+      "keywords": [
+        "recovery",
+        "reconstitution",
+        "failover"
+      ]
+    },
+    {
+      "id": "IA-2",
+      "title": "Identification and Authentication (Organizational Users)",
+      "domain": "IA",
+      "keywords": [
+        "MFA",
+        "authentication",
+        "identity"
+      ]
+    },
+    {
+      "id": "IA-5",
+      "title": "Authenticator Management",
+      "domain": "IA",
+      "keywords": [
+        "password",
+        "authenticator",
+        "credentials"
+      ]
+    },
+    {
+      "id": "IR-4",
+      "title": "Incident Handling",
+      "domain": "IR",
+      "keywords": [
+        "incident handling",
+        "containment",
+        "IR plan"
+      ]
+    },
+    {
+      "id": "IR-6",
+      "title": "Incident Reporting",
+      "domain": "IR",
+      "keywords": [
+        "incident reporting",
+        "US-CERT",
+        "notification"
+      ]
+    },
+    {
+      "id": "MA-2",
+      "title": "Controlled Maintenance",
+      "domain": "MA",
+      "keywords": [
+        "maintenance",
+        "change control",
+        "vendor access"
+      ]
+    },
+    {
+      "id": "MP-6",
+      "title": "Media Sanitization",
+      "domain": "MP",
+      "keywords": [
+        "media sanitization",
+        "wipe",
+        "secure disposal"
+      ]
+    },
+    {
+      "id": "PE-2",
+      "title": "Physical Access Authorizations",
+      "domain": "PE",
+      "keywords": [
+        "physical access",
+        "badge",
+        "facility"
+      ]
+    },
+    {
+      "id": "PE-3",
+      "title": "Physical Access Control",
+      "domain": "PE",
+      "keywords": [
+        "physical control",
+        "visitor",
+        "locks"
+      ]
+    },
+    {
+      "id": "PL-2",
+      "title": "System Security and Privacy Plans",
+      "domain": "PL",
+      "keywords": [
+        "SSP",
+        "security plan",
+        "privacy plan"
+      ]
+    },
+    {
+      "id": "PS-3",
+      "title": "Personnel Screening",
+      "domain": "PS",
+      "keywords": [
+        "screening",
+        "background check"
+      ]
+    },
+    {
+      "id": "PS-4",
+      "title": "Personnel Termination",
+      "domain": "PS",
+      "keywords": [
+        "termination",
+        "offboarding",
+        "access revocation"
+      ]
+    },
+    {
+      "id": "RA-3",
+      "title": "Risk Assessment",
+      "domain": "RA",
+      "keywords": [
+        "risk assessment",
+        "risk register"
+      ]
+    },
+    {
+      "id": "RA-5",
+      "title": "Vulnerability Monitoring and Scanning",
+      "domain": "RA",
+      "keywords": [
+        "vulnerability",
+        "scanning",
+        "CVE"
+      ]
+    },
+    {
+      "id": "SA-11",
+      "title": "Developer Testing and Evaluation",
+      "domain": "SA",
+      "keywords": [
+        "security testing",
+        "SAST",
+        "DAST"
+      ]
+    },
+    {
+      "id": "SA-15",
+      "title": "Development Process, Standards, and Tools",
+      "domain": "SA",
+      "keywords": [
+        "SDLC",
+        "secure development",
+        "DevSecOps"
+      ]
+    },
+    {
+      "id": "SC-7",
+      "title": "Boundary Protection",
+      "domain": "SC",
+      "keywords": [
+        "firewall",
+        "boundary",
+        "segmentation"
+      ]
+    },
+    {
+      "id": "SC-8",
+      "title": "Transmission Confidentiality and Integrity",
+      "domain": "SC",
+      "keywords": [
+        "TLS",
+        "encryption in transit"
+      ]
+    },
+    {
+      "id": "SC-13",
+      "title": "Cryptographic Protection",
+      "domain": "SC",
+      "keywords": [
+        "cryptography",
+        "FIPS",
+        "encryption"
+      ]
+    },
+    {
+      "id": "SC-28",
+      "title": "Protection of Information at Rest",
+      "domain": "SC",
+      "keywords": [
+        "encryption at rest",
+        "KMS"
+      ]
+    },
+    {
+      "id": "SI-2",
+      "title": "Flaw Remediation",
+      "domain": "SI",
+      "keywords": [
+        "patch",
+        "flaw remediation",
+        "vulnerability fix"
+      ]
+    },
+    {
+      "id": "SI-3",
+      "title": "Malicious Code Protection",
+      "domain": "SI",
+      "keywords": [
+        "anti-malware",
+        "EDR",
+        "malware"
+      ]
+    },
+    {
+      "id": "SI-4",
+      "title": "System Monitoring",
+      "domain": "SI",
+      "keywords": [
+        "monitoring",
+        "IDS",
+        "endpoint monitoring"
+      ]
+    },
+    {
+      "id": "SI-7",
+      "title": "Software, Firmware, and Information Integrity",
+      "domain": "SI",
+      "keywords": [
+        "integrity",
+        "FIM",
+        "code signing"
+      ]
+    },
+    {
+      "id": "SR-1",
+      "title": "Supply Chain Risk Management Policy",
+      "domain": "SR",
+      "keywords": [
+        "supply chain",
+        "SCRM",
+        "policy"
+      ]
+    },
+    {
+      "id": "SR-3",
+      "title": "Supply Chain Controls and Processes",
+      "domain": "SR",
+      "keywords": [
+        "vendor",
+        "SBOM",
+        "supply chain controls"
+      ]
+    }
+  ]
+}

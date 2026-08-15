@@ -1,16 +1,251 @@
 {
   "id": "iso27701",
-  "name": "ISO/IEC 27701 (PIMS subset)",
-  "version": "2019-subset",
-  "description": "Privacy Information Management — subset for gap analysis demos. Expand with full Annex controls for production.",
+  "name": "ISO/IEC 27701:2025 PIMS",
+  "version": "2025",
+  "description": "ISO/IEC 27701:2025 standalone PIMS (HLS clauses + privacy controls). Transition from 2019 by Oct 2028.",
   "controls": [
-    {"id": "P.1", "title": "Privacy policy", "description": "Documented privacy policy aligned with processing purposes."},
-    {"id": "P.2", "title": "Lawful basis inventory", "description": "Record lawful bases and purposes for personal data processing."},
-    {"id": "P.3", "title": "Data subject rights", "description": "Process for access, erasure, portability, and objection requests."},
-    {"id": "P.4", "title": "Processor agreements", "description": "Contracts with processors include privacy and security obligations."},
-    {"id": "P.5", "title": "Breach notification", "description": "Privacy incident playbook with regulator/data-subject timelines."},
-    {"id": "P.6", "title": "Privacy by design", "description": "DPIA / privacy review for high-risk processing."},
-    {"id": "P.7", "title": "Retention & disposal", "description": "Retention schedules and secure disposal of personal data."},
-    {"id": "P.8", "title": "Cross-border transfers", "description": "Transfer mechanisms documented for international flows."}
+    {
+      "id": "4.1",
+      "title": "Understanding the organization and its context (PIMS)",
+      "domain": "Clause 4",
+      "keywords": [
+        "PIMS scope",
+        "privacy context",
+        "interested parties"
+      ]
+    },
+    {
+      "id": "4.3",
+      "title": "Determining the scope of the PIMS",
+      "domain": "Clause 4",
+      "keywords": [
+        "PIMS scope",
+        "boundaries",
+        "PII processing scope"
+      ]
+    },
+    {
+      "id": "5.1",
+      "title": "Leadership and commitment",
+      "domain": "Clause 5",
+      "keywords": [
+        "leadership",
+        "privacy policy",
+        "management commitment"
+      ]
+    },
+    {
+      "id": "5.2",
+      "title": "Privacy policy",
+      "domain": "Clause 5",
+      "keywords": [
+        "privacy policy",
+        "published policy",
+        "policy communication"
+      ]
+    },
+    {
+      "id": "5.3",
+      "title": "Roles, responsibilities and authorities",
+      "domain": "Clause 5",
+      "keywords": [
+        "privacy roles",
+        "DPO",
+        "RACI privacy"
+      ]
+    },
+    {
+      "id": "6.1",
+      "title": "Actions to address risks and opportunities",
+      "domain": "Clause 6",
+      "keywords": [
+        "privacy risk",
+        "risk assessment",
+        "opportunities"
+      ]
+    },
+    {
+      "id": "6.2",
+      "title": "Privacy objectives and planning",
+      "domain": "Clause 6",
+      "keywords": [
+        "privacy objectives",
+        "KPIs",
+        "planning"
+      ]
+    },
+    {
+      "id": "7.2",
+      "title": "Competence",
+      "domain": "Clause 7",
+      "keywords": [
+        "privacy competence",
+        "training",
+        "awareness"
+      ]
+    },
+    {
+      "id": "7.5",
+      "title": "Documented information",
+      "domain": "Clause 7",
+      "keywords": [
+        "documented information",
+        "records",
+        "controlled documents"
+      ]
+    },
+    {
+      "id": "8.1",
+      "title": "Operational planning and control",
+      "domain": "Clause 8",
+      "keywords": [
+        "operational control",
+        "privacy procedures"
+      ]
+    },
+    {
+      "id": "8.2",
+      "title": "Privacy risk assessment",
+      "domain": "Clause 8",
+      "keywords": [
+        "privacy risk assessment",
+        "DPIA",
+        "threat to PII"
+      ]
+    },
+    {
+      "id": "8.3",
+      "title": "Privacy risk treatment",
+      "domain": "Clause 8",
+      "keywords": [
+        "risk treatment",
+        "controls",
+        "residual risk"
+      ]
+    },
+    {
+      "id": "9.1",
+      "title": "Monitoring, measurement, analysis and evaluation",
+      "domain": "Clause 9",
+      "keywords": [
+        "privacy metrics",
+        "monitoring",
+        "evaluation"
+      ]
+    },
+    {
+      "id": "9.2",
+      "title": "Internal audit",
+      "domain": "Clause 9",
+      "keywords": [
+        "internal audit",
+        "PIMS audit"
+      ]
+    },
+    {
+      "id": "9.3",
+      "title": "Management review",
+      "domain": "Clause 9",
+      "keywords": [
+        "management review",
+        "PIMS review"
+      ]
+    },
+    {
+      "id": "10.1",
+      "title": "Continual improvement",
+      "domain": "Clause 10",
+      "keywords": [
+        "continual improvement",
+        "corrective action"
+      ]
+    },
+    {
+      "id": "A.1.1",
+      "title": "Identify and document PII processing purposes",
+      "domain": "Annex A Controller/Processor",
+      "keywords": [
+        "processing purpose",
+        "purpose limitation",
+        "inventory"
+      ]
+    },
+    {
+      "id": "A.1.2",
+      "title": "Identify lawful basis / consent mechanisms",
+      "domain": "Annex A Controller/Processor",
+      "keywords": [
+        "lawful basis",
+        "consent",
+        "legitimate interest"
+      ]
+    },
+    {
+      "id": "A.1.3",
+      "title": "Data subject rights procedures",
+      "domain": "Annex A Controller/Processor",
+      "keywords": [
+        "data subject rights",
+        "access",
+        "erasure",
+        "portability",
+        "objection"
+      ]
+    },
+    {
+      "id": "A.2.1",
+      "title": "Processor agreements and instructions",
+      "domain": "Annex A Controller/Processor",
+      "keywords": [
+        "processor agreement",
+        "instructions",
+        "sub-processor"
+      ]
+    },
+    {
+      "id": "A.2.2",
+      "title": "Transfer mechanisms for cross-border flows",
+      "domain": "Annex A Controller/Processor",
+      "keywords": [
+        "cross-border",
+        "transfer",
+        "SCCs",
+        "adequacy"
+      ]
+    },
+    {
+      "id": "A.3.1",
+      "title": "Breach / privacy incident notification",
+      "domain": "Annex A Controller/Processor",
+      "keywords": [
+        "breach notification",
+        "privacy incident",
+        "regulator",
+        "data subject"
+      ]
+    },
+    {
+      "id": "A.3.2",
+      "title": "Retention and disposal of PII",
+      "domain": "Annex A Controller/Processor",
+      "keywords": [
+        "retention",
+        "disposal",
+        "schedule",
+        "secure delete"
+      ]
+    },
+    {
+      "id": "A.3.3",
+      "title": "Privacy by design for AI, biometrics, IoT and cloud",
+      "domain": "Annex A Controller/Processor",
+      "keywords": [
+        "privacy by design",
+        "AI privacy",
+        "biometrics",
+        "IoT",
+        "cloud privacy"
+      ]
+    }
   ]
 }

@@ -53,6 +53,13 @@ from app.platform_api import router as platform_router
 from app.billing_api import router as billing_router
 from app.xdr_api import router as xdr_router
 from app.wazuh_api import router as wazuh_router
+from app.openaudit_api import router as openaudit_router
+from app.hardeningkitty_api import router as hardeningkitty_router
+from app.thehive_api import router as thehive_router
+from app.cloud_posture_api import router as cloud_posture_router
+from app.sonarqube_api import router as sonarqube_router
+from app.scim_api import router as scim_router
+from app.stix_api import router as stix_router
 from app.commercial_ext import ensure_org_schema
 from app.gap_analysis import ensure_gap_schema
 from app.db import init_schema
@@ -102,6 +109,12 @@ async def lifespan(app: FastAPI):
         ensure_graph_schema()
         ensure_webhook_schema()
         ensure_intel_cache_schema()
+        from app.openaudit import ensure_schema as ensure_openaudit_schema
+
+        ensure_openaudit_schema()
+        from app.hardeningkitty import ensure_schema as ensure_hk_schema
+
+        ensure_hk_schema()
     except Exception as exc:
         print(f"DB/auth bootstrap: {exc}")
     try:
@@ -136,12 +149,35 @@ async def lifespan(app: FastAPI):
     print(f"Auth: {'ENABLED' if settings.auth_enabled else 'disabled (local open mode)'}")
     start_background_jobs()
     print("Background jobs: worker + periodic scheduler started (KEV sync every 6h).")
+    try:
+        from app.realtime_bus import bind_loop
+
+        bind_loop()
+        print("Realtime bus: SSE push-on-write ready.")
+    except Exception as exc:
+        print(f"Realtime bus bind skipped: {exc}")
+    try:
+        from app import xdr_stream
+
+        xdr_stream.start()
+        print(
+            "XDR live feeds: CrowdStrike stream + Sophos/SentinelOne/Defender "
+            "near-realtime poll started (no-op until each vendor is configured)."
+        )
+    except Exception as exc:
+        print(f"XDR streaming skipped: {exc}")
     if init_error_reporting():
         print(f"Error reporting: Sentry active ({settings.sentry_environment}).")
     else:
         print("Error reporting: disabled (set SENTRY_DSN to enable — see docs/monitoring.md).")
     yield
     await stop_background_jobs()
+    try:
+        from app import xdr_stream
+
+        await xdr_stream.stop()
+    except Exception:
+        pass
 
 
 app = FastAPI(title="SecuraIQ", version="1.5.0", lifespan=lifespan)
@@ -206,6 +242,13 @@ app.include_router(platform_router)
 app.include_router(billing_router)
 app.include_router(xdr_router)
 app.include_router(wazuh_router)
+app.include_router(openaudit_router)
+app.include_router(hardeningkitty_router)
+app.include_router(thehive_router)
+app.include_router(cloud_posture_router)
+app.include_router(sonarqube_router)
+app.include_router(scim_router)
+app.include_router(stix_router)
 
 _PUBLIC_API_PREFIXES = (
     "/api/auth/login",
@@ -215,6 +258,7 @@ _PUBLIC_API_PREFIXES = (
     "/api/auth/oidc/login",
     "/api/auth/oidc/callback",
     "/api/integrations/github/webhook",
+    "/api/integrations/gitlab/webhook",
     "/api/billing/webhook",
     "/api/health",
     "/api/realtime",
@@ -781,6 +825,12 @@ async def health():
             "modes": list(MODE_RAG_TOP_K.keys()),
         },
     }
+    try:
+        from app.realtime_bus import backend_status as realtime_backend_status
+
+        payload["realtime_bus"] = realtime_backend_status()
+    except Exception:
+        payload["realtime_bus"] = {"mode": "unknown"}
     health._cache = {"ts": now_t, "payload": payload}
     return payload
 
@@ -976,7 +1026,17 @@ async def api_tools_run_stream(req: ToolsRunRequest):
 
 
 class JobEnqueueRequest(BaseModel):
-    kind: Literal["kev_sync", "report_export", "xdr_sync", "wazuh_sync"]
+    kind: Literal[
+        "kev_sync",
+        "report_export",
+        "xdr_sync",
+        "wazuh_sync",
+        "openaudit_sync",
+        "hardeningkitty_audit",
+        "thehive_sync",
+        "cloud_posture_sync",
+        "sonarqube_sync",
+    ]
     payload: dict[str, Any] = Field(default_factory=dict)
     engine: Literal["auto", "local", "prefect"] = "auto"
 
@@ -1123,36 +1183,179 @@ async def ingest_knowledge() -> IngestResponse:
 
 @app.get("/api/realtime")
 async def realtime_feed():
-    """Server-Sent Events: light live pulse (cached health; tools scanned rarely)."""
+    """Server-Sent Events: live pulse for Mission Control + workspace panels.
+
+    Wakes immediately on realtime_bus.publish(...) (notifications, jobs, XDR,
+    etc.) and still emits a heartbeat snapshot every 5s when idle.
+    """
 
     async def event_gen():
+        from app.realtime_bus import bind_loop, subscribe, unsubscribe
+
         tools_snap = {"available_count": 0, "count": 0}
         tools_ts = 0.0
-        while True:
+        q = subscribe()
+        try:
+            bind_loop()
+        except Exception:
+            pass
+
+        async def build_payload(push: dict[str, Any] | None = None) -> dict[str, Any]:
+            nonlocal tools_snap, tools_ts
+            now_t = asyncio.get_event_loop().time()
+            if now_t - tools_ts > 60:
+                tools_snap = list_tools_status()
+                tools_ts = now_t
+            snap = await health()
+
+            jobs_pending = 0
+            jobs_running = 0
+            jobs_recent: list[dict[str, Any]] = []
             try:
-                now_t = asyncio.get_event_loop().time()
-                # PATH scans are expensive — refresh at most every 60s
-                if now_t - tools_ts > 60:
-                    tools_snap = list_tools_status()
-                    tools_ts = now_t
-                snap = await health()
-                payload = {
-                    "ts": now_t,
-                    "backend": snap.get("backend"),
-                    "model": snap.get("model"),
-                    "backend_ready": snap.get("backend_ready"),
-                    "backend_status": snap.get("backend_status"),
-                    "rag_documents": snap.get("rag_documents"),
-                    "tools_available": tools_snap.get("available_count"),
-                    "tools_total": tools_snap.get("count"),
-                    "local_tools": settings.local_tools_enabled,
-                    "net_assess": settings.net_assess_enabled,
-                    "web_search": settings.web_search_enabled,
+                from app.jobs import list_jobs
+
+                for j in list_jobs(limit=12):
+                    st = (j.get("status") or "").lower()
+                    if st == "pending":
+                        jobs_pending += 1
+                    elif st == "running":
+                        jobs_running += 1
+                    jobs_recent.append(
+                        {
+                            "id": j.get("id"),
+                            "kind": j.get("kind"),
+                            "status": st,
+                            "finished_at": j.get("finished_at"),
+                        }
+                    )
+            except Exception:
+                pass
+
+            inventory = {"configured": False, "devices_cached": 0}
+            try:
+                from app.openaudit import status as oa_status
+
+                oa = oa_status()
+                inventory = {
+                    "configured": bool(oa.get("configured")),
+                    "devices_cached": int(oa.get("devices_cached") or 0),
                 }
-                yield f"data: {json.dumps(payload)}\n\n"
+            except Exception:
+                pass
+
+            hardening = {"installed": False, "lists": 0, "cis_lists": 0, "last_score": None}
+            try:
+                from app.hardeningkitty import recent_runs, status as hk_status
+
+                hk = hk_status()
+                runs = recent_runs(1)
+                hardening = {
+                    "installed": bool(hk.get("installed")),
+                    "lists": int(hk.get("finding_lists") or 0),
+                    "cis_lists": int(hk.get("cis_lists") or 0),
+                    "last_score": (runs[0].get("score") if runs else None),
+                }
+            except Exception:
+                pass
+
+            notif_unread = 0
+            try:
+                from app.notifications import unread_count
+
+                notif_unread = int(unread_count("local") or 0)
+            except Exception:
+                notif_unread = 0
+
+            kpis = {"assets": 0, "vulns_open": 0, "incidents_open": 0}
+            try:
+                from app.db import get_conn
+
+                c = get_conn()
+                kpis["assets"] = int(
+                    (
+                        c.execute(
+                            "SELECT COUNT(*) AS n FROM assets WHERE user_id = ?", ("local",)
+                        ).fetchone()
+                        or {"n": 0}
+                    )["n"]
+                )
+                kpis["vulns_open"] = int(
+                    (
+                        c.execute(
+                            "SELECT COUNT(*) AS n FROM vulnerabilities WHERE user_id = ? "
+                            "AND status NOT IN ('closed','resolved','mitigated')",
+                            ("local",),
+                        ).fetchone()
+                        or {"n": 0}
+                    )["n"]
+                )
+                kpis["incidents_open"] = int(
+                    (
+                        c.execute(
+                            "SELECT COUNT(*) AS n FROM incidents WHERE user_id = ? "
+                            "AND status NOT IN ('closed','resolved')",
+                            ("local",),
+                        ).fetchone()
+                        or {"n": 0}
+                    )["n"]
+                )
+            except Exception:
+                pass
+
+            payload: dict[str, Any] = {
+                "ts": now_t,
+                "backend": snap.get("backend"),
+                "model": snap.get("model"),
+                "backend_ready": snap.get("backend_ready"),
+                "backend_status": snap.get("backend_status"),
+                "rag_documents": snap.get("rag_documents"),
+                "tools_available": tools_snap.get("available_count"),
+                "tools_total": tools_snap.get("count"),
+                "local_tools": settings.local_tools_enabled,
+                "net_assess": settings.net_assess_enabled,
+                "web_search": settings.web_search_enabled,
+                "jobs_pending": jobs_pending,
+                "jobs_running": jobs_running,
+                "jobs_recent": jobs_recent[:8],
+                "inventory": inventory,
+                "hardeningkitty": hardening,
+                "notifications_unread": notif_unread,
+                "kpis": kpis,
+                "realtime_bus": snap.get("realtime_bus"),
+            }
+            if push:
+                payload["push"] = push
+            return payload
+
+        try:
+            # Immediate snapshot so clients paint without waiting for the first tick.
+            try:
+                yield f"data: {json.dumps(await build_payload())}\n\n"
             except Exception as exc:
                 yield f"data: {json.dumps({'error': str(exc)})}\n\n"
-            await asyncio.sleep(10)
+
+            while True:
+                push_evt: dict[str, Any] | None = None
+                try:
+                    push_evt = await asyncio.wait_for(q.get(), timeout=3.0)
+                    # Drain a small burst so one write storm doesn't spam SSE frames.
+                    for _ in range(7):
+                        try:
+                            nxt = q.get_nowait()
+                            if isinstance(push_evt, dict) and isinstance(nxt, dict):
+                                push_evt = {**push_evt, "also": (push_evt.get("also") or []) + [nxt]}
+                            else:
+                                push_evt = nxt
+                        except asyncio.QueueEmpty:
+                            break
+                except asyncio.TimeoutError:
+                    push_evt = None
+                try:
+                    yield f"data: {json.dumps(await build_payload(push_evt))}\n\n"
+                except Exception as exc:
+                    yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+        finally:
+            unsubscribe(q)
 
     return StreamingResponse(
         event_gen(),

@@ -1,12 +1,14 @@
 """Import adapters for mature open-source scanners.
 
 SecuraIQ orchestrates findings — it does not replace the scanners.
-Supported: Trivy, Semgrep, Gitleaks, Grype, Checkov, Bandit, SonarQube, OWASP ZAP.
+Supported: Trivy, Semgrep, Gitleaks, Grype, Checkov, Bandit, SonarQube, OWASP ZAP,
+Burp Suite (Scanner XML export — Professional or Community "Save issues" report).
 """
 
 from __future__ import annotations
 
 import json
+import xml.etree.ElementTree as ET
 from typing import Any, Callable
 
 
@@ -36,6 +38,50 @@ def _sev_from_trivy(sev: str) -> str:
 
 def _sev_from_semgrep(sev: str) -> str:
     return _sev_norm(sev, "medium")
+
+
+def _cvss_from_trivy(vuln: dict[str, Any]) -> float | None:
+    """Trivy embeds per-source CVSS (nvd/redhat/ghsa/...) — prefer NVD V3, fall back to any V3/V2."""
+    cvss_obj = vuln.get("CVSS")
+    if not isinstance(cvss_obj, dict) or not cvss_obj:
+        return None
+    sources = list(cvss_obj.values())
+    ordered = [cvss_obj.get("nvd")] if isinstance(cvss_obj.get("nvd"), dict) else []
+    ordered += [s for s in sources if isinstance(s, dict) and s is not cvss_obj.get("nvd")]
+    for src in ordered:
+        score = src.get("V3Score")
+        if score is not None:
+            try:
+                return float(score)
+            except (TypeError, ValueError):
+                continue
+    for src in ordered:
+        score = src.get("V2Score")
+        if score is not None:
+            try:
+                return float(score)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _cvss_from_grype(vuln: dict[str, Any]) -> float | None:
+    """Grype's `vulnerability.cvss` is a list of {version, metrics: {baseScore}} — prefer highest CVSS version."""
+    entries = vuln.get("cvss")
+    if not isinstance(entries, list) or not entries:
+        return None
+    best = sorted(entries, key=lambda e: str(e.get("version") or ""), reverse=True)
+    for entry in best:
+        if not isinstance(entry, dict):
+            continue
+        metrics = entry.get("metrics") or {}
+        score = metrics.get("baseScore")
+        if score is not None:
+            try:
+                return float(score)
+            except (TypeError, ValueError):
+                continue
+    return None
 
 
 def _sev_from_zap_risk(riskcode: str | int | None, riskdesc: str = "") -> str:
@@ -129,7 +175,7 @@ def parse_trivy(data: dict[str, Any], *, engagement_id: str | None, filename: st
                     "cve": str(cve)[:40],
                     "severity": _sev_from_trivy(str(vuln.get("Severity") or "MEDIUM")),
                     "asset_name": str(target)[:200],
-                    "cvss": None,
+                    "cvss": _cvss_from_trivy(vuln),
                     "engagement_id": engagement_id,
                     "source": f"trivy:{filename}",
                     "raw": vuln,
@@ -239,7 +285,7 @@ def parse_grype(data: dict[str, Any], *, engagement_id: str | None, filename: st
                 "cve": str(cve)[:40],
                 "severity": _sev_norm(str(vuln.get("severity") or "Medium")),
                 "asset_name": str(pkg or art.get("locations") or "sbom")[:200],
-                "cvss": None,
+                "cvss": _cvss_from_grype(vuln),
                 "engagement_id": engagement_id,
                 "source": f"grype:{filename}",
                 "raw": match,
@@ -317,9 +363,12 @@ def parse_sonarqube(data: dict[str, Any], *, engagement_id: str | None, filename
         msg = issue.get("message") or issue.get("rule") or "SonarQube issue"
         rule = issue.get("rule") or ""
         comp = issue.get("component") or issue.get("project") or ""
-        title = f"[{itype or 'CODE'}] {msg}" if itype else str(msg)
-        if rule and rule not in title:
-            title = f"{rule}: {msg}"
+        # Keep both the issue-type tag and the rule id — this used to overwrite
+        # the "[VULNERABILITY]"/"[BUG]"/"[CODE_SMELL]" prefix entirely whenever
+        # a rule id was present (which SonarQube always sets), silently losing
+        # the type classification from every imported title.
+        prefix = f"[{itype}] " if itype else ""
+        title = f"{prefix}{rule}: {msg}" if rule else f"{prefix}{msg}"
         items.append(
             {
                 "title": str(title)[:300],
@@ -361,6 +410,67 @@ def parse_zap(data: dict[str, Any], *, engagement_id: str | None, filename: str)
     return items
 
 
+def _sev_from_burp(sev: str) -> str:
+    # Burp's own scale: High / Medium / Low / Information — "Information" isn't
+    # in the shared _sev_norm map (only the JSON-scanner spelling "Informational"
+    # is), so map it explicitly rather than let it fall through to "medium".
+    s = (sev or "").strip().lower()
+    if s == "information":
+        return "info"
+    return _sev_norm(sev, "info")
+
+
+def is_burp_xml(text: str) -> bool:
+    """Cheap, false-positive-resistant check before paying for a full XML parse."""
+    head = text[:2000]
+    return "<issues" in head and "<issue>" in text[:4000]
+
+
+def parse_burp_xml(text: str, *, engagement_id: str | None, filename: str) -> list[dict[str, Any]]:
+    """Burp Suite Scanner XML export (Professional or Community 'Save issues',
+    also what Burp Suite Enterprise's report download produces). Each <issue>
+    carries <name>, <host ip="...">https://target</host>, <path>, <severity>
+    (High/Medium/Low/Information), <confidence> (Certain/Firm/Tentative), and
+    CDATA background/remediation text we keep in `raw` for the finding detail
+    view rather than parse into structured fields.
+    """
+    root = ET.fromstring(text)
+    items: list[dict[str, Any]] = []
+    for node in root.findall(".//issue")[:500]:
+        name = (node.findtext("name") or "Burp finding").strip()
+        host_el = node.find("host")
+        host_url = (host_el.text or "").strip() if host_el is not None else ""
+        host_ip = (host_el.get("ip") or "").strip() if host_el is not None else ""
+        path = (node.findtext("path") or "").strip()
+        asset = host_url or host_ip or "target"
+        if path and path != "/":
+            asset = f"{asset}{path}"
+        confidence = (node.findtext("confidence") or "").strip()
+        issue_type = (node.findtext("type") or "").strip()
+        items.append(
+            {
+                "title": str(name)[:300],
+                "cve": issue_type[:40],  # Burp's internal issue-type ID, not a CVE — kept for cross-reference
+                "severity": _sev_from_burp(node.findtext("severity") or "Information"),
+                "asset_name": str(asset)[:200],
+                "cvss": None,  # Burp Scanner doesn't emit CVSS — severity is its own High/Medium/Low/Info scale
+                "engagement_id": engagement_id,
+                "source": f"burp:{filename}",
+                "raw": {
+                    "type": issue_type,
+                    "host": host_url,
+                    "host_ip": host_ip,
+                    "path": path,
+                    "confidence": confidence,
+                    "severity": node.findtext("severity") or "",
+                    "issueBackground": (node.findtext("issueBackground") or "")[:2000],
+                    "remediationBackground": (node.findtext("remediationBackground") or "")[:2000],
+                },
+            }
+        )
+    return items
+
+
 ADAPTERS: dict[str, Callable[..., list[dict[str, Any]]]] = {
     "trivy": parse_trivy,
     "semgrep": parse_semgrep,
@@ -370,6 +480,14 @@ ADAPTERS: dict[str, Callable[..., list[dict[str, Any]]]] = {
     "bandit": parse_bandit,
     "sonarqube": parse_sonarqube,
     "zap": parse_zap,
+}
+
+# XML-format adapters live separately from ADAPTERS (which is JSON-only, keyed
+# off try_parse_scanner_json) — app.enterprise.import_vulnerabilities checks
+# is_burp_xml() directly before falling back to the generic _parse_xml_vulns
+# for Nessus/other tools' XML exports.
+XML_ADAPTERS: dict[str, Callable[..., list[dict[str, Any]]]] = {
+    "burp": parse_burp_xml,
 }
 
 

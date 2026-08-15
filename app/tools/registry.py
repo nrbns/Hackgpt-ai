@@ -96,6 +96,22 @@ TOOL_CATALOG: dict[str, ToolSpec] = {
         "connected XDR/EDR (Sophos/CrowdStrike/SentinelOne/Defender)",
         category="hardening",
     ),
+    "hardeningkitty": ToolSpec(
+        "hardeningkitty", "HardeningKitty (Windows)", "external",
+        "Import CIS/baseline Audit reports or run local Audit via PowerShell module "
+        "(authorized Windows hosts). HailMary apply is not exposed via SecuraIQ API.",
+        binaries=(),
+        needs_target=False,
+        category="hardening",
+    ),
+    "defender_hunt": ToolSpec(
+        "defender_hunt", "Defender advanced hunting", "builtin",
+        "Run KQL advanced hunting against Microsoft Defender XDR "
+        "(Graph runHuntingQuery / legacy MTP API — authorized tenant only)",
+        needs_target=False,
+        heavy=True,
+        category="intel",
+    ),
     # --- External (detected via PATH) ---
     "nmap": ToolSpec(
         "nmap", "Nmap", "external",
@@ -260,6 +276,22 @@ def is_available(tool_id: str) -> bool:
     spec = TOOL_CATALOG.get(tool_id)
     if not spec:
         return False
+    # Credential / module-gated tools (even if kind=builtin) — must check before
+    # the generic builtin "always True" path or the UI lies about availability.
+    if tool_id == "defender_hunt":
+        try:
+            from app.connectors.defender import is_configured
+
+            return is_configured()
+        except Exception:
+            return False
+    if tool_id == "hardeningkitty":
+        try:
+            from app.hardeningkitty import is_installed
+
+            return is_installed()
+        except Exception:
+            return False
     if spec.kind == "builtin":
         return True
     return resolve_binary(spec) is not None

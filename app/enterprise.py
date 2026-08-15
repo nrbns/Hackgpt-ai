@@ -44,6 +44,12 @@ def create_asset(
     )
     c.commit()
     audit("asset_create", user_id, {"id": aid, "name": name})
+    try:
+        from app.realtime_bus import publish
+
+        publish(type="asset", id=aid, user_id=user_id)
+    except Exception:
+        pass
     return get_asset(user_id, aid)  # type: ignore[return-value]
 
 
@@ -134,6 +140,12 @@ def create_risk(
     )
     c.commit()
     audit("risk_create", user_id, {"id": rid, "score": score})
+    try:
+        from app.realtime_bus import publish
+
+        publish(type="risk", id=rid, user_id=user_id, score=score)
+    except Exception:
+        pass
     return get_risk(user_id, rid)  # type: ignore[return-value]
 
 
@@ -188,7 +200,14 @@ def update_risk(user_id: str, risk_id: str, patch: dict[str, Any]) -> dict[str, 
     )
     get_conn().commit()
     audit("risk_update", user_id, {"id": risk_id, **{k: data[k] for k in data if k != "updated_at"}})
-    return get_risk(user_id, risk_id)
+    updated = get_risk(user_id, risk_id)
+    try:
+        from app.realtime_bus import publish
+
+        publish(type="risk", id=risk_id, score=(updated or {}).get("risk_score"), user_id=user_id)
+    except Exception:
+        pass
+    return updated
 
 
 def delete_risk(user_id: str, risk_id: str) -> bool:
@@ -201,7 +220,12 @@ def delete_risk(user_id: str, risk_id: str) -> bool:
 # --- Vulnerabilities --------------------------------------------------------
 
 
-def create_vulnerability(user_id: str, item: dict[str, Any]) -> dict[str, Any]:
+def create_vulnerability(
+    user_id: str,
+    item: dict[str, Any],
+    *,
+    emit_realtime: bool = True,
+) -> dict[str, Any]:
     vid = new_id()
     ts = now()
     c = get_conn()
@@ -233,6 +257,19 @@ def create_vulnerability(user_id: str, item: dict[str, Any]) -> dict[str, Any]:
     )
     c.commit()
     result = get_vulnerability(user_id, vid)
+
+    if emit_realtime:
+        try:
+            from app.realtime_bus import publish
+
+            publish(
+                type="vuln",
+                id=vid,
+                severity=(item.get("severity") or "medium").lower(),
+                user_id=user_id,
+            )
+        except Exception:
+            pass
 
     severity = (item.get("severity") or "medium").lower()
     if severity in ("critical", "high"):
@@ -309,7 +346,20 @@ def update_vulnerability(user_id: str, vuln_id: str, patch: dict[str, Any]) -> d
     )
     get_conn().commit()
     audit("vuln_update", user_id, {"id": vuln_id, "status": data.get("status")})
-    return get_vulnerability(user_id, vuln_id)
+    updated = get_vulnerability(user_id, vuln_id)
+    try:
+        from app.realtime_bus import publish
+
+        publish(
+            type="vuln",
+            id=vuln_id,
+            severity=(updated or {}).get("severity") or "medium",
+            status=(updated or {}).get("status") or "",
+            user_id=user_id,
+        )
+    except Exception:
+        pass
+    return updated
 
 
 def triage_vulnerability(
@@ -406,20 +456,46 @@ def import_vulnerabilities(
                     continue
                 items.append(_normalize_vuln_row(row, engagement_id, source=f"json:{filename}"))
     elif name.endswith(".csv") or "," in text.split("\n", 1)[0]:
-        reader = csv.DictReader(io.StringIO(text))
-        for row in reader:
-            items.append(_normalize_vuln_row(dict(row), engagement_id, source=f"csv:{filename}"))
+        from app.hardeningkitty import is_hardeningkitty_report, parse_report_csv
+
+        if is_hardeningkitty_report(text, filename):
+            adapter = "hardeningkitty"
+            items.extend(parse_report_csv(text, engagement_id=engagement_id, filename=filename))
+        else:
+            reader = csv.DictReader(io.StringIO(text))
+            for row in reader:
+                items.append(_normalize_vuln_row(dict(row), engagement_id, source=f"csv:{filename}"))
     elif name.endswith(".xml") or text.strip().startswith("<"):
-        items.extend(_parse_xml_vulns(text, engagement_id, filename))
+        from app.scanner_adapters import is_burp_xml, parse_burp_xml
+
+        if is_burp_xml(text):
+            adapter = "burp"
+            items.extend(parse_burp_xml(text, engagement_id=engagement_id, filename=filename))
+        else:
+            items.extend(_parse_xml_vulns(text, engagement_id, filename))
     else:
         raise ValueError(
-            "Unsupported format — use CSV, JSON, XML, or scanner JSON "
+            "Unsupported format — use CSV, JSON, XML, HardeningKitty report CSV, or scanner JSON "
             "(Trivy/Semgrep/Gitleaks/Grype/Checkov/Bandit/SonarQube/ZAP)"
         )
 
     created = []
     for it in items[:500]:
-        created.append(create_vulnerability(user_id, it))
+        # Suppress per-row bus spam on bulk import — one vuln_batch below
+        created.append(create_vulnerability(user_id, it, emit_realtime=False))
+    if created:
+        try:
+            from app.realtime_bus import publish
+
+            publish(
+                type="vuln_batch",
+                source=adapter or "import",
+                count=len(created),
+                file=filename,
+                user_id=user_id,
+            )
+        except Exception:
+            pass
     audit(
         "vuln_import",
         user_id,
@@ -429,6 +505,8 @@ def import_vulnerabilities(
 
 
 def _normalize_vuln_row(row: dict[str, Any], engagement_id: str | None, source: str) -> dict[str, Any]:
+    from app.scanner_adapters import _sev_norm
+
     lower = {str(k).lower().strip(): v for k, v in row.items()}
     title = (
         lower.get("title")
@@ -449,7 +527,11 @@ def _normalize_vuln_row(row: dict[str, Any], engagement_id: str | None, source: 
     return {
         "title": str(title)[:300],
         "cve": str(cve)[:40],
-        "severity": severity.lower().split()[0][:20],
+        # Route every generic/CSV/XML import (Nessus, Qualys exports, etc.) through
+        # the same critical/high/medium/low/info normalization the dedicated scanner
+        # adapters use — a naive lowercase-first-word split silently produced values
+        # like "information" or "blocker" that never matched any severity filter/badge.
+        "severity": _sev_norm(severity, "medium"),
         "asset_name": str(asset)[:200],
         "cvss": cvss,
         "engagement_id": engagement_id,
@@ -568,6 +650,12 @@ def create_remediation(
     )
     c.commit()
     audit("remediation_create", user_id, {"id": rid, "title": title})
+    try:
+        from app.realtime_bus import publish
+
+        publish(type="remediation", id=rid, user_id=user_id)
+    except Exception:
+        pass
     rows = list_remediations(user_id)
     return next((r for r in rows if r.get("id") == rid), {"id": rid, "title": title, "status": "open"})
 
@@ -619,6 +707,13 @@ def create_remediations_from_assessment(
         )
     c.commit()
     audit("gap_remediations_seed", user_id, {"assessment_id": assessment_id, "count": len(out)})
+    if out:
+        try:
+            from app.realtime_bus import publish
+
+            publish(type="remediation", id=assessment_id, count=len(out), user_id=user_id)
+        except Exception:
+            pass
     return out
 
 
@@ -666,7 +761,19 @@ def update_remediation(user_id: str, rem_id: str, patch: dict[str, Any]) -> dict
     updated = get_conn().execute(
         "SELECT * FROM gap_remediations WHERE id = ? AND user_id = ?", (rem_id, user_id)
     ).fetchone()
-    return row_to_dict(updated)
+    result = row_to_dict(updated)
+    try:
+        from app.realtime_bus import publish
+
+        publish(
+            type="remediation",
+            id=rem_id,
+            status=(result or {}).get("status") or "",
+            user_id=user_id,
+        )
+    except Exception:
+        pass
+    return result
 
 
 def evidence_from_files(user_id: str, file_ids: list[str]) -> str:
@@ -778,9 +885,10 @@ def enterprise_dashboard(user_id: str) -> dict[str, Any]:
         "risks": len(open_risks),
         "rems": len(open_rems),
         "assets": len(assets),
+        "incidents": len(open_incidents),
     }
     kpi_trends = (
-        {"has_baseline": False, "security_index_delta": 0, "compliance_delta": 0, "vulns_delta": 0, "risks_delta": 0, "rems_delta": 0, "assets_delta": 0}
+        {"has_baseline": False, "security_index_delta": 0, "compliance_delta": 0, "vulns_delta": 0, "risks_delta": 0, "rems_delta": 0, "assets_delta": 0, "incidents_delta": 0}
         if is_empty
         else _compute_kpi_trends(user_id, kpi_now)
     )
@@ -817,10 +925,24 @@ def enterprise_dashboard(user_id: str) -> dict[str, Any]:
     mitre = _mitre_coverage(open_vulns, playbooks, open_risks)
     control_stats = _framework_control_stats(user_id, get_assessment, frameworks)
 
+    correlation: dict[str, Any] = {"hotspots": [], "counts": {}}
+    try:
+        from app.knowledge_graph import build_knowledge_graph
+
+        g = build_knowledge_graph(user_id)
+        correlation = {
+            "hotspots": g.get("hotspots") or [],
+            "counts": g.get("counts") or {},
+            "doctrine": g.get("doctrine") or "",
+        }
+    except Exception:
+        pass
+
     return {
         **gap,
         "is_empty": is_empty,
         "security_index": security_index,
+        "correlation": correlation,
         "risks_open": len(open_risks),
         "risks_total": len(risks),
         "avg_open_risk_score": avg_risk,
@@ -990,6 +1112,7 @@ def _compute_kpi_trends(user_id: str, current: dict[str, Any]) -> dict[str, Any]
         "risks_delta": delta("risks"),
         "rems_delta": delta("rems"),
         "assets_delta": delta("assets"),
+        "incidents_delta": delta("incidents"),
     }
 
 
@@ -1218,8 +1341,9 @@ def _mitre_coverage(
 
 
 def _framework_control_stats(user_id: str, get_assessment, frameworks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per-assessment control counts for Mission Control + Frameworks UI."""
     stats: list[dict[str, Any]] = []
-    for f in frameworks[:3]:
+    for f in frameworks:
         aid = f.get("id")
         counts = {"implemented": 0, "partial": 0, "missing": 0, "not_applicable": 0}
         total = 0
@@ -1228,7 +1352,7 @@ def _framework_control_stats(user_id: str, get_assessment, frameworks: list[dict
                 detail = get_assessment(user_id, aid)
                 if detail and detail.get("counts"):
                     counts.update({k: int(detail["counts"].get(k) or 0) for k in counts})
-                    total = sum(counts.values())
+                    total = int(detail.get("control_count") or 0) or sum(counts.values())
             except Exception:
                 pass
         stats.append(
@@ -1379,14 +1503,13 @@ def reset_workspace(user_id: str, *, clear_rag: bool = False) -> dict[str, Any]:
         except Exception:
             counts[table] = counts.get(table, 0)
 
-    # Global lab tables (no user_id) — clear on local zero-start so SOC stays empty
-    if user_id == "local":
-        for table in ("xdr_events", "jobs", "wazuh_agents"):
-            try:
-                cur = c.execute(f"DELETE FROM {table}")
-                counts[table] = int(cur.rowcount or 0)
-            except Exception:
-                counts[table] = counts.get(table, 0)
+    # Global operational queues (no user_id) — always clear so Automation starts empty
+    for table in ("xdr_events", "jobs", "wazuh_agents", "openaudit_devices", "hardeningkitty_runs"):
+        try:
+            cur = c.execute(f"DELETE FROM {table}")
+            counts[table] = int(cur.rowcount or 0)
+        except Exception:
+            counts[table] = counts.get(table, 0)
 
     # Organizations owned / joined by this user
     try:
@@ -1526,6 +1649,12 @@ def create_playbook(
     )
     c.commit()
     audit("playbook_create", user_id, {"id": pid, "title": title})
+    try:
+        from app.realtime_bus import publish
+
+        publish(type="playbook", id=pid, user_id=user_id)
+    except Exception:
+        pass
     return get_playbook(user_id, pid)  # type: ignore[return-value]
 
 
@@ -1625,6 +1754,12 @@ def create_campaign(
     )
     c.commit()
     audit("campaign_create", user_id, {"id": cid, "name": name})
+    try:
+        from app.realtime_bus import publish
+
+        publish(type="campaign", id=cid, user_id=user_id)
+    except Exception:
+        pass
     return get_campaign(user_id, cid)  # type: ignore[return-value]
 
 

@@ -203,35 +203,50 @@ class WorkspaceResetRequest(BaseModel):
 
 @router.post("/workspace/reset/request-code")
 async def workspace_reset_request_code(user: Annotated[AuthUser, Depends(require_user)]):
-    """Step 1 of destructive-action approval: issues a one-time code delivered
-    via the in-app notification feed (GET /api/notifications) — never returned
-    here. See app/approvals.py for why a bare confirm:true boolean wasn't real
-    human approval."""
-    from app.approvals import request_approval
+    """Step 1 of destructive-action approval when AUTH is enabled.
 
-    return request_approval(user.id, "workspace_reset", {})
+    In open local mode (AUTH_ENABLED=false) the code is also returned in the
+    response so the UI can complete a one-click reset on localhost without
+    digging through notifications.
+    """
+    from app.approvals import request_approval
+    from app.config import settings as _settings
+
+    result = request_approval(user.id, "workspace_reset", {})
+    if not _settings.auth_enabled:
+        # Local open mode only — code is still required by /workspace/reset
+        from app.db import get_conn
+
+        row = get_conn().execute(
+            "SELECT code FROM action_approvals WHERE user_id = ? AND action = ? "
+            "AND consumed_at IS NULL ORDER BY created_at DESC LIMIT 1",
+            (user.id, "workspace_reset"),
+        ).fetchone()
+        if row:
+            result = {**result, "confirm_code": row["code"] if hasattr(row, "keys") else row[0]}
+    return result
 
 
 @router.post("/workspace/reset")
 async def workspace_reset(req: WorkspaceResetRequest, user: Annotated[AuthUser, Depends(require_user)]):
-    """Wipe operational data for the current user. Starts Mission Control from zero.
-
-    Requires a confirm_code from POST /workspace/reset/request-code (delivered
-    via notifications) — this is a real two-person-equivalent approval step,
-    not just a client-side confirm() dialog.
-    """
+    """Wipe operational data for the current user. Starts Mission Control from zero."""
     from app.approvals import verify_and_consume
+    from app.config import settings as _settings
+    from app.enterprise import reset_workspace
 
-    if not req.confirm_code or not verify_and_consume(user.id, "workspace_reset", req.confirm_code):
+    code = (req.confirm_code or "").strip()
+    if not code or not verify_and_consume(user.id, "workspace_reset", code):
         raise HTTPException(
             status_code=400,
             detail=(
                 "Missing or invalid confirmation code. Call POST /api/workspace/reset/request-code first, "
-                "check your notifications for the code, then resubmit with confirm_code set."
+                + (
+                    "check your notifications for the code, then resubmit with confirm_code set."
+                    if _settings.auth_enabled
+                    else "then resubmit with confirm_code (returned in local open mode)."
+                )
             ),
         )
-    from app.enterprise import reset_workspace
-
     return reset_workspace(user.id, clear_rag=req.clear_rag)
 
 
@@ -344,17 +359,12 @@ async def vulns_import(
 
 @router.get("/vulnerabilities/samples")
 async def vulns_samples(user: Annotated[AuthUser, Depends(require_user)]):
-    """List authorized lab scanner fixtures under data/samples/."""
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parent.parent / "data" / "samples"
-    items = []
-    if root.is_dir():
-        for p in sorted(root.glob("*-lab.json")):
-            items.append({"id": p.stem, "filename": p.name, "path": f"data/samples/{p.name}"})
+    """Demo fixtures disabled — import real scanner exports via /api/vulnerabilities/import."""
     return {
-        "samples": items,
-        "hint": "Lab fixtures only (Trivy/Semgrep/Gitleaks). Import into authorized workspace.",
+        "samples": [],
+        "ok": True,
+        "disabled": True,
+        "hint": "Lab fixtures removed. Import live Trivy/Semgrep/Gitleaks/Nessus JSON via Import scan.",
     }
 
 
@@ -364,28 +374,10 @@ async def vulns_sample_import(
     user: Annotated[AuthUser, Depends(require_user)],
     engagement_id: str | None = None,
 ):
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parent.parent / "data" / "samples"
-    # prevent path traversal
-    safe = re.sub(r"[^a-zA-Z0-9._-]", "", sample_id)
-    candidates = [
-        root / f"{safe}.json",
-        root / f"{safe}-lab.json",
-        root / safe,
-    ]
-    path = next((p for p in candidates if p.is_file() and p.parent.resolve() == root.resolve()), None)
-    if not path:
-        raise HTTPException(status_code=404, detail="Sample not found")
-    try:
-        return import_vulnerabilities(
-            user.id,
-            content=path.read_bytes(),
-            filename=path.name,
-            engagement_id=engagement_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    raise HTTPException(
+        status_code=410,
+        detail="Lab sample import disabled. Use Import scan with your scanner export.",
+    )
 
 
 @router.patch("/vulnerabilities/{vuln_id}")

@@ -1,4 +1,4 @@
-"""Gap analysis engine — ISO 27001 / NIST CSF / CIS Controls."""
+"""Gap analysis engine — current GRC / AppSec framework catalogs."""
 
 from __future__ import annotations
 
@@ -12,6 +12,17 @@ from app.db import audit, get_conn, new_id, now, row_to_dict
 Status = Literal["implemented", "partial", "missing", "not_applicable"]
 
 _FRAMEWORKS_DIR = Path(__file__).resolve().parent.parent / "data" / "frameworks"
+
+# Legacy UI / catalog aliases → current JSON ids
+_FRAMEWORK_ALIASES = {
+    "cis": "cis_controls",
+    "pci": "pci_dss",
+    "asvs": "owasp_asvs",
+    "nist": "nist_csf",
+    "cmmc": "cmmc_l2",
+    "800-53": "nist_800_53",
+    "800-171": "nist_800_171",
+}
 
 _STATUS_SCORE = {
     "implemented": 1.0,
@@ -31,17 +42,19 @@ def list_frameworks() -> list[dict[str, Any]]:
                 "name": data["name"],
                 "version": data.get("version", ""),
                 "control_count": len(data.get("controls") or []),
+                "description": data.get("description") or "",
             }
         )
     return out
 
 
 def load_framework(framework_id: str) -> dict[str, Any]:
-    path = _FRAMEWORKS_DIR / f"{framework_id}.json"
+    fid = _FRAMEWORK_ALIASES.get((framework_id or "").strip().lower(), framework_id)
+    path = _FRAMEWORKS_DIR / f"{fid}.json"
     if not path.exists():
         for p in _FRAMEWORKS_DIR.glob("*.json"):
             data = json.loads(p.read_text(encoding="utf-8"))
-            if data.get("id") == framework_id:
+            if data.get("id") == fid or data.get("id") == framework_id:
                 return data
         raise ValueError(f"Unknown framework: {framework_id}")
     return json.loads(path.read_text(encoding="utf-8"))
@@ -52,7 +65,7 @@ def _normalize(text: str) -> str:
 
 
 def score_control_against_evidence(control: dict[str, Any], evidence: str) -> dict[str, Any]:
-    """Heuristic keyword mapping — demo baseline; refine with AI in chat."""
+    """Heuristic keyword mapping against evidence text for gap scoring."""
     ev = _normalize(evidence)
     if not ev:
         return {
@@ -66,6 +79,10 @@ def score_control_against_evidence(control: dict[str, Any], evidence: str) -> di
         }
 
     kws = [k.lower() for k in (control.get("keywords") or [])]
+    if not kws:
+        # Fall back to description/title tokens when catalogs omit keywords
+        blob = f"{control.get('description') or ''} {control.get('title') or ''}"
+        kws = [w for w in re.split(r"\W+", blob.lower()) if len(w) > 4][:8]
     matched = [k for k in kws if k in ev]
     ratio = len(matched) / max(len(kws), 1)
 
@@ -73,6 +90,11 @@ def score_control_against_evidence(control: dict[str, Any], evidence: str) -> di
     title_hits = sum(1 for w in title_bits if w in ev)
     if title_hits >= 2:
         ratio = min(1.0, ratio + 0.25)
+    desc = _normalize(str(control.get("description") or ""))
+    if desc:
+        desc_bits = [w for w in re.split(r"\W+", desc) if len(w) > 5][:6]
+        if sum(1 for w in desc_bits if w in ev) >= 2:
+            ratio = min(1.0, ratio + 0.15)
 
     if ratio >= 0.45 or len(matched) >= 2:
         status: Status = "implemented"
@@ -105,6 +127,26 @@ def score_control_against_evidence(control: dict[str, Any], evidence: str) -> di
         "matched_keywords": matched,
         "recommendation": rec,
     }
+
+
+SCORING_METHODOLOGY = {
+    "type": "heuristic_keyword",
+    "auditor_grade": False,
+    "version": "1.0",
+    "summary": (
+        "Compliance % is a keyword/evidence heuristic — not an auditor attestation. "
+        "implemented=1.0, partial=0.5, missing=0.0; not_applicable excluded from denominator. "
+        "Manual overrides set confidence=1.0 for that control only."
+    ),
+    "formula": (
+        "compliance_percent = 100 * sum(status_weight) / count(applicable_controls); "
+        "status_weight: implemented=1, partial=0.5, missing=0, N/A=excluded"
+    ),
+    "limits": (
+        "Does not prove control operating effectiveness, sampling, or SOC 2 / ISO certification. "
+        "Use evidence queue + human attestation for audit packs."
+    ),
+}
 
 
 def run_gap_analysis(
@@ -167,6 +209,7 @@ def run_gap_analysis(
         "top_gaps": gaps[:15],
         "roadmap": roadmap,
         "executive_summary": exec_summary,
+        "methodology": SCORING_METHODOLOGY,
         "created_at": created,
     }
 
@@ -205,6 +248,18 @@ def run_gap_analysis(
         (json.dumps(payload), assessment_id),
     )
     get_conn().commit()
+    try:
+        from app.realtime_bus import publish
+
+        publish(
+            type="gap",
+            id=assessment_id,
+            framework_id=fw["id"],
+            compliance_percent=pct,
+            user_id=user_id,
+        )
+    except Exception:
+        pass
     return payload
 
 
@@ -269,6 +324,7 @@ def dashboard_scores(user_id: str) -> dict[str, Any]:
         "compliance_score": overall,
         "frameworks": scores,
         "assessment_count": len(rows),
+        "methodology": SCORING_METHODOLOGY,
         "recommendations": (
             [
                 "Run ISO 27001 gap analysis against current policies/evidence",

@@ -30,7 +30,14 @@ from app.free_security_apis import (
     unified_lookup,
 )
 from app.intel_feeds import fetch_cisa_kev, lookup_nvd_cve, sync_kev_to_watchlist
-from app.knowledge_graph import add_entity_link, build_knowledge_graph, list_entity_links
+from app.knowledge_graph import (
+    add_entity_link,
+    build_knowledge_graph,
+    correlate_focus,
+    correlation_hotspots,
+    list_entity_links,
+    rebuild_auto_links,
+)
 from app.office_export import build_xlsx, markdown_to_docx
 
 router = APIRouter(prefix="/api", tags=["platform"])
@@ -59,6 +66,27 @@ class WebhookDispatch(BaseModel):
 @router.get("/graph")
 async def graph_get(user: Annotated[AuthUser, Depends(require_user)]):
     return build_knowledge_graph(user.id)
+
+
+@router.get("/graph/hotspots")
+async def graph_hotspots(
+    user: Annotated[AuthUser, Depends(require_user)],
+    limit: int = Query(12, ge=1, le=40),
+):
+    return {"hotspots": correlation_hotspots(user.id, limit=limit)}
+
+
+@router.get("/graph/correlate")
+async def graph_correlate(
+    user: Annotated[AuthUser, Depends(require_user)],
+    q: str = Query("", max_length=120),
+):
+    return correlate_focus(user.id, q)
+
+
+@router.post("/graph/rebuild")
+async def graph_rebuild(user: Annotated[AuthUser, Depends(require_user)]):
+    return rebuild_auto_links(user.id)
 
 
 @router.get("/graph/links")
@@ -101,6 +129,45 @@ async def intel_nvd(cve_id: str, user: Annotated[AuthUser, Depends(require_user)
 async def intel_free_catalog(user: Annotated[AuthUser, Depends(require_user)]):
     """Full Free APIs Security + Anti-Malware catalog with live/keyed/skipped status."""
     return catalog_summary()
+
+
+@router.get("/intel/threat-detection")
+async def intel_threat_detection(
+    user: Annotated[AuthUser, Depends(require_user)],
+    q: str = "",
+    category: str = "",
+    limit: int = 80,
+    refresh: bool = False,
+):
+    """Searchable catalog from 0x4D31/awesome-threat-detection (tools, rules, labs)."""
+    from app.threat_detection_catalog import load_catalog, search_catalog
+
+    try:
+        catalog = await load_catalog(force=refresh)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"Threat detection catalog unavailable: {exc}"
+        ) from exc
+    return search_catalog(catalog, q=q, category=category, limit=limit)
+
+
+@router.post("/intel/threat-detection/refresh")
+async def intel_threat_detection_refresh(user: Annotated[AuthUser, Depends(require_user)]):
+    from app.threat_detection_catalog import load_catalog
+
+    try:
+        catalog = await load_catalog(force=True)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"Threat detection catalog refresh failed: {exc}"
+        ) from exc
+    return {
+        "ok": True,
+        "total": catalog.get("total"),
+        "categories": catalog.get("categories"),
+        "fetched_from": catalog.get("fetched_from"),
+        "source": catalog.get("source"),
+    }
 
 
 @router.get("/intel/lookup")
@@ -297,7 +364,7 @@ async def platform_status(user: Annotated[AuthUser, Depends(require_user)]):
         "qdrant_url": settings.qdrant_url or None,
         "qdrant_collection": settings.qdrant_collection,
         "embedding_model": settings.embedding_model,
-        "scanners": [*list_import_adapters(), "csv", "json", "xml"],
+        "scanners": [*list_import_adapters(), "burp", "csv", "json", "xml"],
         "office_exports": ["pdf", "docx", "xlsx", "markdown"],
         "intel_feeds": [
             "cisa_kev",

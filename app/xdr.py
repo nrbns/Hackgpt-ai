@@ -80,7 +80,90 @@ def _upsert_event(item: dict[str, Any], user_id: str) -> tuple[dict[str, Any], b
     )
     c.commit()
     row = c.execute("SELECT * FROM xdr_events WHERE id = ?", (eid,)).fetchone()
-    return dict(row), True
+    result = dict(row)
+    try:
+        from app.realtime_bus import publish
+
+        publish(
+            type="xdr",
+            vendor=item.get("vendor"),
+            id=eid,
+            severity=item.get("severity"),
+            title=(item.get("title") or "")[:120],
+        )
+    except Exception:
+        pass
+    return result, True
+
+
+def ingest_detections(
+    items: list[dict[str, Any]],
+    user_id: str = "local",
+    *,
+    auto_incidents: bool | None = None,
+) -> dict[str, Any]:
+    """Normalize + upsert push/webhook detections (lab or vendor inbound)."""
+    do_auto = settings.xdr_auto_create_incidents if auto_incidents is None else auto_incidents
+    new_count = 0
+    created: list[dict[str, Any]] = []
+    for raw in items:
+        vendor = (raw.get("vendor") or "generic").strip().lower() or "generic"
+        external_id = str(raw.get("external_id") or raw.get("id") or "").strip()
+        if not external_id:
+            continue
+        item = {
+            "vendor": vendor,
+            "external_id": external_id,
+            "kind": raw.get("kind") or "detection",
+            "severity": (raw.get("severity") or "medium").lower(),
+            "host": raw.get("host") or raw.get("agent") or "",
+            "title": raw.get("title") or raw.get("rule") or "Inbound detection",
+            "description": raw.get("description") or "",
+            "raw": raw.get("raw") or raw,
+        }
+        row, is_new = _upsert_event(item, user_id)
+        if not is_new:
+            continue
+        new_count += 1
+        created.append(row)
+        if not do_auto:
+            continue
+        if item.get("kind") == "patch_missing":
+            from app.enterprise import create_vulnerability
+
+            vuln = create_vulnerability(
+                user_id,
+                {
+                    "title": item.get("title", "Missing patch"),
+                    "severity": item.get("severity", "medium"),
+                    "asset_name": item.get("host", ""),
+                    "source": f"xdr:{vendor}",
+                    "status": "open",
+                    "raw": item.get("raw"),
+                },
+            )
+            _link_vuln(row["id"], vuln["id"])
+        elif item.get("severity") in ("critical", "high"):
+            from app.ops import create_incident
+
+            inc = create_incident(
+                user_id,
+                title=f"[{vendor}] {item.get('title', 'XDR detection')}",
+                severity=item.get("severity", "high"),
+                status="open",
+                source=f"xdr:{vendor}",
+                summary=item.get("description", "")
+                + (f" | host={item.get('host')}" if item.get("host") else ""),
+            )
+            _link_incident(row["id"], inc["id"])
+    if new_count:
+        try:
+            from app.realtime_bus import publish
+
+            publish(type="xdr_batch", new=new_count, user_id=user_id)
+        except Exception:
+            pass
+    return {"new": new_count, "total": len(items), "events": created[:20]}
 
 
 def _link_incident(event_id: str, incident_id: str) -> None:

@@ -141,7 +141,7 @@ async def sync(user_id: str = "local") -> dict[str, Any]:
             )
             _link_incident(row["id"], inc["id"])
 
-    return {
+    out = {
         "configured": True,
         "agents_new": agents_new,
         "agents_total": len(agents),
@@ -149,3 +149,10 @@ async def sync(user_id: str = "local") -> dict[str, Any]:
         "alerts_total": len(detections),
         "indexer": wazuh_conn.indexer_configured(),
     }
+    try:
+        from app.realtime_bus import publish
+
+        publish(type="siem", source="wazuh", alerts_new=alerts_new, agents_new=agents_new)
+    except Exception:
+        pass
+    return out

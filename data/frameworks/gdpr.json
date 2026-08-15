@@ -1,16 +1,215 @@
 {
   "id": "gdpr",
-  "name": "GDPR (core articles subset)",
-  "version": "demo-subset",
-  "description": "Core GDPR themes for gap analysis demos. Not legal advice; expand with counsel for production.",
+  "name": "GDPR (EU) 2016/679 core articles",
+  "version": "Regulation (EU) 2016/679",
+  "description": "Core GDPR articles for privacy and security of processing gap analysis.",
   "controls": [
-    {"id": "G.5", "title": "Principles (Art. 5)", "description": "Lawfulness, fairness, transparency, purpose limitation, minimization, accuracy, storage limitation, integrity/confidentiality, accountability."},
-    {"id": "G.6", "title": "Lawfulness of processing (Art. 6)", "description": "Documented lawful basis for each processing activity."},
-    {"id": "G.12", "title": "Transparent information (Art. 12–14)", "description": "Privacy notices and response to data subject requests."},
-    {"id": "G.25", "title": "Data protection by design (Art. 25)", "description": "Technical and organisational measures from design time."},
-    {"id": "G.30", "title": "Records of processing (Art. 30)", "description": "Maintain RoPA for controller/processor activities."},
-    {"id": "G.32", "title": "Security of processing (Art. 32)", "description": "Appropriate security including encryption, resilience, testing."},
-    {"id": "G.33", "title": "Breach notification (Art. 33–34)", "description": "72-hour regulator notice and data-subject notice when required."},
-    {"id": "G.35", "title": "DPIA (Art. 35)", "description": "Data protection impact assessments for high-risk processing."}
+    {
+      "id": "Art.5",
+      "title": "Principles relating to processing of personal data",
+      "domain": "Principles",
+      "keywords": [
+        "lawfulness",
+        "fairness",
+        "transparency",
+        "purpose limitation",
+        "minimisation",
+        "accountability"
+      ],
+      "description": "Lawfulness, fairness, transparency, purpose limitation, minimization, accuracy, storage limitation, integrity/confidentiality, accountability."
+    },
+    {
+      "id": "Art.6",
+      "title": "Lawfulness of processing",
+      "domain": "Lawfulness",
+      "keywords": [
+        "lawful basis",
+        "consent",
+        "contract",
+        "legitimate interest"
+      ],
+      "description": "Documented lawful basis for each processing activity."
+    },
+    {
+      "id": "Art.7",
+      "title": "Conditions for consent",
+      "domain": "Lawfulness",
+      "keywords": [
+        "consent",
+        "withdraw consent",
+        "freely given"
+      ],
+      "description": "Consent demonstrable and withdrawable."
+    },
+    {
+      "id": "Art.12",
+      "title": "Transparent information and communication",
+      "domain": "Transparency",
+      "keywords": [
+        "privacy notice",
+        "transparent",
+        "data subject request",
+        "DSARs"
+      ],
+      "description": "Transparent information and modalities for rights."
+    },
+    {
+      "id": "Art.13",
+      "title": "Information to be provided where data collected from data subject",
+      "domain": "Transparency",
+      "keywords": [
+        "privacy notice",
+        "collection notice",
+        "purposes"
+      ],
+      "description": "Notice at collection from the data subject."
+    },
+    {
+      "id": "Art.15",
+      "title": "Right of access",
+      "domain": "Data Subject Rights",
+      "keywords": [
+        "right of access",
+        "SAR",
+        "subject access"
+      ],
+      "description": "Provide access to personal data."
+    },
+    {
+      "id": "Art.17",
+      "title": "Right to erasure",
+      "domain": "Data Subject Rights",
+      "keywords": [
+        "erasure",
+        "right to be forgotten",
+        "deletion"
+      ],
+      "description": "Erase personal data when required."
+    },
+    {
+      "id": "Art.20",
+      "title": "Right to data portability",
+      "domain": "Data Subject Rights",
+      "keywords": [
+        "portability",
+        "machine-readable",
+        "export"
+      ],
+      "description": "Provide data in structured, commonly used format."
+    },
+    {
+      "id": "Art.25",
+      "title": "Data protection by design and by default",
+      "domain": "Security & Design",
+      "keywords": [
+        "privacy by design",
+        "by default",
+        "minimisation"
+      ],
+      "description": "Technical and organisational measures from design time."
+    },
+    {
+      "id": "Art.28",
+      "title": "Processor",
+      "domain": "Processors",
+      "keywords": [
+        "processor",
+        "DPA",
+        "processing agreement",
+        "sub-processor"
+      ],
+      "description": "Processor contracts and instructions."
+    },
+    {
+      "id": "Art.30",
+      "title": "Records of processing activities",
+      "domain": "Accountability",
+      "keywords": [
+        "RoPA",
+        "records of processing",
+        "processing inventory"
+      ],
+      "description": "Maintain RoPA for controller/processor activities."
+    },
+    {
+      "id": "Art.32",
+      "title": "Security of processing",
+      "domain": "Security & Design",
+      "keywords": [
+        "encryption",
+        "pseudonymisation",
+        "resilience",
+        "testing",
+        "Art.32"
+      ],
+      "description": "Appropriate security including encryption, resilience, testing."
+    },
+    {
+      "id": "Art.33",
+      "title": "Notification of a personal data breach to the supervisory authority",
+      "domain": "Breach",
+      "keywords": [
+        "breach notification",
+        "72 hours",
+        "supervisory authority",
+        "DPA notify"
+      ],
+      "description": "Notify authority without undue delay and where feasible within 72 hours."
+    },
+    {
+      "id": "Art.34",
+      "title": "Communication of a personal data breach to the data subject",
+      "domain": "Breach",
+      "keywords": [
+        "data subject notice",
+        "breach communication",
+        "high risk"
+      ],
+      "description": "Notify data subjects when high risk."
+    },
+    {
+      "id": "Art.35",
+      "title": "Data protection impact assessment",
+      "domain": "Accountability",
+      "keywords": [
+        "DPIA",
+        "impact assessment",
+        "high risk processing"
+      ],
+      "description": "DPIA for high-risk processing."
+    },
+    {
+      "id": "Art.37",
+      "title": "Designation of the data protection officer",
+      "domain": "Governance",
+      "keywords": [
+        "DPO",
+        "data protection officer"
+      ],
+      "description": "Designate DPO when required."
+    },
+    {
+      "id": "Art.44",
+      "title": "General principle for transfers",
+      "domain": "Transfers",
+      "keywords": [
+        "international transfer",
+        "third country",
+        "transfer mechanism"
+      ],
+      "description": "Transfers only with adequate safeguards."
+    },
+    {
+      "id": "Art.46",
+      "title": "Transfers subject to appropriate safeguards",
+      "domain": "Transfers",
+      "keywords": [
+        "SCCs",
+        "standard contractual clauses",
+        "BCRs",
+        "transfer impact"
+      ],
+      "description": "Appropriate safeguards including SCCs/BCRs."
+    }
   ]
 }

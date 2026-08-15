@@ -1,11 +1,11 @@
 {
   "name": "SecuraIQ",
   "short_name": "SecuraIQ",
-  "description": "Local security AI for authorized pentesting, CTFs, and blue-team work",
+  "description": "Industrial security control assistant for authorized labs, compliance, and GRC",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#e8eef2",
-  "theme_color": "#0f6e6a",
+  "background_color": "#f1f3f5",
+  "theme_color": "#1a222c",
   "lang": "en",
   "icons": [
     {

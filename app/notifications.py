@@ -139,4 +139,16 @@ def notify(
             get_conn().execute("UPDATE notifications SET emailed = 1 WHERE id = ?", (record["id"],))
             get_conn().commit()
             audit("notification_emailed", user_id, {"id": record["id"], "kind": kind})
+    try:
+        from app.realtime_bus import publish
+
+        publish(
+            type="notification",
+            user_id=user_id,
+            kind=kind,
+            id=record.get("id"),
+            title=title[:120],
+        )
+    except Exception:
+        pass
     return record

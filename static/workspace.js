@@ -124,13 +124,13 @@
       orgs: "Ask about RBAC / tenancy for your engagement…",
     };
     if (view === "chat") {
-      input.placeholder = "Ask SecuraIQ…";
+      input.placeholder = "Issue a control query…";
       wrap.classList.remove("is-page-context");
     } else if (hints[view]) {
       input.placeholder = hints[view];
       wrap.classList.add("is-page-context");
     } else {
-      input.placeholder = "Ask SecuraIQ…";
+      input.placeholder = "Issue a control query…";
       wrap.classList.remove("is-page-context");
     }
   }
@@ -197,6 +197,7 @@
       };
       title.textContent = labels[view] || "SecuraIQ";
     }
+    window.__securaiqWorkspaceView = view;
     if (view === "command" && typeof loadCommandCenter === "function") loadCommandCenter();
     if (view === "chat" && typeof syncEmptyState === "function") syncEmptyState();
     if (view === "assets") renderAssetsPage();
@@ -210,7 +211,10 @@
     if (view === "soc") renderSocPage();
     if (view === "evidence") renderEvidencePage();
     if (view === "orgs") renderOrgsPage();
-    if (view === "frameworks") renderFrameworksPage();
+    if (view === "frameworks") {
+      renderHardeningPanel();
+      renderFrameworksPage();
+    }
     if (view === "integrations") renderIntegrationsPage();
     if (view === "billing") renderBillingPage();
     if (view === "graph") renderGraphPage();
@@ -238,10 +242,70 @@
       </div>`;
   }
 
+  async function syncInventory() {
+    const btn = qs("oaSyncBtn");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Syncing…";
+    }
+    try {
+      const res = await fetch("/api/openaudit/sync", { method: "POST", headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (typeof notifyUser === "function") notifyUser(`**Inventory sync failed:** ${data.detail || res.status}`);
+      } else {
+        const jobId = data.job && data.job.id;
+        if (typeof notifyUser === "function") {
+          notifyUser(`**Inventory sync queued** · job \`${jobId || "?"}\``);
+        }
+        if (jobId && typeof window.waitForJob === "function") {
+          const job = await window.waitForJob(jobId, { timeoutMs: 120000 });
+          const r = job?.result || {};
+          if ((job?.status || "") === "done" && typeof notifyUser === "function") {
+            notifyUser(
+              `**Inventory sync done** · ${r.devices_total || 0} devices · ${r.devices_new || 0} new`
+            );
+          } else if ((job?.status || "") === "error" && typeof notifyUser === "function") {
+            notifyUser(`**Inventory sync error:** ${job.error || "failed"}`);
+          }
+        }
+      }
+    } catch (err) {
+      if (typeof notifyUser === "function") notifyUser(`**Inventory sync error:** ${err.message || err}`);
+    }
+    renderAssetsPage();
+    if (typeof loadCommandCenter === "function") loadCommandCenter();
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Sync inventory";
+    }
+  }
+
   async function renderAssetsPage() {
-    const res = await fetch("/api/assets", { headers: authHeaders() });
-    const data = await res.json();
+    const el = qs("assetsPageBody");
+    if (!el) return;
+    let data = {};
+    let inv = {};
+    let st = {};
+    try {
+      const [res, invRes, stRes] = await Promise.all([
+        fetch("/api/assets", { headers: authHeaders() }),
+        fetch("/api/openaudit/devices?limit=500", { headers: authHeaders() }).catch(() => null),
+        fetch("/api/openaudit/status", { headers: authHeaders() }).catch(() => null),
+      ]);
+      data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Assets failed (${res.status})`);
+      inv = invRes ? await invRes.json().catch(() => ({})) : {};
+      st = stRes ? await stRes.json().catch(() => ({})) : {};
+    } catch (err) {
+      el.innerHTML = `<p class="hint">Could not load assets: ${escapeHtml(err.message || String(err))}</p>`;
+      return;
+    }
     const assets = data.assets || [];
+    const byAsset = {};
+    (inv.devices || []).forEach((d) => {
+      if (d.asset_id) byAsset[d.asset_id] = d;
+    });
     const typeBuckets = {
       server: 0,
       endpoint: 0,
@@ -269,37 +333,45 @@
       else typeBuckets.other += 1;
     });
     const rows = assets
-      .map(
-        (a) => `<tr>
+      .map((a) => {
+        const d = byAsset[a.id] || {};
+        const ip = d.ip || "";
+        return `<tr>
         <td><strong>${escapeHtml(a.name)}</strong></td>
+        <td>${ip ? `<code>${escapeHtml(ip)}</code>` : "—"}</td>
         <td>${escapeHtml(a.asset_type)}</td>
         <td>${escapeHtml(a.criticality)}</td>
         <td>${escapeHtml(a.owner || "—")}</td>
         <td class="ws-actions">
           <button type="button" class="btn-secondary ws-ask-ai" data-kind="asset" data-json="${escapeHtml(
-            JSON.stringify({ id: a.id, name: a.name, asset_type: a.asset_type, criticality: a.criticality })
+            JSON.stringify({ id: a.id, name: a.name, asset_type: a.asset_type, criticality: a.criticality, ip })
           )}">Ask AI</button>
           <button type="button" class="btn-secondary ws-edit-asset" data-id="${a.id}" data-name="${escapeHtml(a.name)}" data-owner="${escapeHtml(a.owner || "")}" data-crit="${escapeHtml(a.criticality)}">Edit</button>
           <button type="button" class="btn-secondary ws-del-asset" data-id="${a.id}">Delete</button>
         </td>
-      </tr>`
-      )
+      </tr>`;
+      })
       .join("");
-    const el = qs("assetsPageBody");
-    if (!el) return;
     const core = ["server", "endpoint", "container", "cloud", "repository", "database", "application", "domain", "api"];
     const tileHtml = core
       .map((k) => `<div class="asset-type-tile"><span>${escapeHtml(k)}</span><strong>${typeBuckets[k] || 0}</strong></div>`)
       .join("");
+    const ping = st.ping || {};
+    const invHint = st.configured
+      ? `<p class="hint">${ping.ok ? "Inventory connected" : ping.error || "Inventory unreachable"} · ${
+          Number(st.devices_cached) || 0
+        } discovered hosts</p>`
+      : "";
     el.innerHTML = `
       <div class="asset-type-grid" aria-label="Asset classes">${tileHtml}</div>
+      ${invHint}
       ${
         rows
           ? `<div class="data-table-wrap"><table class="data-table"><thead><tr>
-              <th>Name</th><th>Type</th><th>Criticality</th><th>Owner</th><th></th>
+              <th>Name</th><th>IP</th><th>Type</th><th>Criticality</th><th>Owner</th><th></th>
             </tr></thead><tbody>${rows}</tbody></table></div>`
           : `<div class="page-empty"><p class="page-empty-title">No assets yet</p>
-             <p class="hint">Add servers, repos, cloud accounts, and APIs to map attack surface.</p></div>`
+             <p class="hint">Add servers, repos, cloud accounts, and APIs — or sync network inventory.</p></div>`
       }`;
     wireAskAiButtons("assetsPageBody");
     qs("assetsPageBody")?.querySelectorAll(".ws-edit-asset").forEach((btn) => {
@@ -704,6 +776,203 @@
     _vulnCache = data.vulnerabilities || [];
     paintVulnFilters();
     paintVulnTable();
+    renderCloudPosturePanel();
+    renderSonarPanel();
+    wireCloudSyncBtn();
+    wireCloudImportBtn();
+    wireSonarSyncBtns();
+  }
+
+  async function renderSonarPanel() {
+    const el = qs("sonarPanelBody");
+    if (!el) return;
+    try {
+      const res = await fetch("/api/sonarqube/status", { headers: authHeaders() });
+      const st = await res.json().catch(() => ({}));
+      const ping = st.ping || {};
+      const chip = st.configured
+        ? ping.ok
+          ? `<span class="auto-job-status status-done">connected</span>`
+          : `<span class="auto-job-status status-error">error</span>`
+        : `<span class="auto-job-status status-planned">not configured</span>`;
+      el.innerHTML = `
+        <p>${chip}
+          ${st.base_url ? `<span class="hint">${escapeHtml(st.base_url)}</span>` : ""}
+          ${st.project_key ? `<span class="hint">project ${escapeHtml(st.project_key)}</span>` : ""}
+        </p>
+        <p class="hint">${
+          st.configured
+            ? ping.ok
+              ? `Ready · ${escapeHtml(String(ping.status || "UP"))}${ping.version ? ` · v${escapeHtml(String(ping.version))}` : ""} · Sync pulls open issues into this register (realtime).`
+              : escapeHtml(ping.error || "Connection failed — check token in Settings")
+            : "Settings → SonarQube: set base URL + token, then Sync. Or Import scan with issues JSON."
+        }</p>`;
+    } catch (err) {
+      el.innerHTML = `<p class="hint">SonarQube panel unavailable: ${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  function wireSonarSyncBtns() {
+    ["sonarSyncBtn", "sonarPanelSyncBtn"].forEach((id) => {
+      const btn = qs(id);
+      if (!btn || btn.dataset.wired) return;
+      btn.dataset.wired = "1";
+      btn.addEventListener("click", async () => {
+        const label = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "Syncing…";
+        try {
+          const res = await fetch("/api/sonarqube/sync", { method: "POST", headers: authHeaders() });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            if (typeof notifyUser === "function") {
+              notifyUser(`**SonarQube sync failed:** ${data.detail || res.status}`);
+            }
+            return;
+          }
+          if (typeof notifyUser === "function") {
+            notifyUser(`**SonarQube sync queued** · job \`${(data.job && data.job.id) || "?"}\``);
+          }
+          const jobId = data.job && data.job.id;
+          if (jobId && typeof window.waitForJob === "function") {
+            await window.waitForJob(jobId, { timeoutMs: 180000 });
+          }
+          renderSonarPanel();
+          renderVulnsPage();
+        } catch (err) {
+          if (typeof notifyUser === "function") notifyUser(`**SonarQube sync failed:** ${err.message || err}`);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = label || "Sync";
+        }
+      });
+    });
+  }
+
+  async function renderCloudPosturePanel() {
+    const el = qs("cloudPosturePanelBody");
+    if (!el) return;
+    try {
+      const [stRes, findRes] = await Promise.all([
+        fetch("/api/cloud/status", { headers: authHeaders() }),
+        fetch("/api/cloud/findings?limit=8", { headers: authHeaders() }),
+      ]);
+      const st = await stRes.json().catch(() => ({}));
+      const findData = await findRes.json().catch(() => ({}));
+      const vendors = st.vendors || {};
+      const vendorLabels = {
+        aws_security_hub: "AWS Security Hub",
+        azure_defender: "Azure Defender",
+        gcp_scc: "GCP SCC",
+      };
+      const ping = st.ping || {};
+      const vendorChips = `<ul class="integ-status-list">${Object.entries(vendors)
+        .map(([id, v]) => {
+          const p = ping[id] || {};
+          const ok = v.configured && p.ok;
+          const err = v.configured && !p.ok ? p.error : "";
+          return `<li class="${ok ? "ok" : v.configured ? "warn" : "muted"}"><span>${escapeHtml(
+            vendorLabels[id] || id
+          )}</span><strong>${v.configured ? (ok ? "Connected" : err || "error") : "Not configured"}</strong></li>`;
+        })
+        .join("")}</ul>`;
+      const findings = findData.findings || [];
+      const findingsHtml = findings.length
+        ? findings
+            .map(
+              (f) =>
+                `<li><strong>${escapeHtml(f.severity || "?")}</strong> [${escapeHtml(f.vendor || "")}] ${escapeHtml(
+                  f.title || ""
+                )}${f.resource ? ` — <code>${escapeHtml(f.resource)}</code>` : ""}</li>`
+            )
+            .join("")
+        : `<li class="hint">${
+            (st.configured_count || 0) > 0
+              ? "No findings synced yet — click Sync cloud"
+              : "Configure AWS, Azure, or GCP in Settings, or import JSON via API"
+          }</li>`;
+      el.innerHTML = `
+        ${vendorChips}
+        <div class="cc-kpi-grid" style="margin:0.5rem 0">
+          <article class="cc-kpi"><span>Findings cached</span><strong>${st.findings_cached || 0}</strong></article>
+          <article class="cc-kpi"><span>Vendors configured</span><strong>${st.configured_count || 0}</strong></article>
+        </div>
+        <p class="hint">Recent cloud findings (also appear in vuln table)</p>
+        <ul class="cc-list">${findingsHtml}</ul>
+        <p class="hint">Settings → Cloud posture. Sync pulls from Security Hub / Defender / SCC into vulnerabilities.</p>`;
+    } catch (err) {
+      el.innerHTML = `<p class="hint">Cloud posture panel unavailable: ${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  function wireCloudImportBtn() {
+    const btn = qs("cloudImportBtn");
+    const input = qs("cloudImportInput");
+    if (!btn || !input || btn.dataset.wired) return;
+    btn.dataset.wired = "1";
+    btn.addEventListener("click", () => input.click());
+    input.addEventListener("change", async () => {
+      const file = input.files?.[0];
+      input.value = "";
+      if (!file) return;
+      btn.disabled = true;
+      btn.textContent = "Importing…";
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const findings = Array.isArray(parsed) ? parsed : parsed.findings || [];
+        if (!findings.length) throw new Error("JSON must be an array of findings or { findings: [...] }");
+        const res = await fetch("/api/cloud/import", {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            vendor: parsed.vendor || "cloud_import",
+            findings,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || `Import failed (${res.status})`);
+        if (typeof notifyUser === "function") {
+          notifyUser(`**Cloud import OK** · ${data.imported ?? findings.length} finding(s)`);
+        }
+        renderVulnsPage();
+      } catch (err) {
+        if (typeof notifyUser === "function") notifyUser(`**Cloud import failed:** ${err.message || err}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Import JSON";
+      }
+    });
+  }
+
+  function wireCloudSyncBtn() {
+    const btn = qs("cloudSyncBtn");
+    if (!btn || btn.dataset.wired) return;
+    btn.dataset.wired = "1";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.textContent = "Syncing…";
+      try {
+        const res = await fetch("/api/cloud/sync", { method: "POST", headers: authHeaders() });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok && typeof notifyUser === "function") {
+          notifyUser(`**Cloud sync failed:** ${data.detail || res.status}`);
+        } else if (typeof notifyUser === "function") {
+          notifyUser(`**Cloud sync queued** · job \`${(data.job && data.job.id) || "?"}\``);
+        }
+        const jobId = data.job && data.job.id;
+        if (jobId && typeof window.waitForJob === "function") {
+          await window.waitForJob(jobId, { timeoutMs: 120000 });
+        }
+      } catch (err) {
+        if (typeof notifyUser === "function") notifyUser(`**Cloud sync error:** ${err.message || err}`);
+      }
+      renderVulnsPage();
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Sync cloud";
+      }
+    });
   }
 
   async function renderRemsPage() {
@@ -843,10 +1112,24 @@
         <td>${escapeHtml(p.category)}</td>
         <td>${escapeHtml(p.severity)}</td>
         <td><pre class="mini-pre">${escapeHtml(p.steps || "")}</pre></td>
+        <td class="ws-actions">
+          <button type="button" class="btn-secondary ws-ask-ai" data-kind="playbook" data-json="${escapeHtml(
+            JSON.stringify({ id: p.id, title: p.title })
+          )}">Ask AI</button>
+          <button type="button" class="btn-secondary ws-pb-del" data-id="${escapeHtml(p.id)}">Delete</button>
+        </td>
       </tr>`
       )
       .join("");
-    await renderTable("playbooksPageBody", ["Title", "Category", "Severity", "Steps"], rows, "No playbooks");
+    await renderTable("playbooksPageBody", ["Title", "Category", "Severity", "Steps", ""], rows, "No playbooks");
+    wireAskAiButtons("playbooksPageBody");
+    qs("playbooksPageBody")?.querySelectorAll(".ws-pb-del").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this playbook?")) return;
+        await fetch(`/api/playbooks/${btn.getAttribute("data-id")}`, { method: "DELETE", headers: authHeaders() });
+        renderPlaybooksPage();
+      });
+    });
   }
 
   async function renderCampaignsPage() {
@@ -863,15 +1146,36 @@
           <td>${escapeHtml(c.audience || "—")}</td>
           <td>${click}%</td>
           <td>${report}%</td>
+          <td class="ws-actions">
+            <button type="button" class="btn-secondary ws-camp-done" data-id="${escapeHtml(c.id)}">Mark done</button>
+            <button type="button" class="btn-secondary ws-camp-del" data-id="${escapeHtml(c.id)}">Delete</button>
+          </td>
         </tr>`;
       })
       .join("");
     await renderTable(
       "campaignsPageBody",
-      ["Campaign", "Status", "Audience", "Click %", "Report %"],
+      ["Campaign", "Status", "Audience", "Click %", "Report %", ""],
       rows,
       "No campaigns"
     );
+    qs("campaignsPageBody")?.querySelectorAll(".ws-camp-done").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await fetch(`/api/campaigns/${btn.getAttribute("data-id")}`, {
+          method: "PATCH",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ status: "completed" }),
+        });
+        renderCampaignsPage();
+      });
+    });
+    qs("campaignsPageBody")?.querySelectorAll(".ws-camp-del").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this campaign?")) return;
+        await fetch(`/api/campaigns/${btn.getAttribute("data-id")}`, { method: "DELETE", headers: authHeaders() });
+        renderCampaignsPage();
+      });
+    });
   }
 
   async function renderIntelPage() {
@@ -908,6 +1212,20 @@
           <button type="submit">Lookup</button>
         </form>
         <pre id="intelLookupOut" class="tools-palette-out hidden"></pre>
+      </section>
+      <section class="cc-panel" style="margin-bottom:1rem">
+        <header><h2>STIX 2.1 / TAXII</h2>
+          <span class="hint">Standard intel exchange — ingest bundles or poll a TAXII collection</span>
+        </header>
+        <div class="cc-action-row" style="flex-wrap:wrap;gap:0.5rem">
+          <button type="button" class="btn-secondary" id="stixExportBtn">Export watchlist (STIX)</button>
+          <button type="button" class="btn-secondary" id="stixTaxiiPollBtn">Poll TAXII (configured)</button>
+          <label class="btn-secondary" style="cursor:pointer">Import STIX JSON
+            <input type="file" id="stixFileInput" accept=".json,application/json" hidden />
+          </label>
+        </div>
+        <p class="hint" id="stixStatusHint">Loading STIX status…</p>
+        <pre id="stixOut" class="tools-palette-out hidden"></pre>
       </section>
       <div class="ws-grid-2">
         <section class="cc-panel">
@@ -983,7 +1301,82 @@
           <button type="button" class="btn-secondary" id="intelFeedPassword">Password exposure check</button>
         </div>
         <pre id="intelFeedOut" class="tools-palette-out hidden"></pre>
+      </section>
+      <section class="cc-panel" style="margin-top:1rem">
+        <header><h2>Threat detection &amp; hunting catalog</h2>
+          <span class="hint"><a href="https://github.com/0x4d31/awesome-threat-detection" target="_blank" rel="noopener">awesome-threat-detection</a></span>
+          <button type="button" class="btn-secondary" id="intelAtdRefresh">Refresh</button>
+        </header>
+        <form id="intelAtdForm" class="inline-form">
+          <input id="intelAtdQ" placeholder="Search Sigma, Sysmon, Zeek, labs…" style="min-width:14rem" />
+          <select id="intelAtdCat"><option value="">All categories</option></select>
+          <button type="submit">Search</button>
+        </form>
+        <p class="hint" id="intelAtdMeta">Loading catalog…</p>
+        <ul class="cc-list" id="intelAtdList"><li class="hint">…</li></ul>
       </section>`;
+    // Threat detection catalog (awesome list)
+    const atdMeta = qs("intelAtdMeta");
+    const atdList = qs("intelAtdList");
+    const atdCat = qs("intelAtdCat");
+    const paintAtd = (data) => {
+      if (!atdList) return;
+      const items = data.items || [];
+      if (atdMeta) {
+        atdMeta.textContent = `${data.total_matched ?? data.matched ?? items.length} shown · ${data.total || 0} total · ${data.fetched_from || "?"}${data.cached ? " (cached)" : ""}`;
+      }
+      if (atdCat && !(atdCat.options.length > 1)) {
+        (data.categories || []).forEach((c) => {
+          const opt = document.createElement("option");
+          opt.value = c.name;
+          opt.textContent = `${c.name} (${c.count})`;
+          atdCat.appendChild(opt);
+        });
+      }
+      atdList.innerHTML = items.length
+        ? items
+            .map(
+              (it) =>
+                `<li><strong>${escapeHtml(it.name)}</strong>
+                <span class="hint">${escapeHtml(it.category || "")}${it.subcategory ? " · " + escapeHtml(it.subcategory) : ""}</span>
+                ${it.description ? `<div class="hint">${escapeHtml(it.description)}</div>` : ""}
+                <a href="${escapeHtml(it.url)}" target="_blank" rel="noopener">Open</a></li>`
+            )
+            .join("")
+        : `<li class="hint">No matches</li>`;
+    };
+    const loadAtd = async ({ refresh = false } = {}) => {
+      if (atdMeta) atdMeta.textContent = refresh ? "Refreshing from GitHub…" : "Loading…";
+      const q = qs("intelAtdQ")?.value?.trim() || "";
+      const cat = qs("intelAtdCat")?.value || "";
+      const url = `/api/intel/threat-detection?limit=60&q=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}${refresh ? "&refresh=true" : ""}`;
+      try {
+        const res = await fetch(url, { headers: authHeaders() });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (atdMeta) atdMeta.textContent = data.detail || `HTTP ${res.status}`;
+          if (atdList) atdList.innerHTML = `<li class="hint">Catalog unavailable</li>`;
+          return;
+        }
+        paintAtd(data);
+      } catch (err) {
+        if (atdMeta) atdMeta.textContent = String(err.message || err);
+      }
+    };
+    qs("intelAtdForm")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      loadAtd();
+    });
+    qs("intelAtdCat")?.addEventListener("change", () => loadAtd());
+    qs("intelAtdRefresh")?.addEventListener("click", async () => {
+      try {
+        await fetch("/api/intel/threat-detection/refresh", { method: "POST", headers: authHeaders() });
+      } catch {
+        /* ignore */
+      }
+      loadAtd({ refresh: true });
+    });
+    loadAtd();
     qs("intelLookupForm")?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const q = qs("intelLookupQ")?.value?.trim();
@@ -1011,6 +1404,76 @@
         for (const err of data.errors) lines.push(`- ${err.provider}: ${err.error}`);
       }
       out.textContent = lines.join("\n");
+    });
+    const stixOut = qs("stixOut");
+    const stixHint = qs("stixStatusHint");
+    const showStix = (data) => {
+      if (!stixOut) return;
+      stixOut.classList.remove("hidden");
+      stixOut.textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+    };
+    fetch("/api/intel/stix/status", { headers: authHeaders() })
+      .then((r) => r.json().catch(() => ({})))
+      .then((s) => {
+        if (!stixHint) return;
+        stixHint.textContent = s.taxii_configured
+          ? `STIX ${s.stix_version} · TAXII configured · ${s.taxii_api_root || ""}`
+          : `STIX ${s.stix_version || "2.1"} ready · set TAXII in Settings to poll a collection`;
+      })
+      .catch(() => {
+        if (stixHint) stixHint.textContent = "STIX status unavailable";
+      });
+    qs("stixExportBtn")?.addEventListener("click", async () => {
+      const res = await fetch("/api/intel/stix/export", { headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showStix(data.detail || `HTTP ${res.status}`);
+        return;
+      }
+      showStix(data);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `securaiq-stix-export-${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      if (typeof notifyUser === "function") notifyUser("**STIX export** downloaded");
+    });
+    qs("stixTaxiiPollBtn")?.addEventListener("click", async () => {
+      showStix("Polling TAXII…");
+      const res = await fetch("/api/intel/stix/taxii/poll", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ ingest: true, limit: 100 }),
+      });
+      const data = await res.json().catch(() => ({}));
+      showStix(data.detail || data);
+      if (res.ok && typeof notifyUser === "function") {
+        const n = data.ingest?.watch_added ?? data.watch_added ?? data.ingested ?? "—";
+        notifyUser(`**TAXII poll:** watch added ${n}`);
+      }
+    });
+    qs("stixFileInput")?.addEventListener("change", async (ev) => {
+      const file = ev.target?.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const bundle = JSON.parse(text);
+        showStix("Ingesting…");
+        const res = await fetch("/api/intel/stix/ingest", {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ bundle, also_vulns: true }),
+        });
+        const data = await res.json().catch(() => ({}));
+        showStix(data.detail || data);
+        if (res.ok && typeof notifyUser === "function") {
+          notifyUser(`**STIX ingest:** watch +${data.watch_added ?? 0}, vulns +${data.vulns_added ?? 0}`);
+        }
+      } catch (err) {
+        showStix(String(err?.message || err));
+      }
+      ev.target.value = "";
     });
     qs("intelKevSync")?.addEventListener("click", async () => {
       const res = await fetch("/api/intel/kev/sync", { method: "POST", headers: authHeaders() });
@@ -1263,18 +1726,222 @@
             )
             .join("")
         : `<li class="hint">${anyConfigured ? "No detections synced yet" : "Connect an EDR vendor in Settings to see live detections here"}</li>`;
+      const streaming = statusData.streaming || {};
+      const nearRtSec = Number(statusData.near_realtime_interval_sec) || 60;
+      const streamLabels = {
+        crowdstrike: "CrowdStrike",
+        sophos: "Sophos",
+        sentinelone: "SentinelOne",
+        defender: "Defender",
+      };
+      const streamHtml = Object.keys(streamLabels)
+        .map((id) => {
+          const st = streaming[id] || {};
+          const configured = !!(vendors[id] && vendors[id].configured);
+          const mode = st.mode || (id === "crowdstrike" ? "stream" : "near_realtime_poll");
+          const modeLabel = mode === "stream" ? "live stream" : `near-realtime (${nearRtSec}s)`;
+          if (st.connected) {
+            return `<p class="hint" style="color:var(--accent)">⚡ ${streamLabels[id]} ${modeLabel} connected</p>`;
+          }
+          if (configured) {
+            return `<p class="hint">${streamLabels[id]} ${modeLabel}: reconnecting… (slow ${Math.round(
+              (window.__xdrIntervalSec || 1800) / 60
+            )}-min sync still runs)</p>`;
+          }
+          if (id === "crowdstrike") {
+            return `<p class="hint">${streamLabels[id]} live stream: off — set credentials + "Event streams: Read" scope</p>`;
+          }
+          return `<p class="hint">${streamLabels[id]} near-realtime: off — configure in Settings (or push via /api/xdr/ingest)</p>`;
+        })
+        .join("");
       const patchTotal = patchData.total_missing_patches || 0;
+      const huntConfigured = !!(statusData.hunting && statusData.hunting.configured);
+      const defaultQuery =
+        (statusData.hunting && statusData.hunting.default_query) ||
+        window.__securaiqHuntQuery ||
+        "DeviceProcessEvents\n| where Timestamp > ago(1h)\n| project Timestamp, DeviceName, FileName, InitiatingProcessFileName\n| order by Timestamp desc\n| limit 25";
+      const liveOn = !!window.__securaiqHuntLive;
+      const liveSec = Number(window.__securaiqHuntLiveSec) || 8;
+      // Stop prior live timer before rewiring the panel
+      if (window.__securaiqHuntLiveTimer) {
+        clearInterval(window.__securaiqHuntLiveTimer);
+        window.__securaiqHuntLiveTimer = null;
+      }
       el.innerHTML = `
         ${vendorChips}
+        ${streamHtml}
         <div class="cc-kpi-grid" style="margin:0.5rem 0">
           <article class="cc-kpi"><span>Missing patches (open)</span><strong>${patchTotal}</strong></article>
           <article class="cc-kpi"><span>Hosts with patch gaps</span><strong>${patchData.hosts_with_gaps || 0}</strong></article>
         </div>
         <p class="hint">Recent detections</p>
-        <ul class="cc-list">${eventsHtml}</ul>
+        <ul class="cc-list" id="xdrDetectionsList">${eventsHtml}</ul>
+        <div class="hunt-box" id="defenderHuntBox" style="margin-top:1rem">
+          <header style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+            <h3 style="margin:0;font-size:1rem">Defender live hunting</h3>
+            <span class="auto-job-status ${huntConfigured ? "status-done" : "status-error"}" id="xdrHuntModeChip">
+              ${huntConfigured ? "live tenant" : "not configured"}
+            </span>
+            <span class="hint" id="xdrHuntPulse">idle</span>
+          </header>
+          <p class="hint">Paste KQL and enable Live to poll your Defender XDR tenant (Graph / legacy MTP). Requires DEFENDER_* credentials — no demo data.</p>
+          <textarea id="xdrHuntQuery" rows="5" spellcheck="false" ${huntConfigured ? "" : "disabled"} style="width:100%;font-family:ui-monospace,monospace;font-size:0.85rem">${escapeHtml(defaultQuery)}</textarea>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.4rem;align-items:center">
+            <label class="hint">Timespan <input type="text" id="xdrHuntTimespan" placeholder="P1H" style="width:6rem" value="${escapeHtml(window.__securaiqHuntTimespan || "")}" ${huntConfigured ? "" : "disabled"} /></label>
+            <label class="hint">Every <input type="number" id="xdrHuntLiveSec" min="3" max="120" value="${liveSec}" style="width:3.5rem" ${huntConfigured ? "" : "disabled"} /> s</label>
+            <label class="hint"><input type="checkbox" id="xdrHuntLive" ${liveOn && huntConfigured ? "checked" : ""} ${huntConfigured ? "" : "disabled"} /> Live</label>
+            <label class="hint"><input type="checkbox" id="xdrHuntIngest" ${huntConfigured ? "" : "disabled"} /> Ingest rows</label>
+            <button type="button" class="btn-primary" id="xdrHuntRunBtn" ${huntConfigured ? "" : "disabled"}>Run once</button>
+          </div>
+          <div id="xdrHuntMeta" class="hint" style="margin-top:0.45rem"></div>
+          <div id="xdrHuntTableWrap" style="overflow:auto;max-height:18rem;margin-top:0.4rem"></div>
+        </div>
         <p class="hint">Set vendor credentials in Settings (Sophos/CrowdStrike/SentinelOne/Defender) — detections and missing-patch data sync automatically every ${Math.round(
           (window.__xdrIntervalSec || 1800) / 60
         )} min, or click "Sync now".</p>`;
+
+      const queryEl = qs("xdrHuntQuery");
+      const tableWrap = qs("xdrHuntTableWrap");
+      const metaEl = qs("xdrHuntMeta");
+      const pulseEl = qs("xdrHuntPulse");
+      let huntBusy = false;
+
+      const paintHuntResult = (data) => {
+        window.__securaiqLastHunt = data;
+        const rows = data.results || [];
+        const backend = data.backend || "?";
+        if (metaEl) {
+          metaEl.innerHTML = data.ok
+            ? `<strong>${escapeHtml(String(data.result_count || 0))}</strong> rows · ${escapeHtml(backend)} · ${new Date().toLocaleTimeString()}${
+                data.hint ? ` · <span>${escapeHtml(data.hint)}</span>` : ""
+              }`
+            : `<span class="auto-job-status status-error">${escapeHtml(data.error || "failed")}</span> ${escapeHtml(data.hint || "")}`;
+        }
+        if (pulseEl) pulseEl.textContent = `pulse ${new Date().toLocaleTimeString()}`;
+        if (!tableWrap) return;
+        if (!data.ok || !rows.length) {
+          tableWrap.innerHTML = `<p class="hint">${escapeHtml(data.error || data.hint || "No rows")}</p>`;
+          return;
+        }
+        const cols = Object.keys(rows[0]);
+        const thead = cols.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
+        const body = rows
+          .slice(0, 40)
+          .map(
+            (r) =>
+              `<tr>${cols.map((c) => `<td>${escapeHtml(String(r[c] ?? ""))}</td>`).join("")}</tr>`
+          )
+          .join("");
+        tableWrap.innerHTML = `<table class="data-table" style="width:100%;font-size:0.8rem;border-collapse:collapse"><thead><tr>${thead}</tr></thead><tbody>${body}</tbody></table>`;
+      };
+
+      const runHunt = async ({ quiet = false } = {}) => {
+        if (huntBusy) return;
+        huntBusy = true;
+        const btn = qs("xdrHuntRunBtn");
+        if (btn && !quiet) btn.disabled = true;
+        window.__securaiqHuntQuery = queryEl?.value || "";
+        window.__securaiqHuntTimespan = qs("xdrHuntTimespan")?.value?.trim() || "";
+        if (!quiet && metaEl) metaEl.textContent = "Querying…";
+        try {
+          const res = await fetch("/api/xdr/hunting/run", {
+            method: "POST",
+            headers: { ...authHeaders(), "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: queryEl?.value || "",
+              timespan: qs("xdrHuntTimespan")?.value?.trim() || undefined,
+              ingest: !!qs("xdrHuntIngest")?.checked,
+              limit: 50,
+            }),
+          });
+          const data = await res.json();
+          paintHuntResult(data);
+          if (data.ingested && data.ingested.new) {
+            try {
+              const dr = await fetch("/api/xdr/detections?limit=8", { headers: authHeaders() });
+              const dd = await dr.json();
+              const list = qs("xdrDetectionsList");
+              const ev = dd.events || [];
+              if (list) {
+                list.innerHTML = ev.length
+                  ? ev
+                      .map(
+                        (e) =>
+                          `<li><strong>${escapeHtml(e.severity)}</strong> [${escapeHtml(e.vendor)}] ${escapeHtml(e.title)}${
+                            e.host ? ` — <code>${escapeHtml(e.host)}</code>` : ""
+                          }</li>`
+                      )
+                      .join("")
+                  : `<li class="hint">No detections</li>`;
+              }
+            } catch {
+              /* ignore */
+            }
+          }
+        } catch (err) {
+          paintHuntResult({ ok: false, error: String(err.message || err), results: [] });
+        } finally {
+          huntBusy = false;
+          if (btn) btn.disabled = false;
+        }
+      };
+
+      const syncLiveTimer = () => {
+        if (window.__securaiqHuntLiveTimer) {
+          clearInterval(window.__securaiqHuntLiveTimer);
+          window.__securaiqHuntLiveTimer = null;
+        }
+        if (!huntConfigured) {
+          window.__securaiqHuntLive = false;
+          const chip = qs("xdrHuntModeChip");
+          if (chip) {
+            chip.textContent = "not configured";
+            chip.className = "auto-job-status status-error";
+          }
+          if (metaEl) {
+            metaEl.innerHTML =
+              `<span class="auto-job-status status-error">not_configured</span> Set DEFENDER_TENANT_ID / CLIENT_ID / CLIENT_SECRET in Settings for live hunting.`;
+          }
+          if (tableWrap) tableWrap.innerHTML = `<p class="hint">Live hunting requires a configured Defender tenant.</p>`;
+          return;
+        }
+        const on = !!qs("xdrHuntLive")?.checked;
+        window.__securaiqHuntLive = on;
+        const sec = Math.max(3, Math.min(120, Number(qs("xdrHuntLiveSec")?.value) || 8));
+        window.__securaiqHuntLiveSec = sec;
+        const chip = qs("xdrHuntModeChip");
+        if (chip) {
+          chip.textContent = on ? "live tenant" : "tenant";
+          chip.className = "auto-job-status status-done";
+        }
+        if (on) {
+          runHunt({ quiet: true });
+          window.__securaiqHuntLiveTimer = setInterval(() => runHunt({ quiet: true }), sec * 1000);
+        }
+      };
+
+      qs("xdrHuntRunBtn")?.addEventListener("click", () => {
+        if (!huntConfigured) return;
+        runHunt({ quiet: false });
+      });
+      qs("xdrHuntLive")?.addEventListener("change", syncLiveTimer);
+      qs("xdrHuntLiveSec")?.addEventListener("change", () => {
+        if (qs("xdrHuntLive")?.checked) syncLiveTimer();
+      });
+      window.__securaiqRunLiveHunt = () => {
+        if (huntConfigured && window.__securaiqHuntLive) runHunt({ quiet: true });
+      };
+
+      if (huntConfigured) {
+        if (window.__securaiqLastHunt && window.__securaiqLastHunt.ok && !window.__securaiqLastHunt.demo) {
+          paintHuntResult(window.__securaiqLastHunt);
+        }
+        if (liveOn) syncLiveTimer();
+        else runHunt({ quiet: true });
+      } else {
+        window.__securaiqHuntLive = false;
+        syncLiveTimer();
+      }
     } catch (err) {
       el.innerHTML = `<p class="hint">XDR panel unavailable: ${escapeHtml(err.message)}</p>`;
     }
@@ -1349,6 +2016,52 @@
     }
   }
 
+  async function renderTheHivePanel() {
+    const el = qs("thehivePanelBody");
+    if (!el) return;
+    try {
+      const [stRes, casesRes] = await Promise.all([
+        fetch("/api/thehive/status", { headers: authHeaders() }),
+        fetch("/api/thehive/cases?limit=8", { headers: authHeaders() }),
+      ]);
+      const st = await stRes.json().catch(() => ({}));
+      const casesData = await casesRes.json().catch(() => ({}));
+      const ping = st.ping || {};
+      const statusChip = st.configured
+        ? ping.ok
+          ? `<span class="auto-job-status status-done">connected</span>`
+          : `<span class="auto-job-status status-error">auth/error</span>`
+        : `<span class="auto-job-status status-planned">not configured</span>`;
+      const cases = casesData.cases || [];
+      const casesHtml = cases.length
+        ? cases
+            .map(
+              (c) =>
+                `<li><strong>${escapeHtml(c.severity || "?")}</strong> ${escapeHtml(c.title || c.case_id || "")}
+                · ${escapeHtml(c.status || "")}${
+                  c.incident_id ? ` · incident <code>${escapeHtml(c.incident_id)}</code>` : ""
+                }</li>`
+            )
+            .join("")
+        : `<li class="hint">${
+            st.configured ? "No cases synced yet — click Sync TheHive" : "Set TheHive credentials in Settings"
+          }</li>`;
+      el.innerHTML = `
+        <p>${statusChip}
+          ${st.base_url ? `<span class="hint">${escapeHtml(st.base_url)}</span>` : ""}
+          ${ping.error && st.configured ? `<span class="hint">${escapeHtml(ping.error)}</span>` : ""}
+        </p>
+        <div class="cc-kpi-grid" style="margin:0.5rem 0">
+          <article class="cc-kpi"><span>Cases cached</span><strong>${st.cases_cached || 0}</strong></article>
+        </div>
+        <p class="hint">Recent TheHive cases (sync creates SecuraIQ incidents)</p>
+        <ul class="cc-list">${casesHtml}</ul>
+        <p class="hint">Settings → TheHive. Authorized IR labs only.</p>`;
+    } catch (err) {
+      el.innerHTML = `<p class="hint">TheHive panel unavailable: ${escapeHtml(err.message)}</p>`;
+    }
+  }
+
   async function renderSocPage() {
     const body = qs("socPageBody");
     if (!body) return;
@@ -1410,18 +2123,33 @@
       <section class="cc-panel" id="wazuhPanel" style="margin-top:1rem">
         <header><h2>Wazuh SIEM</h2><button type="button" class="btn-secondary" id="wazuhSyncBtn">Sync Wazuh</button></header>
         <div id="wazuhPanelBody"><p class="hint">Loading…</p></div>
+      </section>
+      <section class="cc-panel" id="thehivePanel" style="margin-top:1rem">
+        <header><h2>TheHive</h2><button type="button" class="btn-secondary" id="thehiveSyncBtn">Sync TheHive</button></header>
+        <div id="thehivePanelBody"><p class="hint">Loading…</p></div>
       </section>`;
     renderXdrPanel();
     renderWazuhPanel();
+    renderTheHivePanel();
     qs("xdrSyncBtn")?.addEventListener("click", async () => {
       const btn = qs("xdrSyncBtn");
       if (btn) { btn.disabled = true; btn.textContent = "Syncing…"; }
       try {
-        await fetch("/api/xdr/sync", { method: "POST", headers: authHeaders() });
-      } catch {
-        /* job runs async */
+        const res = await fetch("/api/xdr/sync", { method: "POST", headers: authHeaders() });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok && typeof notifyUser === "function") {
+          notifyUser(`**XDR sync failed:** ${data.detail || res.status}`);
+        } else if (typeof notifyUser === "function") {
+          notifyUser(`**XDR sync queued** · job \`${(data.job && data.job.id) || "?"}\``);
+        }
+        const jobId = data.job && data.job.id;
+        if (jobId && typeof window.waitForJob === "function") {
+          await window.waitForJob(jobId, { timeoutMs: 120000 });
+        }
+      } catch (err) {
+        if (typeof notifyUser === "function") notifyUser(`**XDR sync error:** ${err.message || err}`);
       }
-      setTimeout(renderXdrPanel, 2500);
+      renderXdrPanel();
       if (btn) { btn.disabled = false; btn.textContent = "Sync now"; }
     });
     qs("wazuhSyncBtn")?.addEventListener("click", async () => {
@@ -1435,12 +2163,37 @@
         } else if (typeof notifyUser === "function") {
           notifyUser(`**Wazuh sync queued** · job \`${(data.job && data.job.id) || "?"}\``);
         }
+        const jobId = data.job && data.job.id;
+        if (jobId && typeof window.waitForJob === "function") {
+          await window.waitForJob(jobId, { timeoutMs: 120000 });
+        }
       } catch (err) {
         if (typeof notifyUser === "function") notifyUser(`**Wazuh sync error:** ${err.message || err}`);
       }
-      setTimeout(renderWazuhPanel, 2800);
-      setTimeout(renderXdrPanel, 2800);
+      renderWazuhPanel();
+      renderXdrPanel();
       if (btn) { btn.disabled = false; btn.textContent = "Sync Wazuh"; }
+    });
+    qs("thehiveSyncBtn")?.addEventListener("click", async () => {
+      const btn = qs("thehiveSyncBtn");
+      if (btn) { btn.disabled = true; btn.textContent = "Syncing…"; }
+      try {
+        const res = await fetch("/api/thehive/sync", { method: "POST", headers: authHeaders() });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok && typeof notifyUser === "function") {
+          notifyUser(`**TheHive sync failed:** ${data.detail || res.status}`);
+        } else if (typeof notifyUser === "function") {
+          notifyUser(`**TheHive sync queued** · job \`${(data.job && data.job.id) || "?"}\``);
+        }
+        const jobId = data.job && data.job.id;
+        if (jobId && typeof window.waitForJob === "function") {
+          await window.waitForJob(jobId, { timeoutMs: 120000 });
+        }
+      } catch (err) {
+        if (typeof notifyUser === "function") notifyUser(`**TheHive sync error:** ${err.message || err}`);
+      }
+      renderSocPage();
+      if (btn) { btn.disabled = false; btn.textContent = "Sync TheHive"; }
     });
     qs("incidentForm")?.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -1478,17 +2231,25 @@
   async function renderEvidencePage() {
     const body = qs("evidencePageBody");
     if (!body) return;
-    const [filesRes, linksRes, remsRes] = await Promise.all([
+    const [filesRes, linksRes, remsRes, queueRes] = await Promise.all([
       fetch("/api/files", { headers: authHeaders() }),
       fetch("/api/evidence", { headers: authHeaders() }),
       fetch("/api/gap/remediations", { headers: authHeaders() }),
+      fetch("/api/gap/evidence-queue?limit=40", { headers: authHeaders() }),
     ]);
     const filesData = await filesRes.json().catch(() => ({}));
     const linksData = await linksRes.json().catch(() => ({}));
     const remsData = await remsRes.json().catch(() => ({}));
+    const queueData = await queueRes.json().catch(() => ({}));
+    const queueError = !queueRes.ok
+      ? typeof queueData.detail === "string"
+        ? queueData.detail
+        : `Evidence queue unavailable (HTTP ${queueRes.status})`
+      : null;
     const files = filesData.files || filesData.items || [];
     const links = linksData.evidence || [];
     const rems = remsData.remediations || [];
+    const queue = queueData.items || [];
     const remOpts = rems
       .map((r) => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.control_id)} — ${escapeHtml(r.title)}</option>`)
       .join("");
@@ -1500,9 +2261,40 @@
       const d = new Date(Number(ts) * (Number(ts) < 1e12 ? 1000 : 1));
       return Number.isNaN(d.getTime()) ? String(ts) : d.toLocaleDateString();
     };
+    const queueRows = queueError
+      ? `<tr><td colspan="4" class="hint">Could not load evidence queue: ${escapeHtml(queueError)}</td></tr>`
+      : queue.length
+      ? queue
+          .slice(0, 25)
+          .map(
+            (q) => `<tr>
+              <td><code>${escapeHtml(q.control_id || "")}</code></td>
+              <td>${escapeHtml(q.title || "")}<div class="hint">${escapeHtml(q.framework_id || "")} · ${escapeHtml(
+                q.status || ""
+              )}</div></td>
+              <td class="hint">${escapeHtml((q.suggested_artifacts || []).slice(0, 2).join(" · ") || "—")}</td>
+              <td><button type="button" class="btn-secondary ws-queue-fill" data-control="${escapeHtml(
+                q.control_id || ""
+              )}" data-aid="${escapeHtml(q.assessment_id || "")}">Collect</button></td>
+            </tr>`
+          )
+          .join("")
+      : `<tr><td colspan="4" class="hint">No open gaps without evidence — run a gap analysis or link artifacts</td></tr>`;
     body.innerHTML = `
       <p class="hint">Evidence Control Center — map artifacts to controls with owner, status, and expiry for audits.</p>
       <section class="cc-panel">
+        <header>
+          <h2>Collect next</h2>
+          <span class="hint">${queueData.count || 0} controls need accepted evidence</span>
+        </header>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Control</th><th>Gap</th><th>Suggested artifacts</th><th></th></tr></thead>
+            <tbody>${queueRows}</tbody>
+          </table>
+        </div>
+      </section>
+      <section class="cc-panel" style="margin-top:1rem">
         <header><h2>Evidence register</h2></header>
         <div class="data-table-wrap">
           <table class="data-table">
@@ -1601,6 +2393,7 @@
       </div>
       <div class="cc-action-row" style="margin-top:1rem">
         <button type="button" class="cc-action" id="evidenceAsk">Ask AI: missing evidence</button>
+        <button type="button" class="btn-secondary" id="evidenceAuditPack">Download latest audit pack</button>
         <button type="button" class="btn-secondary" data-workspace="frameworks">Open frameworks</button>
         <button type="button" class="btn-secondary" data-workspace="remediations">Open controls</button>
       </div>`;
@@ -1655,6 +2448,35 @@
     qs("evidenceAsk")?.addEventListener("click", () => {
       if (typeof runNavPrompt === "function")
         runNavPrompt("ciso", "Summarize evidence needed for our next ISO 27001 audit and list expiry risks");
+    });
+    body.querySelectorAll(".ws-queue-fill").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const cid = btn.getAttribute("data-control") || "";
+        const controlInput = qs("evidenceControlId");
+        if (controlInput) controlInput.value = cid;
+        controlInput?.focus();
+        if (typeof notifyUser === "function") {
+          notifyUser(`**Collect evidence** for control \`${cid}\` — upload a file, then Link evidence.`);
+        }
+      });
+    });
+    qs("evidenceAuditPack")?.addEventListener("click", async () => {
+      try {
+        const res = await fetch("/api/gap/assessments", { headers: authHeaders() });
+        const data = await res.json().catch(() => ({}));
+        const latest = (data.assessments || [])[0];
+        if (!latest?.id) {
+          alert("Run a gap analysis first, then export an audit pack.");
+          return;
+        }
+        await downloadApiExport(
+          `/api/gap/assessments/${latest.id}/audit-pack`,
+          `securaiq-audit-pack-${latest.framework_id || "gap"}.zip`
+        );
+        if (typeof notifyUser === "function") notifyUser("**Audit pack downloaded** (ZIP).");
+      } catch (err) {
+        alert(err.message || "Audit pack failed");
+      }
     });
     body.querySelectorAll("[data-workspace]").forEach((el) => {
       el.addEventListener("click", (e) => {
@@ -1762,6 +2584,161 @@
     if (orgs.length) loadMembers(orgs[0].id);
   }
 
+  async function renderHardeningPanel() {
+    const el = qs("hkPanelBody");
+    if (!el) return;
+    try {
+      const [stRes, listRes] = await Promise.all([
+        fetch("/api/hardeningkitty/status", { headers: authHeaders() }),
+        fetch("/api/hardeningkitty/lists", { headers: authHeaders() }),
+      ]);
+      const st = await stRes.json().catch(() => ({}));
+      const listsPayload = await listRes.json().catch(() => ({}));
+      const lists = listsPayload.lists || [];
+      const cisLists = lists.filter((l) => l.kind === "cis").slice(0, 8);
+      const chip = st.installed
+        ? `<span class="auto-job-status status-done">installed</span>`
+        : `<span class="auto-job-status status-planned">not installed</span>`;
+      const runs = st.recent_runs || [];
+      const runsHtml = runs.length
+        ? runs
+            .map(
+              (r) =>
+                `<li><strong>${escapeHtml(r.mode || "")}</strong> · score ${
+                  r.score != null ? escapeHtml(String(r.score)) : "—"
+                } · failed ${r.failed || 0} · imported ${r.imported || 0}
+                ${r.list_name ? ` · <span class="hint">${escapeHtml(String(r.list_name).replace(/^.*[\\\\\\/]/, ""))}</span>` : ""}</li>`
+            )
+            .join("")
+        : `<li class="hint">No audits yet</li>`;
+      const listHtml = cisLists.length
+        ? cisLists.map((l) => `<li><code>${escapeHtml(l.name)}</code></li>`).join("")
+        : lists
+            .slice(0, 6)
+            .map((l) => `<li><code>${escapeHtml(l.name)}</code></li>`)
+            .join("") || `<li class="hint">No finding lists on disk</li>`;
+      el.innerHTML = `
+        <div class="hk-status">
+          ${chip}
+          ${st.module_path ? `<code class="hk-path">${escapeHtml(st.module_path)}</code>` : ""}
+          <span class="hint">${Number(st.finding_lists) || 0} lists · ${Number(st.cis_lists) || 0} CIS</span>
+        </div>
+        <div class="hk-columns">
+          <div>
+            <p class="hint">Finding lists</p>
+            <ul class="cc-list">${listHtml}</ul>
+          </div>
+          <div>
+            <p class="hint">Recent runs</p>
+            <ul class="cc-list">${runsHtml}</ul>
+          </div>
+        </div>
+        <p class="hint hk-links">
+          Official CIS Benchmarks:
+          <a href="${escapeHtml(st.cis_downloads || "https://downloads.cisecurity.org/#/")}" target="_blank" rel="noopener">CIS Downloads</a>
+          · Module:
+          <a href="${escapeHtml(st.repo || "https://github.com/scipag/HardeningKitty")}" target="_blank" rel="noopener">HardeningKitty</a>
+          · Or import an Audit report CSV under Vulnerabilities.
+        </p>
+        <div class="cc-action-row hk-actions">
+          <label class="hint">List
+            <select id="hkListSelect" class="composer-select">
+              <option value="">Default list</option>
+              ${lists
+                .map(
+                  (l) =>
+                    `<option value="${escapeHtml(l.path)}">${escapeHtml(l.label || l.name)}</option>`
+                )
+                .join("")}
+            </select>
+          </label>
+          <button type="button" class="btn-secondary" id="hkImportBtn">Import report CSV</button>
+          <input type="file" id="hkImportFile" accept=".csv,text/csv" class="hidden" />
+        </div>`;
+      qs("hkImportBtn")?.addEventListener("click", () => qs("hkImportFile")?.click());
+      qs("hkImportFile")?.addEventListener("change", async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const fd = new FormData();
+        fd.append("file", file);
+        try {
+          const res = await fetch("/api/hardeningkitty/import", {
+            method: "POST",
+            headers: authHeaders(),
+            body: fd,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.detail || res.status);
+          if (typeof notifyUser === "function") {
+            notifyUser(`**HardeningKitty import:** ${data.imported || 0} findings`);
+          }
+          renderHardeningPanel();
+          if (typeof showWorkspace === "function") {
+            /* stay on frameworks */
+          }
+        } catch (err) {
+          if (typeof notifyUser === "function") notifyUser(`**Import failed:** ${err.message || err}`);
+        }
+        e.target.value = "";
+      });
+    } catch (err) {
+      el.innerHTML = `<p class="hint">Hardening panel unavailable: ${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  async function runHardeningKittyAudit() {
+    const btn = qs("hkAuditBtn");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Queuing…";
+    }
+    const list = qs("hkListSelect")?.value || "";
+    try {
+      const res = await fetch("/api/hardeningkitty/audit", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ mode: "Audit", finding_list: list, import_findings: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (typeof notifyUser === "function") {
+          notifyUser(
+            `**HardeningKitty:** ${typeof data.detail === "string" ? data.detail : data.detail || res.status}`
+          );
+        }
+      } else {
+        const jobId = data.job && data.job.id;
+        if (typeof notifyUser === "function") {
+          notifyUser(`**HardeningKitty audit queued** · job \`${jobId || "?"}\``);
+        }
+        if (btn) btn.textContent = "Auditing…";
+        if (jobId && typeof window.waitForJob === "function") {
+          const job = await window.waitForJob(jobId, { timeoutMs: 600000, intervalMs: 2000 });
+          const r = job?.result || {};
+          if ((job?.status || "") === "done" && typeof notifyUser === "function") {
+            notifyUser(
+              `**HardeningKitty audit done** · score ${r.score ?? "—"} · failed ${r.failed || 0} · imported ${r.imported || 0}`
+            );
+          } else if ((job?.status || "") === "error" && typeof notifyUser === "function") {
+            notifyUser(`**HardeningKitty failed:** ${job.error || "error"}`);
+          } else if ((job?.status || "") === "timeout" && typeof notifyUser === "function") {
+            notifyUser("**HardeningKitty** still running — watch Automation / live status.");
+          }
+        }
+      }
+    } catch (err) {
+      if (typeof notifyUser === "function") notifyUser(`**HardeningKitty error:** ${err.message || err}`);
+    }
+    renderHardeningPanel();
+    if (typeof showWorkspace === "function" && window.__securaiqWorkspaceView === "vulns") {
+      /* stay */
+    }
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Run HardeningKitty audit";
+    }
+  }
+
   async function renderFrameworksPage() {
     const body = qs("frameworksPageBody");
     if (!body) return;
@@ -1837,11 +2814,10 @@
           <button type="button" class="cc-action fw-run-gap" data-id="${escapeHtml(frameworkId)}">Run gap</button>
           ${
             controls.length
-              ? `<div class="data-table-wrap" style="margin-top:1rem"><table class="data-table"><thead><tr><th>Control</th><th>Title</th></tr></thead><tbody>${controls
-                  .slice(0, 40)
+              ? `<div class="data-table-wrap" style="margin-top:1rem"><table class="data-table"><thead><tr><th>Control</th><th>Domain</th><th>Title</th></tr></thead><tbody>${controls
                   .map(
                     (c) =>
-                      `<tr><td>${escapeHtml(c.id || c.control_id || "")}</td><td>${escapeHtml(c.title || c.name || "")}</td></tr>`
+                      `<tr><td>${escapeHtml(c.id || c.control_id || "")}</td><td>${escapeHtml(c.domain || "")}</td><td>${escapeHtml(c.title || c.name || "")}</td></tr>`
                   )
                   .join("")}</tbody></table></div>`
               : ""
@@ -1873,6 +2849,7 @@
           </div>
           <div class="cc-action-row">
             <button type="button" class="btn-secondary" id="fwExportAssessment">Export assessment</button>
+            <button type="button" class="btn-secondary" id="fwExportAuditPack">Export audit pack</button>
             <button type="button" class="btn-secondary" id="fwDetailClose">Close</button>
           </div>
         </header>
@@ -1892,7 +2869,6 @@
               ${
                 rows.length
                   ? rows
-                      .slice(0, 80)
                       .map((r) => {
                         const cid = r.control_id || "";
                         const rem = remByControl[(cid || "").toUpperCase()];
@@ -1938,6 +2914,19 @@
           if (typeof notifyUser === "function") notifyUser("**Gap assessment exported** as Markdown.");
         } catch (err) {
           alert(err.message || "Export failed");
+        }
+      });
+      qs("fwExportAuditPack")?.addEventListener("click", async () => {
+        try {
+          await downloadApiExport(
+            `/api/gap/assessments/${aid}/audit-pack`,
+            `securaiq-audit-pack-${frameworkId}.zip`
+          );
+          if (typeof notifyUser === "function") {
+            notifyUser("**Audit pack ZIP exported** — matrix, evidence index, and accepted artifacts.");
+          }
+        } catch (err) {
+          alert(err.message || "Audit pack failed");
         }
       });
       detailEl.classList.remove("hidden");
@@ -2011,19 +3000,19 @@
             : `<p class="hint">No frameworks installed</p>`
         }
       </div>
-      <section id="fwControlDetail" class="cc-panel fw-control-detail hidden" style="margin-top:1.25rem"></section>
-      <section class="cc-panel" style="margin-top:1.25rem">
+      <section id="fwControlDetail" class="cc-panel fw-control-detail hidden"></section>
+      <section class="cc-panel fw-workflow-panel">
         <header><h2>Evidence mapper workflow</h2></header>
         <ol class="fw-steps">
           <li>Upload policies / screenshots in Evidence</li>
           <li>Run gap analysis against a framework</li>
           <li>Open controls — review Evidence · Owner · Risk · Status</li>
           <li>Assign remediations and link evidence</li>
-          <li>Export PDF / Markdown reports for stakeholders</li>
+          <li>Export Markdown assessment or audit pack ZIP</li>
         </ol>
         <div class="cc-action-row">
           <button type="button" class="cc-action" data-workspace="evidence">Open evidence</button>
-          <button type="button" class="cc-action" data-workspace="remediations">Open controls</button>
+          <button type="button" class="cc-action" data-workspace="remediations">Open remediations</button>
           <button type="button" class="cc-action" data-workspace="reports">Open reports</button>
         </div>
       </section>`;
@@ -2056,6 +3045,7 @@
       });
     });
   }
+  window.renderFrameworksPage = renderFrameworksPage;
 
   function renderIntegrationsPage() {
     const body = qs("integrationsPageBody");
@@ -2140,6 +3130,13 @@
         showWorkspace(target);
         return;
       }
+      if (kind === "tools") {
+        if (typeof showView === "function") showView("chat");
+        else if (typeof showWorkspace === "function") showWorkspace("chat");
+        if (typeof window.openToolsPalette === "function") window.openToolsPalette(true);
+        else if (typeof openToolsPalette === "function") openToolsPalette(true);
+        return;
+      }
       if (kind === "webhooks") {
         qs("webhookPanel")?.scrollIntoView({ behavior: "smooth" });
         qs("webhookUrl")?.focus();
@@ -2154,13 +3151,69 @@
           keys: "apiKeyName",
           audit: "auditLogList",
           wazuh: "setWazuhUrl",
+          openaudit: "setOaUrl",
+          inventory: "setOaUrl",
+          hardening: "setHkPath",
+          hardeningkitty: "setHkPath",
+          sonarqube: "setSonarUrl",
+          sonar: "setSonarUrl",
+          cis_downloads: "setHkPath",
+          thehive: "setThUrl",
+          cloud: "setAwsRegion",
+          servicenow: "setSnUrl",
+          comms: "setSlackWebhook",
+          slack: "setSlackWebhook",
+          teams: "setTeamsWebhook",
+          smtp: "setSmtpHost",
+          xdr: "setSophosClientId",
+          sophos: "setSophosClientId",
+          oidc: "setOidcIssuer",
+          sso: "setOidcIssuer",
+          github: "setGithubWebhookSecret",
+          gitlab: "setGitlabWebhookSecret",
+          taxii: "setTaxiiApiRoot",
+          stix: "setTaxiiApiRoot",
+          redis: "setRedisUrl",
+          redis_realtime: "setRedisUrl",
+          scim: "setScimEnabled",
+          mfa: "setMfaRequiredAdmin",
+          prefect: "setPrefectEnabled",
+        };
+        const panelMap = {
+          cloud: "settingsCloud",
+          thehive: "settingsTheHive",
+          wazuh: "settingsWazuh",
+          inventory: "settingsInventory",
+          openaudit: "settingsInventory",
+          hardening: "settingsHardening",
+          hardeningkitty: "settingsHardening",
+          sonarqube: "settingsSonar",
+          sonar: "settingsSonar",
+          cis_downloads: "settingsHardening",
+          servicenow: "settingsServiceNow",
+          comms: "settingsComms",
+          slack: "settingsComms",
+          teams: "settingsComms",
+          smtp: "settingsComms",
+          xdr: "settingsXdr",
+          sophos: "settingsXdr",
+          oidc: "settingsEnterprise",
+          sso: "settingsEnterprise",
+          scim: "settingsEnterprise",
+          github: "settingsEnterprise",
+          gitlab: "settingsEnterprise",
+          taxii: "settingsEnterprise",
+          stix: "settingsEnterprise",
+          mfa: "settingsEnterprise",
+          prefect: "settingsPrefect",
         };
         const targetId = focusMap[focus] || (focus ? `set${focus[0].toUpperCase()}${focus.slice(1)}` : null);
         if (targetId) {
           setTimeout(() => {
-            const el = document.getElementById(targetId);
-            el?.scrollIntoView?.({ behavior: "smooth", block: "center" });
-            if (el && typeof el.focus === "function" && el.tagName !== "DIV") el.focus();
+            const fieldEl = document.getElementById(targetId);
+            const panel = focus ? document.getElementById(panelMap[focus] || "") : null;
+            (panel || fieldEl)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+            if (fieldEl && typeof fieldEl.focus === "function" && fieldEl.tagName !== "DIV") fieldEl.focus();
           }, 220);
         }
         return;
@@ -2180,22 +3233,37 @@
       const strip = qs("integStatusStrip");
       if (!strip) return;
       try {
-        const [setRes, hookRes, ghRes] = await Promise.all([
+        const [setRes, hookRes, ghRes, wzRes, thRes, cloudRes] = await Promise.all([
           fetch("/api/settings", { headers: authHeaders() }),
           fetch("/api/webhooks", { headers: authHeaders() }),
           fetch("/api/integrations/github/status", { headers: authHeaders() }),
+          fetch("/api/wazuh/status", { headers: authHeaders() }),
+          fetch("/api/thehive/status", { headers: authHeaders() }),
+          fetch("/api/cloud/status", { headers: authHeaders() }),
         ]);
         const settings = await setRes.json().catch(() => ({}));
         const hooks = await hookRes.json().catch(() => ({}));
         const gh = await ghRes.json().catch(() => ({}));
+        const wz = await wzRes.json().catch(() => ({}));
+        const th = await thRes.json().catch(() => ({}));
+        const cloud = await cloudRes.json().catch(() => ({}));
         const jiraOk = Boolean(settings.jira_base_url && settings.jira_api_token_set);
         const hookCount = (hooks.webhooks || []).length;
         const ghOk = Boolean(gh.configured);
         const backend = settings.model_backend || settings.MODEL_BACKEND || "local";
+        const wzOk = Boolean(wz.configured);
+        const thOk = Boolean(th.configured);
+        const cloudOk = (cloud.configured_count || 0) > 0;
         strip.innerHTML = `
           <span class="integ-pill ${jiraOk ? "ok" : ""}">Jira: ${jiraOk ? "configured" : "not set"}</span>
+          <span class="integ-pill ${settings.openaudit_base_url && settings.openaudit_password_set ? "ok" : ""}">Inventory: ${
+            settings.openaudit_base_url && settings.openaudit_password_set ? "configured" : "not set"
+          }</span>
           <span class="integ-pill ${ghOk ? "ok" : ""}">GitHub: ${ghOk ? "webhook ready" : "not set"}</span>
           <span class="integ-pill ${hookCount ? "ok" : ""}">Webhooks: ${hookCount}</span>
+          <span class="integ-pill ${wzOk ? "ok" : ""}">Wazuh: ${wzOk ? "configured" : "not set"}</span>
+          <span class="integ-pill ${thOk ? "ok" : ""}">TheHive: ${thOk ? "configured" : "not set"}</span>
+          <span class="integ-pill ${cloudOk ? "ok" : ""}">Cloud: ${cloudOk ? `${cloud.configured_count} vendor(s)` : "not set"}</span>
           <span class="integ-pill ok">AI backend: ${escapeHtml(String(backend))}</span>
           <span class="integ-pill">Scanners: import via Vulns</span>`;
       } catch {
@@ -2346,48 +3414,56 @@
 
     qs("workspaceResetBtn")?.addEventListener("click", async () => {
       if (!confirm("Reset this workspace to empty? This cannot be undone.")) return;
-
-      // Two-step approval: request a code (delivered to Notifications), then
-      // the user must read and re-enter it — not just click through a dialog.
-      const reqRes = await fetch("/api/workspace/reset/request-code", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-      });
-      if (!reqRes.ok) {
-        const errData = await reqRes.json().catch(() => ({}));
-        if (typeof notifyUser === "function")
-          notifyUser(`**Reset failed:** ${errData.detail || reqRes.status}`);
-        return;
-      }
-      const code = prompt(
-        "A confirmation code was sent to your Notifications (bell icon). Enter it to confirm the reset:"
-      );
-      if (!code) return;
-
-      const res = await fetch("/api/workspace/reset", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          confirm: true,
-          confirm_code: code.trim(),
-          clear_rag: Boolean(qs("resetClearRag")?.checked),
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        if (typeof notifyUser === "function") notifyUser(`**Reset failed:** ${data.detail || res.status}`);
-        return;
-      }
       try {
-        localStorage.removeItem("securaiq.kpi.snap");
-      } catch {
-        /* ignore */
+        const reqRes = await fetch("/api/workspace/reset/request-code", {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+        });
+        const reqData = await reqRes.json().catch(() => ({}));
+        if (!reqRes.ok) {
+          if (typeof notifyUser === "function")
+            notifyUser(`**Reset failed:** ${reqData.detail || reqRes.status}`);
+          return;
+        }
+        // Local open mode returns confirm_code so reset is one dialog; auth mode uses Notifications.
+        let code = (reqData.confirm_code || "").trim();
+        if (!code) {
+          code = (
+            prompt(
+              "A confirmation code was sent to Notifications (bell). Enter it to confirm the reset:"
+            ) || ""
+          ).trim();
+        }
+        if (!code) return;
+
+        const res = await fetch("/api/workspace/reset", {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            confirm: true,
+            confirm_code: code,
+            clear_rag: Boolean(qs("resetClearRag")?.checked),
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (typeof notifyUser === "function") notifyUser(`**Reset failed:** ${data.detail || res.status}`);
+          return;
+        }
+        try {
+          localStorage.removeItem("securaiq.kpi.snap");
+          localStorage.removeItem("securaiq.chats.v1");
+          localStorage.removeItem("securaiq.checklist.integrations");
+        } catch {
+          /* ignore */
+        }
+        if (typeof notifyUser === "function") {
+          notifyUser("**Workspace reset** — every dashboard starts from zero.");
+        }
+        location.reload();
+      } catch (err) {
+        if (typeof notifyUser === "function") notifyUser(`**Reset failed:** ${err.message || err}`);
       }
-      if (typeof notifyUser === "function") {
-        notifyUser("**Workspace reset** — Mission Control starts from zero. Reload recommended.");
-      }
-      if (typeof loadCommandCenter === "function") loadCommandCenter();
-      else location.reload();
     });
 
     async function loadHooks() {
@@ -2444,9 +3520,13 @@
   async function renderGraphPage() {
     const body = qs("graphPageBody");
     if (!body) return;
-    body.innerHTML = `<p class="hint">Loading graph…</p>`;
+    body.innerHTML = `<p class="hint">Loading correlation graph…</p>`;
+    const focusQ = (window.__securaiqGraphFocus || "").trim();
+    window.__securaiqGraphFocus = "";
     const [gRes, lRes] = await Promise.all([
-      fetch("/api/graph", { headers: authHeaders() }),
+      focusQ
+        ? fetch(`/api/graph/correlate?q=${encodeURIComponent(focusQ)}`, { headers: authHeaders() })
+        : fetch("/api/graph", { headers: authHeaders() }),
       fetch("/api/graph/links", { headers: authHeaders() }),
     ]);
     const data = await gRes.json().catch(() => ({}));
@@ -2460,13 +3540,43 @@
     const nodes = data.nodes || [];
     const edges = data.edges || [];
     const links = linksData.links || [];
+    const hotspots = data.hotspots || [];
+    const doctrine =
+      data.doctrine ||
+      "Correlation joins VAPT, XDR, incidents, and GRC on shared assets — one picture, not five tabs.";
     body.innerHTML = `
+      <p class="hint">${escapeHtml(doctrine)}</p>
+      ${
+        focusQ
+          ? `<p class="hint">Focused on <strong>${escapeHtml(focusQ)}</strong> · <button type="button" class="btn-secondary" id="graphClearFocus">Show full graph</button></p>`
+          : ""
+      }
       <div class="asset-breakdown-grid" style="margin-bottom:1rem">
         ${Object.entries(byType)
           .map(([k, v]) => `<div class="ab-tile"><span>${escapeHtml(k)}</span><strong>${v}</strong></div>`)
           .join("")}
       </div>
-      <p class="hint">${counts.nodes || 0} nodes · ${counts.edges || 0} edges · ${links.length} manual links</p>
+      <p class="hint">${counts.nodes || nodes.length || 0} nodes · ${counts.edges || edges.length || 0} edges · ${
+        links.length
+      } manual links</p>
+      <section class="cc-panel" style="margin-bottom:1rem">
+        <header style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+          <h2 style="margin:0">Hotspots (multi-discipline)</h2>
+          <button type="button" class="btn-secondary" id="graphRebuild">Rebuild auto-links</button>
+        </header>
+        <ul class="cc-list" id="graphHotspots">${
+          hotspots.length
+            ? hotspots
+                .map(
+                  (h) =>
+                    `<li class="cc-clickable" data-corr-focus="${escapeHtml(h.label || "")}"><strong>${escapeHtml(
+                      h.label || ""
+                    )}</strong> <span class="hint">${escapeHtml(h.why || "")}</span></li>`
+                )
+                .join("")
+            : `<li class="hint">No hotspots yet — need findings on the same asset name across scanners, XDR, and incidents.</li>`
+        }</ul>
+      </section>
       <div class="graph-path" aria-label="Attack surface path">
         <span>Repo</span><i></i><span>Container</span><i></i><span>Image</span><i></i><span>Cloud</span><i></i><span>Server</span><i></i><span>Vuln</span><i></i><span>Incident</span><i></i><span>Compliance</span>
       </div>
@@ -2519,12 +3629,37 @@
                 .join("")
             : `<li class="hint">No manual links yet</li>`
         }</ul>
-      </section>`;
+      </section>
+      <form id="graphFocusForm" class="inline-form" style="margin-top:1rem;gap:0.5rem">
+        <input id="graphFocusQ" placeholder="Focus asset / CVE / host…" value="${escapeHtml(focusQ)}" />
+        <button type="submit">Correlate</button>
+      </form>`;
+    qs("graphClearFocus")?.addEventListener("click", () => {
+      window.__securaiqGraphFocus = "";
+      renderGraphPage();
+    });
+    qs("graphHotspots")?.querySelectorAll("[data-corr-focus]").forEach((el) => {
+      el.addEventListener("click", () => {
+        window.__securaiqGraphFocus = el.getAttribute("data-corr-focus") || "";
+        renderGraphPage();
+      });
+    });
+    qs("graphRebuild")?.addEventListener("click", async () => {
+      const res = await fetch("/api/graph/rebuild", { method: "POST", headers: authHeaders() });
+      const d = await res.json().catch(() => ({}));
+      if (typeof notifyUser === "function") notifyUser(`**Graph:** persisted ${d.links_created ?? 0} auto-links`);
+      renderGraphPage();
+    });
+    qs("graphFocusForm")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      window.__securaiqGraphFocus = (qs("graphFocusQ")?.value || "").trim();
+      renderGraphPage();
+    });
     qs("graphAskAi")?.addEventListener("click", () => {
       if (typeof runNavPrompt === "function") {
         runNavPrompt(
-          "assess",
-          "Using our asset-vuln-risk-control graph, explain the top 5 attack paths and priority remediations."
+          "threat_hunt",
+          "Using our knowledge graph hotspots, explain the top correlated attack paths across vulns, XDR detections, incidents, and control gaps — cite asset names."
         );
       }
     });
@@ -2661,55 +3796,12 @@
   }
 
   async function loadVulnSampleButtons() {
-    const row = qs("vulnsSampleRow");
-    if (!row) return;
-    try {
-      const res = await fetch("/api/vulnerabilities/samples", { headers: authHeaders() });
-      const data = await res.json().catch(() => ({}));
-      const samples = data.samples || [];
-      if (!samples.length) {
-        row.innerHTML = `<span class="hint">No lab fixtures in data/samples/</span>`;
-        return;
-      }
-      row.innerHTML = samples
-        .map((s) => {
-          const label = (s.id || "").replace(/-lab$/, "").replace(/-/g, " ");
-          return `<button type="button" class="btn-secondary vulns-sample-btn" data-sample-id="${escapeHtml(
-            s.id
-          )}">${escapeHtml(label)}</button>`;
-        })
-        .join("");
-      row.querySelectorAll(".vulns-sample-btn").forEach((btn) => {
-        btn.addEventListener("click", () => importLabSample(btn.getAttribute("data-sample-id")));
-      });
-    } catch {
-      row.innerHTML = `<span class="hint">Could not load lab fixtures</span>`;
-    }
+    /* Lab fixtures removed — use Import scan for live scanner exports. */
+    return;
   }
 
-  async function importLabSample(sampleId) {
-    try {
-      const res = await fetch(`/api/vulnerabilities/samples/${encodeURIComponent(sampleId)}/import`, {
-        method: "POST",
-        headers: authHeaders(),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        alert(data.detail || `Import failed (${res.status})`);
-        return;
-      }
-      if (typeof notifyUser === "function") {
-        notifyUser(
-          `**Lab sample imported:** ${data.adapter || sampleId} · ${data.imported || 0} findings (authorized fixture)`
-        );
-      }
-      showWorkspace("vulns");
-      renderVulnsPage();
-      loadVulnSampleButtons();
-      if (typeof loadCommandCenter === "function") loadCommandCenter();
-    } catch (err) {
-      alert(err.message || "Sample import failed");
-    }
+  async function importLabSample(_sampleId) {
+    alert("Lab sample import disabled. Use Import scan with your scanner export.");
   }
 
   function renderAutomationPage() {
@@ -2820,6 +3912,10 @@
           <button type="button" class="btn-primary-cc" data-job-kind="kev_sync">Run KEV sync</button>
           <button type="button" class="btn-secondary" data-job-kind="xdr_sync">Run XDR sync</button>
           <button type="button" class="btn-secondary" data-job-kind="wazuh_sync">Run Wazuh sync</button>
+          <button type="button" class="btn-secondary" data-job-kind="thehive_sync">Run TheHive sync</button>
+          <button type="button" class="btn-secondary" data-job-kind="cloud_posture_sync">Run cloud posture sync</button>
+          <button type="button" class="btn-secondary" data-job-kind="openaudit_sync">Run inventory sync</button>
+          <button type="button" class="btn-secondary" data-job-kind="hardeningkitty_audit">Run HardeningKitty audit</button>
           <button type="button" class="btn-secondary" data-job-kind="report_export">Export board PDF</button>
         </div>
       </section>
@@ -3176,7 +4272,6 @@
       remBtn: "remediations",
       playbookBtn: "playbooks",
       campaignBtn: "campaigns",
-      exportChatBtn: "reports",
       reportsBtn: "reports",
       navEvidence: "evidence",
       orgsBtn: "orgs",
@@ -3201,6 +4296,8 @@
     });
 
     const openers = [
+      ["hkAuditBtn", () => runHardeningKittyAudit()],
+      ["oaSyncBtn", () => syncInventory()],
       ["assetsOpenCreate", () => typeof openAsset === "function" && openAsset()],
       ["risksOpenCreate", () => typeof openRisk === "function" && openRisk()],
       ["vulnsOpenImport", () => typeof openVuln === "function" && openVuln()],
@@ -3232,4 +4329,137 @@
     wireWorkspaceNav();
     rewireModuleButtons();
   }
+
+  // Realtime: refresh whichever workspace view is open
+  window.__securaiqRefreshActiveView = (data, flags) => {
+    const view = window.__securaiqWorkspaceView || "";
+    if (!view || view === "chat") return;
+    const force = !!(flags && (flags.pushRefresh || flags.jobsChanged || flags.kpisChanged));
+    const delay = force ? 450 : 8000;
+    clearTimeout(window.__securaiqViewRtTimer);
+    window.__securaiqViewRtTimer = setTimeout(() => {
+      // Hunt live owns SOC table refresh — avoid full SOC rebuild every tick
+      if (view === "soc" && window.__securaiqHuntLive && typeof window.__securaiqRunLiveHunt === "function") {
+        if (flags && flags.pushType === "hunt") window.__securaiqRunLiveHunt();
+        else if (force && flags && flags.pushType && flags.pushType !== "hunt") {
+          if (typeof renderSocPage === "function") renderSocPage();
+        }
+        return;
+      }
+      const runners = {
+        command: () => typeof loadCommandCenter === "function" && loadCommandCenter(),
+        assets: () => typeof renderAssetsPage === "function" && renderAssetsPage(),
+        risks: () => typeof renderRisksPage === "function" && renderRisksPage(),
+        vulns: () => typeof renderVulnsPage === "function" && renderVulnsPage(),
+        remediations: () => typeof renderRemsPage === "function" && renderRemsPage(),
+        playbooks: () => typeof renderPlaybooksPage === "function" && renderPlaybooksPage(),
+        campaigns: () => typeof renderCampaignsPage === "function" && renderCampaignsPage(),
+        intel: () => typeof renderIntelPage === "function" && renderIntelPage(),
+        reports: () => typeof renderReportsPage === "function" && renderReportsPage(),
+        soc: () => typeof renderSocPage === "function" && renderSocPage(),
+        evidence: () => typeof renderEvidencePage === "function" && renderEvidencePage(),
+        frameworks: () => {
+          if (typeof renderHardeningPanel === "function") renderHardeningPanel();
+          if (typeof renderFrameworksPage === "function") renderFrameworksPage();
+        },
+        automation: () => typeof refreshAutomationPage === "function" && refreshAutomationPage(),
+        graph: () => typeof renderGraphPage === "function" && renderGraphPage(),
+        integrations: () => typeof renderIntegrationsPage === "function" && renderIntegrationsPage(),
+        orgs: () => typeof renderOrgsPage === "function" && renderOrgsPage(),
+        billing: () => typeof renderBillingPage === "function" && renderBillingPage(),
+      };
+      const fn = runners[view];
+      if (fn) fn();
+    }, delay);
+  };
+
+  // Realtime job pulse → refresh active panels without full page reload
+  window.__securaiqOnJobPulse = (data) => {
+    const view = window.__securaiqWorkspaceView || "";
+    const kinds = new Set((data.jobs_recent || []).map((j) => j.kind));
+    if (view === "assets" && (kinds.has("openaudit_sync") || data.inventory)) {
+      renderAssetsPage();
+    }
+    if (view === "frameworks" && (kinds.has("hardeningkitty_audit") || data.hardeningkitty)) {
+      renderHardeningPanel();
+    }
+    if (view === "soc" && (kinds.has("wazuh_sync") || kinds.has("xdr_sync") || kinds.has("thehive_sync"))) {
+      if (typeof renderSocPage === "function") renderSocPage();
+    }
+    if (view === "vulns" && (kinds.has("hardeningkitty_audit") || kinds.has("cloud_posture_sync") || kinds.has("sonarqube_sync"))) {
+      if (typeof renderVulnsPage === "function") renderVulnsPage();
+      if (kinds.has("sonarqube_sync") && typeof renderSonarPanel === "function") renderSonarPanel();
+    }
+    if (view === "intel" && kinds.has("kev_sync")) {
+      if (typeof renderIntelPage === "function") renderIntelPage();
+    }
+    if (view === "automation") {
+      if (typeof refreshAutomationPage === "function") refreshAutomationPage();
+    }
+  };
+  window.__securaiqOnPushPulse = (data, flags) => {
+    const view = window.__securaiqWorkspaceView || "";
+    const t = (flags && flags.pushType) || (data.push && data.push.type) || "";
+    if (view === "soc" && t === "hunt" && typeof window.__securaiqRunLiveHunt === "function") {
+      window.__securaiqRunLiveHunt();
+      return;
+    }
+    // Broad push → let universal refresher handle; keep a fast path for SOC/vulns
+    if (view === "soc" && (t === "xdr" || t === "xdr_batch" || t === "incident" || t === "job" || t === "siem" || t === "thehive")) {
+      clearTimeout(window.__securaiqSocRtTimer);
+      window.__securaiqSocRtTimer = setTimeout(() => {
+        if (typeof renderSocPage === "function") renderSocPage();
+      }, 500);
+    }
+    if (view === "vulns" && (t === "vuln" || t === "vuln_batch" || t === "xdr_batch" || t === "cloud")) {
+      clearTimeout(window.__securaiqVulnRtTimer);
+      window.__securaiqVulnRtTimer = setTimeout(() => {
+        if (typeof renderVulnsPage === "function") renderVulnsPage();
+      }, 500);
+    }
+    if (view === "assets" && (t === "asset" || t === "inventory")) {
+      clearTimeout(window.__securaiqAssetRtTimer);
+      window.__securaiqAssetRtTimer = setTimeout(() => renderAssetsPage(), 500);
+    }
+    if (view === "risks" && t === "risk") {
+      clearTimeout(window.__securaiqRiskRtTimer);
+      window.__securaiqRiskRtTimer = setTimeout(() => renderRisksPage(), 500);
+    }
+    if (view === "remediations" && t === "remediation") {
+      clearTimeout(window.__securaiqRemRtTimer);
+      window.__securaiqRemRtTimer = setTimeout(() => renderRemsPage(), 500);
+    }
+    if (view === "playbooks" && t === "playbook") {
+      clearTimeout(window.__securaiqPbRtTimer);
+      window.__securaiqPbRtTimer = setTimeout(() => renderPlaybooksPage(), 500);
+    }
+    if (view === "campaigns" && t === "campaign") {
+      clearTimeout(window.__securaiqCampRtTimer);
+      window.__securaiqCampRtTimer = setTimeout(() => renderCampaignsPage(), 500);
+    }
+    if (view === "intel" && (t === "intel_watch" || t === "intel" || t === "job")) {
+      clearTimeout(window.__securaiqIntelRtTimer);
+      window.__securaiqIntelRtTimer = setTimeout(() => {
+        if (typeof renderIntelPage === "function") renderIntelPage();
+      }, 500);
+    }
+    if (view === "frameworks" && (t === "gap" || t === "remediation" || t === "evidence")) {
+      clearTimeout(window.__securaiqFwRtTimer);
+      window.__securaiqFwRtTimer = setTimeout(() => {
+        if (typeof renderFrameworksPage === "function") renderFrameworksPage();
+      }, 500);
+    }
+  };
+  window.addEventListener("securaiq:realtime", (e) => {
+    const detail = e.detail || {};
+    if (!detail.jobsChanged && !detail.kpisChanged && !detail.pushRefresh && !detail.heartbeat) return;
+    const hkHint = qs("hkPanelBody");
+    if (hkHint && detail.hardeningkitty && window.__securaiqWorkspaceView === "frameworks") {
+      const chip = hkHint.querySelector(".auto-job-status");
+      if (chip && detail.hardeningkitty.installed) {
+        chip.className = "auto-job-status status-done";
+        chip.textContent = "installed";
+      }
+    }
+  });
 })();

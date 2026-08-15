@@ -38,7 +38,7 @@ _TOOL_WORD_RE = re.compile(
     r"cve_lookup|headers?(?:\s+security)?|zap|zaproxy|sqlmap|wpscan|masscan|"
     r"rustscan|openvas|greenbone|gvm|burp|acunetix|email_auth|phishing_url|suite_guide|"
     r"spf|dmarc|dkim|phish(?:ing)?|awareness|hardening(?:_baseline)?|patch(?:es|ing|"
-    r"\s+compliance)?|xdr|edr)\b",
+    r"\s+compliance)?|xdr|edr|defender(?:_hunt)?|advanced\s*hunting|kql)\b",
     re.IGNORECASE,
 )
 _RUN_HINT_RE = re.compile(
@@ -47,12 +47,16 @@ _RUN_HINT_RE = re.compile(
 )
 
 _COMMON_PORTS = [
-    21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445,
-    1433, 3306, 3389, 5432, 5985, 6379, 8080, 8443, 9200,
+    21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 443, 445,
+    1433, 1521, 2049, 3000, 3306, 3389, 5432, 5900, 5985, 6379,
+    8009, 8080, 8180, 8443, 9200, 27017,
 ]
 
-# Fast default probe set (lightweight realtime UX)
-_LIGHT_PORTS = [22, 80, 443, 445, 3389, 8080, 8443, 3306, 5432, 6379]
+# Fast default probe set — includes Metasploitable2 / Juice Shop lab services
+_LIGHT_PORTS = [
+    21, 22, 23, 25, 80, 111, 135, 139, 443, 445, 3000, 3306, 3389,
+    5432, 5900, 6379, 8080, 8443, 9200, 27017,
+]
 
 _DIR_WORDS = [
     "admin", "login", "api", "robots.txt", "sitemap.xml", ".git", ".env",
@@ -117,6 +121,10 @@ def parse_tool_request(
             "patch compliance": "hardening_baseline",
             "xdr": "hardening_baseline",
             "edr": "hardening_baseline",
+            "defender": "defender_hunt",
+            "defender_hunt": "defender_hunt",
+            "advanced hunting": "defender_hunt",
+            "kql": "defender_hunt",
         }.get(raw, raw.replace(" ", "_"))
         if alias in TOOL_CATALOG:
             mentioned.append(alias)
@@ -414,6 +422,65 @@ async def _tool_whois(target: str, ip: str) -> dict[str, Any]:
     return {"ok": False, "error": "RDAP failed and whois binary missing", "output": ""}
 
 
+_KQL_FENCE_RE = re.compile(r"```(?:kql|kusto)?\s*([\s\S]*?)```", re.I)
+
+
+async def _tool_defender_hunt(message: str) -> dict[str, Any]:
+    """Run Defender XDR advanced hunting (authorized tenant — Graph or legacy MTP)."""
+    from app.connectors import defender as defender_conn
+
+    if not defender_conn.is_configured():
+        return {
+            "ok": False,
+            "error": "Defender not configured",
+            "output": (
+                "Set DEFENDER_TENANT_ID / DEFENDER_CLIENT_ID / DEFENDER_CLIENT_SECRET and "
+                "grant ThreatHunting.Read.All (Graph) or AdvancedHunting.Read.All (MTP)."
+            ),
+        }
+
+    query = ""
+    m = _KQL_FENCE_RE.search(message or "")
+    if m:
+        query = (m.group(1) or "").strip()
+    if not query:
+        qm = re.search(r"(?is)\bquery\s*[:=]\s*(.+)$", message or "")
+        if qm:
+            query = qm.group(1).strip().strip("`")
+    if not query:
+        query = defender_conn.DEFAULT_LIVE_QUERY
+
+    result = await defender_conn.run_advanced_hunting(query, limit=25)
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "error": result.get("error") or "hunting_failed",
+            "output": json.dumps(
+                {
+                    "hint": result.get("hint"),
+                    "graph_error": result.get("graph_error"),
+                    "legacy_error": result.get("legacy_error"),
+                },
+                indent=2,
+            )[:2000],
+        }
+
+    rows = result.get("results") or []
+    preview = json.dumps(rows[:8], indent=2, default=str)[:3500]
+    lines = [
+        f"backend={result.get('backend')} rows={result.get('result_count')}/{result.get('result_total')}",
+        preview or "(no rows)",
+        "Remediation: triage hosts/accounts in results, open an incident for confirmed threats, "
+        "and tune detections — hunting is read-only.",
+    ]
+    return {
+        "ok": True,
+        "output": "\n".join(lines),
+        "backend": result.get("backend"),
+        "result_count": result.get("result_count"),
+    }
+
+
 async def _tool_cve_lookup(message: str) -> dict[str, Any]:
     cves = list(dict.fromkeys(_CVE_RE.findall(message or "")))[:3]
     if not cves:
@@ -523,6 +590,9 @@ async def _tool_suite_guide() -> dict[str, Any]:
 - Community/Pro GUI: proxy 127.0.0.1:8080, intercept, repeater, intruder (lab apps).
 - Scope only in-scope hosts. Export sitemap → report.
 - Equivalent FOSS: OWASP ZAP {'READY: ' + zap if zap else '(install zaproxy / zap.sh)'}.
+- **Results import is real, not just a guide**: Scanner tab → right-click → "Report selected issues" →
+  XML → upload via Import scan (`POST /api/vulnerabilities/import`). Findings land as real, severity-scored
+  vulnerability rows (High/Medium/Low/Information mapped correctly), same pipeline as Trivy/Semgrep/ZAP.
 
 ## Acunetix (licensed DAST)
 - Point at lab/staging URL with credentials in scope.
@@ -638,8 +708,13 @@ async def _tool_hardening_baseline(host: str, ip: str, open_ports: list[int] | N
         else:
             findings.append("[FAIL] DMARC record missing or unresolved")
 
-    # 4) Risky exposed services (from the port probe already run this session)
-    exposed_risky = [p for p in (open_ports or []) if p in _RISKY_PORTS]
+    # 4) Risky exposed services — probe if the caller did not already run ports
+    ports = list(open_ports or [])
+    if not ports:
+        probe = await _tool_ports(ip, light=True)
+        ports = list(probe.get("open_ports") or [])
+        findings.append(f"[INFO] Auto port probe: {probe.get('output') or 'none'}")
+    exposed_risky = [p for p in ports if p in _RISKY_PORTS]
     checked += 1
     if not exposed_risky:
         passed += 1
@@ -696,8 +771,21 @@ async def _run_external(tool_id: str, target: str, ip: str, open_ports: list[int
     if tool_id == "nikto":
         return await _run_cmd([binary, "-h", base_http, "-maxtime", "20s"], timeout=30)
     if tool_id == "nuclei":
+        # JSONL so findings can be persisted into the vulnerability register
         return await _run_cmd(
-            [binary, "-u", base_http, "-severity", "critical,high,medium", "-silent", "-timeout", "5", "-rate-limit", "50"],
+            [
+                binary,
+                "-u",
+                base_http,
+                "-severity",
+                "critical,high,medium",
+                "-silent",
+                "-jsonl",
+                "-timeout",
+                "5",
+                "-rate-limit",
+                "50",
+            ],
             timeout=35,
         )
     if tool_id == "whatweb":
@@ -807,6 +895,7 @@ async def iter_security_tools(
     auto: bool = False,
     include_heavy: bool = False,
     mode: str | None = None,
+    user_id: str = "local",
 ):
     """Yield realtime progress events; light builtins run in parallel."""
     if not settings.local_tools_enabled:
@@ -825,7 +914,8 @@ async def iter_security_tools(
         return
 
     awareness_only = all(
-        tid in {"phishing_url", "email_auth", "suite_guide", "cve_lookup"} for tid in tool_ids
+        tid in {"phishing_url", "email_auth", "suite_guide", "cve_lookup", "defender_hunt"}
+        for tid in tool_ids
     )
     targets = extract_targets(message, target)
     if "email_auth" in tool_ids and not targets:
@@ -872,7 +962,7 @@ async def iter_security_tools(
                 allow_public=allow_public or awareness_only,
             )
             if not meta.get("ok"):
-                soft = [t for t in tool_ids if t in {"phishing_url", "suite_guide", "cve_lookup"}]
+                soft = [t for t in tool_ids if t in {"phishing_url", "suite_guide", "cve_lookup", "defender_hunt"}]
                 if soft and not any(TOOL_CATALOG[t].needs_target for t in soft):
                     tool_ids = soft
                     host = ""
@@ -903,6 +993,8 @@ async def iter_security_tools(
         try:
             if tid == "cve_lookup":
                 result = await _tool_cve_lookup(message)
+            elif tid == "defender_hunt":
+                result = await _tool_defender_hunt(message)
             elif tid == "phishing_url":
                 result = await _tool_phishing_url(message)
             elif tid == "suite_guide":
@@ -933,6 +1025,36 @@ async def iter_security_tools(
                 result = await _tool_whois(host, ip)
             elif tid == "hardening_baseline":
                 result = await _tool_hardening_baseline(host, ip, ports_hint)
+            elif tid == "hardeningkitty":
+                # HardeningKitty has no PATH binary (binaries=()) — it runs via a
+                # dedicated Windows/PowerShell module, not a generic subprocess.
+                # Route to the real flow instead of falling through to
+                # _run_external, which would always report "not installed (PATH)"
+                # even when the module is actually detected.
+                from app.hardeningkitty import is_installed as _hk_installed
+
+                if _hk_installed():
+                    result = {
+                        "ok": True,
+                        "output": (
+                            "HardeningKitty module detected. Run it from Frameworks → "
+                            "Windows hardening → \"Run HardeningKitty audit\" "
+                            "(POST /api/hardeningkitty/audit), or import an existing "
+                            "Audit report CSV under Vulnerabilities — it is not run "
+                            "through the generic tool runner because it writes "
+                            "findings straight into the database."
+                        ),
+                    }
+                else:
+                    result = {
+                        "ok": False,
+                        "error": "HardeningKitty module not found",
+                        "output": (
+                            "Set the module path in Settings → Windows hardening (CIS), "
+                            "or install HardeningKitty, then use Frameworks → "
+                            "Windows hardening → Run HardeningKitty audit."
+                        ),
+                    }
             elif spec.kind == "external":
                 if not is_available(tid):
                     result = {"ok": False, "error": "not installed on PATH", "output": ""}
@@ -942,6 +1064,9 @@ async def iter_security_tools(
                 result = {"ok": False, "error": "unknown tool", "output": ""}
         except Exception as exc:
             result = {"ok": False, "error": str(exc), "output": ""}
+        # Parse nuclei JSONL before truncating chat output (persist needs full rows)
+        if tid == "nuclei" and result.get("ok") and isinstance(result.get("output"), str):
+            result["findings"] = _parse_nuclei_jsonl(result["output"])
         if isinstance(result.get("output"), str) and len(result["output"]) > 2500:
             result["output"] = result["output"][:2500] + "\n…(truncated)"
         entry.update(result)
@@ -956,7 +1081,11 @@ async def iter_security_tools(
     }
 
     rest = list(ordered)
-    if "ports" in rest and ip:
+    needs_ports = ip and any(
+        t in {"ports", "hardening_baseline", "http", "headers_security", "tls", "robots", "tech"}
+        for t in rest
+    )
+    if needs_ports:
         rest = [t for t in rest if t != "ports"]
         yield {"event": "tool_start", "tool": "ports", "name": "Port probe"}
         entry = await _execute("ports", open_ports)
@@ -1003,20 +1132,197 @@ async def iter_security_tools(
 
     ok_any = any(r.get("ok") for r in runs)
     fp = hashlib.sha1(f"{host}:{ip}:{','.join(tool_ids)}".encode()).hexdigest()[:10]
-    yield {
-        "event": "done",
-        "payload": {
-            "ok": ok_any,
-            "target": host or None,
-            "ip": ip or None,
-            "private": (meta or {}).get("private"),
-            "requested": tool_ids,
-            "open_ports": open_ports,
-            "runs": runs,
-            "light": light_mode,
-            "fingerprint": fp,
-        },
+    payload: dict[str, Any] = {
+        "ok": ok_any,
+        "target": host or None,
+        "ip": ip or None,
+        "private": (meta or {}).get("private"),
+        "requested": tool_ids,
+        "open_ports": open_ports,
+        "runs": runs,
+        "light": light_mode,
+        "fingerprint": fp,
+        "authorized": bool(authorized or (meta or {}).get("private")),
     }
+    # Persist real findings into vulnerabilities when the scan was authorized / private-lab
+    if payload.get("authorized") and ok_any:
+        try:
+            persisted = persist_tool_findings_to_vulns(
+                user_id or "local",
+                payload,
+            )
+            payload["vulnerabilities_persisted"] = persisted
+        except Exception as exc:  # noqa: BLE001
+            payload["vulnerabilities_persisted"] = {"ok": False, "error": str(exc)[:200]}
+    yield {"event": "done", "payload": payload}
+
+
+def _parse_nuclei_jsonl(output: str) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for line in (output or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(row, dict):
+            continue
+        info = row.get("info") if isinstance(row.get("info"), dict) else {}
+        sev = str(info.get("severity") or row.get("severity") or "medium").lower()
+        title = (
+            info.get("name")
+            or row.get("template-id")
+            or row.get("template_id")
+            or "Nuclei finding"
+        )
+        cve = ""
+        classification = info.get("classification")
+        if isinstance(classification, dict):
+            cves = classification.get("cve-id") or classification.get("cve_id") or []
+            if isinstance(cves, list) and cves:
+                cve = str(cves[0]).upper()
+            elif isinstance(cves, str) and cves.upper().startswith("CVE-"):
+                cve = cves.upper()
+        elif isinstance(classification, list):
+            for cls in classification:
+                if isinstance(cls, str) and cls.upper().startswith("CVE-"):
+                    cve = cls.upper()
+                    break
+        if not cve:
+            for m in _CVE_RE.finditer(json.dumps(row)[:2000]):
+                cve = m.group(0).upper()
+                break
+        matched = row.get("matched-at") or row.get("host") or row.get("ip") or ""
+        findings.append(
+            {
+                "title": str(title)[:300],
+                "severity": sev if sev in {"critical", "high", "medium", "low", "info"} else "medium",
+                "cve": cve[:40],
+                "asset_name": str(matched)[:200],
+                "source": f"nuclei:{row.get('template-id') or row.get('template_id') or 'scan'}",
+                "raw": row,
+            }
+        )
+    return findings[:80]
+
+
+def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Turn authorized tool output into real vulnerability rows (not chat-only)."""
+    from app.enterprise import create_vulnerability, list_vulnerabilities
+
+    target = payload.get("target") or payload.get("ip") or "unknown"
+    existing = {
+        ((v.get("title") or "").strip().lower(), (v.get("asset_name") or "").strip().lower())
+        for v in list_vulnerabilities(user_id)
+    }
+    to_create: list[dict[str, Any]] = []
+
+    for run in payload.get("runs") or []:
+        if not run.get("ok"):
+            continue
+        tid = run.get("tool") or ""
+        out = run.get("output") or ""
+
+        if tid == "nuclei":
+            parsed = run.get("findings") if isinstance(run.get("findings"), list) else _parse_nuclei_jsonl(out)
+            for f in parsed:
+                if not isinstance(f, dict):
+                    continue
+                if not f.get("asset_name"):
+                    f["asset_name"] = str(target)[:200]
+                key = (str(f.get("title") or "").lower(), (f.get("asset_name") or "").lower())
+                if key in existing:
+                    continue
+                existing.add(key)
+                to_create.append(f)
+
+        elif tid in {"nmap", "ports"}:
+            ports = run.get("open_ports")
+            if not isinstance(ports, list):
+                # Parse classic nmap "PORT STATE SERVICE" lines
+                ports = []
+                for line in out.splitlines():
+                    m = re.match(r"^(\d+)/tcp\s+open\b", line.strip())
+                    if m:
+                        ports.append(int(m.group(1)))
+            for p in ports or []:
+                if p not in _RISKY_PORTS:
+                    continue
+                title = f"Exposed risky service on port {p}/tcp"
+                key = (title.lower(), str(target).lower())
+                if key in existing:
+                    continue
+                existing.add(key)
+                to_create.append(
+                    {
+                        "title": title,
+                        "severity": "high" if p in {445, 3389, 23, 21} else "medium",
+                        "asset_name": str(target)[:200],
+                        "source": f"{tid}:port-{p}",
+                        "raw": {"port": p, "note": _RISKY_PORTS[p]},
+                    }
+                )
+
+        elif tid == "hardening_baseline":
+            for line in out.splitlines():
+                if not line.strip().startswith("[FAIL]"):
+                    continue
+                msg = line.strip()[6:].strip()
+                title = f"Hardening gap: {msg}"[:300]
+                key = (title.lower(), str(target).lower())
+                if key in existing:
+                    continue
+                existing.add(key)
+                sev = "high" if any(x in msg.lower() for x in ("tls", "rdp", "smb", "patch")) else "medium"
+                to_create.append(
+                    {
+                        "title": title,
+                        "severity": sev,
+                        "asset_name": str(target)[:200],
+                        "source": "hardening_baseline",
+                        "raw": {"line": line},
+                    }
+                )
+
+        elif tid == "nikto":
+            # Nikto text: "+ OSVDB-…" / "+ CVE-…" style lines — capture CVE hits
+            for m in _CVE_RE.finditer(out):
+                cve = m.group(0).upper()
+                title = f"Nikto finding referencing {cve}"
+                key = (title.lower(), str(target).lower())
+                if key in existing:
+                    continue
+                existing.add(key)
+                to_create.append(
+                    {
+                        "title": title,
+                        "cve": cve,
+                        "severity": "medium",
+                        "asset_name": str(target)[:200],
+                        "source": "nikto",
+                        "raw": {"cve": cve},
+                    }
+                )
+
+    created = []
+    for item in to_create[:100]:
+        created.append(create_vulnerability(user_id, item, emit_realtime=False))
+    if created:
+        try:
+            from app.realtime_bus import publish
+
+            publish(
+                type="vuln_batch",
+                source="local_tools",
+                count=len(created),
+                target=str(target)[:120],
+                user_id=user_id,
+            )
+        except Exception:
+            pass
+    return {"ok": True, "created": len(created), "titles": [c.get("title") for c in created[:15]]}
 
 
 async def run_security_tools(
@@ -1029,6 +1335,7 @@ async def run_security_tools(
     auto: bool = False,
     include_heavy: bool = False,
     mode: str | None = None,
+    user_id: str = "local",
 ) -> dict[str, Any]:
     final: dict[str, Any] | None = None
     async for ev in iter_security_tools(
@@ -1040,6 +1347,7 @@ async def run_security_tools(
         auto=auto,
         include_heavy=include_heavy,
         mode=mode,
+        user_id=user_id,
     ):
         if ev.get("event") == "done":
             final = ev.get("payload")
@@ -1065,6 +1373,13 @@ def format_tools_context(payload: dict[str, Any]) -> str:
         "Use this evidence for findings, CVE mapping, verify commands, detection, and remediation.",
         "",
     ]
+    vp = payload.get("vulnerabilities_persisted") or {}
+    if vp.get("created"):
+        lines.append(
+            f"**Persisted {vp['created']} finding(s)** into Vulnerabilities "
+            f"(source=local_tools) — open the Vulnerabilities workspace to triage."
+        )
+        lines.append("")
     for r in runs:
         status = "OK" if r.get("ok") else "FAIL"
         lines.append(f"### {r.get('name', r.get('tool'))} [{status}]")

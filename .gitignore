@@ -8,6 +8,8 @@ data/*.db-*
 data/uploads/
 data/kpi_snaps/
 tools/ollama/
+vendor/HardeningKitty/
+data/hardeningkitty/
 chat_test_output.txt
 *.log
 .DS_Store

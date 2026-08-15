@@ -8,6 +8,8 @@ Setup:
 
 Auth: static bearer-style token in the `Authorization: ApiToken <token>` header
 (SentinelOne's own scheme, not standard OAuth2 Bearer) — no token exchange step.
+Live detections: `app/xdr_stream.py` near-realtime poll of `fetch_detections`
+(default 60s). Push without polling: `POST /api/xdr/ingest`.
 """
 
 from __future__ import annotations

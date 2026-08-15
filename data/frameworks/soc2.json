@@ -1,19 +1,377 @@
 {
   "id": "soc2",
-  "name": "SOC 2 Trust Services Criteria (subset)",
-  "version": "2017",
+  "name": "SOC 2 Trust Services Criteria (TSC)",
+  "version": "2017 TSC / 2022 points of focus",
+  "description": "AICPA Trust Services Criteria (2017) with 2022 revised points of focus — Common Criteria plus Availability & Confidentiality.",
   "controls": [
-    {"id": "CC1.1", "title": "COSO principles — integrity and ethical values", "domain": "CC1", "keywords": ["ethics", "integrity", "code of conduct", "tone at the top"]},
-    {"id": "CC2.1", "title": "Information and communication", "domain": "CC2", "keywords": ["communication", "policies", "awareness", "reporting"]},
-    {"id": "CC3.1", "title": "Risk assessment process", "domain": "CC3", "keywords": ["risk assessment", "risk register", "threat", "likelihood"]},
-    {"id": "CC5.1", "title": "Control activities", "domain": "CC5", "keywords": ["control activities", "procedures", "approvals"]},
-    {"id": "CC6.1", "title": "Logical and physical access", "domain": "CC6", "keywords": ["access control", "MFA", "least privilege", "physical access"]},
-    {"id": "CC6.6", "title": "Security boundaries and encryption", "domain": "CC6", "keywords": ["encryption", "TLS", "network boundary", "firewall"]},
-    {"id": "CC7.1", "title": "System monitoring", "domain": "CC7", "keywords": ["monitoring", "SIEM", "alerting", "logging"]},
-    {"id": "CC7.2", "title": "Incident response", "domain": "CC7", "keywords": ["incident response", "IR plan", "containment"]},
-    {"id": "CC8.1", "title": "Change management", "domain": "CC8", "keywords": ["change management", "CAB", "deployment", "release"]},
-    {"id": "CC9.1", "title": "Risk mitigation — vendors", "domain": "CC9", "keywords": ["vendor", "third party", "supplier", "TPRM"]},
-    {"id": "A1.1", "title": "Availability commitments", "domain": "Availability", "keywords": ["availability", "uptime", "SLA", "capacity"]},
-    {"id": "C1.1", "title": "Confidentiality commitments", "domain": "Confidentiality", "keywords": ["confidentiality", "NDA", "data classification"]}
+    {
+      "id": "CC1.1",
+      "title": "COSO — integrity and ethical values",
+      "domain": "CC1 Control Environment",
+      "keywords": [
+        "ethics",
+        "integrity",
+        "code of conduct",
+        "tone at the top"
+      ]
+    },
+    {
+      "id": "CC1.2",
+      "title": "Board independence and oversight",
+      "domain": "CC1 Control Environment",
+      "keywords": [
+        "board",
+        "oversight",
+        "governance",
+        "independence"
+      ]
+    },
+    {
+      "id": "CC1.3",
+      "title": "Management establishes structures and reporting lines",
+      "domain": "CC1 Control Environment",
+      "keywords": [
+        "org structure",
+        "reporting lines",
+        "authority"
+      ]
+    },
+    {
+      "id": "CC1.4",
+      "title": "Commitment to competence",
+      "domain": "CC1 Control Environment",
+      "keywords": [
+        "competence",
+        "hiring",
+        "training",
+        "skills"
+      ]
+    },
+    {
+      "id": "CC1.5",
+      "title": "Accountability for internal control",
+      "domain": "CC1 Control Environment",
+      "keywords": [
+        "accountability",
+        "performance",
+        "incentives"
+      ]
+    },
+    {
+      "id": "CC2.1",
+      "title": "Information quality to support internal control",
+      "domain": "CC2 Communication",
+      "keywords": [
+        "information quality",
+        "policies",
+        "reporting"
+      ]
+    },
+    {
+      "id": "CC2.2",
+      "title": "Internal communication of objectives and responsibilities",
+      "domain": "CC2 Communication",
+      "keywords": [
+        "internal communication",
+        "awareness",
+        "objectives"
+      ]
+    },
+    {
+      "id": "CC2.3",
+      "title": "Communication with external parties",
+      "domain": "CC2 Communication",
+      "keywords": [
+        "external communication",
+        "customers",
+        "regulators"
+      ]
+    },
+    {
+      "id": "CC3.1",
+      "title": "Objectives specified with sufficient clarity",
+      "domain": "CC3 Risk Assessment",
+      "keywords": [
+        "objectives",
+        "risk criteria",
+        "service commitments"
+      ]
+    },
+    {
+      "id": "CC3.2",
+      "title": "Risks identified to achievement of objectives",
+      "domain": "CC3 Risk Assessment",
+      "keywords": [
+        "risk assessment",
+        "risk register",
+        "threat"
+      ]
+    },
+    {
+      "id": "CC3.3",
+      "title": "Potential for fraud considered",
+      "domain": "CC3 Risk Assessment",
+      "keywords": [
+        "fraud",
+        "fraud risk",
+        "abuse"
+      ]
+    },
+    {
+      "id": "CC3.4",
+      "title": "Changes that could impact controls identified",
+      "domain": "CC3 Risk Assessment",
+      "keywords": [
+        "change impact",
+        "new systems",
+        "reorganization"
+      ]
+    },
+    {
+      "id": "CC4.1",
+      "title": "Ongoing and separate evaluations",
+      "domain": "CC4 Monitoring",
+      "keywords": [
+        "control monitoring",
+        "internal audit",
+        "evaluations"
+      ]
+    },
+    {
+      "id": "CC4.2",
+      "title": "Deficiencies evaluated and communicated",
+      "domain": "CC4 Monitoring",
+      "keywords": [
+        "deficiency",
+        "remediation",
+        "findings"
+      ]
+    },
+    {
+      "id": "CC5.1",
+      "title": "Control activities selected and developed",
+      "domain": "CC5 Control Activities",
+      "keywords": [
+        "control activities",
+        "procedures",
+        "approvals"
+      ]
+    },
+    {
+      "id": "CC5.2",
+      "title": "Technology controls selected and developed",
+      "domain": "CC5 Control Activities",
+      "keywords": [
+        "technology controls",
+        "ITGC",
+        "automated controls"
+      ]
+    },
+    {
+      "id": "CC5.3",
+      "title": "Policies and procedures put into action",
+      "domain": "CC5 Control Activities",
+      "keywords": [
+        "policies",
+        "procedures",
+        "operating effectiveness"
+      ]
+    },
+    {
+      "id": "CC6.1",
+      "title": "Logical and physical access controls",
+      "domain": "CC6 Logical Access",
+      "keywords": [
+        "access control",
+        "MFA",
+        "least privilege",
+        "physical access"
+      ]
+    },
+    {
+      "id": "CC6.2",
+      "title": "Prior to issuing credentials, identity registered",
+      "domain": "CC6 Logical Access",
+      "keywords": [
+        "identity proofing",
+        "joiner",
+        "provisioning"
+      ]
+    },
+    {
+      "id": "CC6.3",
+      "title": "Access removed when no longer required",
+      "domain": "CC6 Logical Access",
+      "keywords": [
+        "deprovision",
+        "termination",
+        "access revocation"
+      ]
+    },
+    {
+      "id": "CC6.6",
+      "title": "Security boundaries and encryption",
+      "domain": "CC6 Logical Access",
+      "keywords": [
+        "encryption",
+        "TLS",
+        "network boundary",
+        "firewall"
+      ]
+    },
+    {
+      "id": "CC6.7",
+      "title": "Transmission and movement of data restricted",
+      "domain": "CC6 Logical Access",
+      "keywords": [
+        "data transfer",
+        "DLP",
+        "exfiltration"
+      ]
+    },
+    {
+      "id": "CC6.8",
+      "title": "Malicious software prevented or detected",
+      "domain": "CC6 Logical Access",
+      "keywords": [
+        "malware",
+        "EDR",
+        "antivirus"
+      ]
+    },
+    {
+      "id": "CC7.1",
+      "title": "Infrastructure and software monitored",
+      "domain": "CC7 System Operations",
+      "keywords": [
+        "monitoring",
+        "SIEM",
+        "alerting",
+        "logging"
+      ]
+    },
+    {
+      "id": "CC7.2",
+      "title": "Anomalies and security incidents detected",
+      "domain": "CC7 System Operations",
+      "keywords": [
+        "anomaly",
+        "incident detection",
+        "alert triage"
+      ]
+    },
+    {
+      "id": "CC7.3",
+      "title": "Security incidents evaluated and responded",
+      "domain": "CC7 System Operations",
+      "keywords": [
+        "incident response",
+        "IR plan",
+        "containment"
+      ]
+    },
+    {
+      "id": "CC7.4",
+      "title": "Security incidents communicated",
+      "domain": "CC7 System Operations",
+      "keywords": [
+        "incident communication",
+        "stakeholder notice"
+      ]
+    },
+    {
+      "id": "CC7.5",
+      "title": "Recovery from security incidents",
+      "domain": "CC7 System Operations",
+      "keywords": [
+        "recovery",
+        "lessons learned",
+        "post-incident"
+      ]
+    },
+    {
+      "id": "CC8.1",
+      "title": "Changes authorized, designed, tested, approved, implemented",
+      "domain": "CC8 Change Management",
+      "keywords": [
+        "change management",
+        "CAB",
+        "deployment",
+        "release"
+      ]
+    },
+    {
+      "id": "CC9.1",
+      "title": "Risk mitigation activities identify vendors",
+      "domain": "CC9 Risk Mitigation",
+      "keywords": [
+        "vendor",
+        "third party",
+        "supplier",
+        "TPRM"
+      ]
+    },
+    {
+      "id": "CC9.2",
+      "title": "Vendor and business partner risks assessed",
+      "domain": "CC9 Risk Mitigation",
+      "keywords": [
+        "vendor risk",
+        "due diligence",
+        "SOC report review"
+      ]
+    },
+    {
+      "id": "A1.1",
+      "title": "Current processing capacity and usage monitored",
+      "domain": "Availability",
+      "keywords": [
+        "availability",
+        "capacity",
+        "uptime",
+        "SLA"
+      ]
+    },
+    {
+      "id": "A1.2",
+      "title": "Environmental protections and recovery infrastructure",
+      "domain": "Availability",
+      "keywords": [
+        "DR",
+        "backup",
+        "failover",
+        "RTO"
+      ]
+    },
+    {
+      "id": "A1.3",
+      "title": "Recovery plan tested",
+      "domain": "Availability",
+      "keywords": [
+        "DR test",
+        "restore test",
+        "tabletop"
+      ]
+    },
+    {
+      "id": "C1.1",
+      "title": "Confidential information identified and protected",
+      "domain": "Confidentiality",
+      "keywords": [
+        "confidentiality",
+        "classification",
+        "NDA"
+      ]
+    },
+    {
+      "id": "C1.2",
+      "title": "Disposal of confidential information",
+      "domain": "Confidentiality",
+      "keywords": [
+        "secure disposal",
+        "data destruction",
+        "retention"
+      ]
+    }
   ]
 }

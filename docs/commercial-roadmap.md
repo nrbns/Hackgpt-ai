@@ -104,6 +104,8 @@ Administration → Orgs · Settings · Account
 - [x] Optional Qdrant compose profile  
 - [x] Webhooks automation stub (n8n/Temporal bridges)  
 - [x] Wazuh SIEM connector (manager JWT + optional Indexer; SOC sync)  
+- [x] Network inventory connector (cookie session API; Assets sync)  
+- [x] HardeningKitty + CIS Downloads workflow (Audit/Config + report import)  
 - [ ] TheHive connector (Month 3+)  
 - [ ] Stronger executive trend charts  
 

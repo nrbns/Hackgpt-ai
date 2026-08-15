@@ -3,21 +3,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#0f6e6a" id="metaThemeColor" />
+  <meta name="theme-color" content="#1a222c" id="metaThemeColor" />
   <meta name="color-scheme" content="light dark" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="SecuraIQ" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="description" content="SecuraIQ — AI Security Operating System for posture, compliance, risk, vulns, and authorized security workflows." />
+  <meta name="description" content="SecuraIQ — industrial security control assistant for authorized labs, compliance, and GRC." />
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" href="/icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="/icon-180.png" />
   <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
-  <title>SecuraIQ — AI Security OS</title>
+  <title>SecuraIQ — Industrial Security Control</title>
   <script>
     (function () {
       try {
@@ -32,30 +29,34 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/style.css?v=80" />
+  <link rel="stylesheet" href="/style.css?v=109" />
   <script src="/vendor/marked.min.js"></script>
 </head>
 <body>
   <div class="shell">
     <aside class="sidebar" id="sidebar" aria-label="Security command center">
       <div class="sidebar-brand">
-        <div class="brand-mark" aria-hidden="true"><span>S</span></div>
+        <div class="brand-mark" aria-hidden="true"><img src="/icon.svg" alt="" width="34" height="34" /></div>
         <div class="brand-copy">
           <p class="brand-name">SecuraIQ</p>
-          <p class="brand-tag">AI Security OS</p>
+          <p class="brand-tag">Industrial Security Control</p>
         </div>
+      </div>
+      <div class="rail-live" id="railLive" data-state="live-off" aria-live="polite">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span id="railLiveText">Feed hold</span>
       </div>
 
       <nav class="side-nav" aria-label="Primary">
-        <button type="button" class="nav-item active" data-view="command" id="navCommand">
+        <button type="button" class="nav-item" data-view="command" id="navCommand">
           <span class="nav-ico" data-ico="mc" aria-hidden="true"></span>
-          <span class="nav-item-label">Mission Control</span>
+          <span class="nav-item-label">Control Board</span>
         </button>
-        <button type="button" class="nav-item" data-view="chat" id="navChat">
+        <button type="button" class="nav-item active" data-view="chat" id="navChat">
           <span class="nav-ico" data-ico="ai" aria-hidden="true"></span>
-          <span class="nav-item-label">AI Workspace</span>
+          <span class="nav-item-label">Assistant</span>
         </button>
-        <button id="newChatBtn" type="button" class="nav-subaction">+ New conversation</button>
+        <button id="newChatBtn" type="button" class="nav-subaction">+ New chat</button>
       </nav>
 
       <nav class="side-nav nav-group" aria-label="Security Operations" data-nav-group>
@@ -184,7 +185,13 @@
           <input id="globalSearch" type="search" class="topbar-search" placeholder="Search assets, CVEs, users, reports…" autocomplete="off" enterkeyhint="search" />
           <div id="searchResults" class="search-results hidden" role="listbox" aria-label="Search results"></div>
         </div>
-        <div class="topbar-sync hint" id="topLastSync" title="Last dashboard refresh">Sync —</div>
+        <div class="live-ticker" id="liveTicker" data-state="live-off" title="Realtime control feed">
+          <span class="live-dot" aria-hidden="true"></span>
+          <span class="ticker-state" id="tickerState">HOLD</span>
+          <span class="ticker-chip" id="tickerJobs">jobs 0</span>
+          <span class="ticker-chip" id="tickerKpi">open —</span>
+          <span class="ticker-chip" id="topLastSync">pulse —</span>
+        </div>
         <nav class="topbar-enterprise-nav" aria-label="Enterprise">
           <span class="notif-wrap">
             <button type="button" class="topbar-icon-btn" id="notifBtn" title="Notifications" aria-label="Notifications" aria-haspopup="true" aria-expanded="false">
@@ -224,13 +231,13 @@
       </section>
 
       <div class="stage">
-        <section id="viewCommand" class="workspace-view mc-is-empty" data-view-panel="command">
+        <section id="viewCommand" class="workspace-view mc-is-empty hidden" data-view-panel="command">
           <div class="mc-context" id="mcContext">
             <div class="mc-context-main">
               <p class="mc-kicker" id="mcGreeting">Mission Control</p>
               <h1 class="mc-org" id="mcOrgName">Local workspace</h1>
-              <p class="mc-lead" id="mcAiSummary">Start at zero — no assets, findings, or assessments yet.</p>
-              <p class="hint" id="mcTodaySummary">Empty by design — choose a path below when you're ready.</p>
+              <p class="mc-lead" id="mcAiSummary">Your workspace is empty — pick a path below when you&rsquo;re ready.</p>
+              <p class="hint hidden" id="mcTodaySummary" hidden></p>
             </div>
             <dl class="mc-context-meta">
               <div><dt>Security score</dt><dd id="mcSecurityScore">0</dd></div>
@@ -245,7 +252,7 @@
               <div>
                 <p class="mc-kicker">Start at zero</p>
                 <h2>Your workspace is ready</h2>
-                <p class="hint">Score 0 · no assets, findings, or assessments. Pick a path when you&rsquo;re ready.</p>
+                <p class="hint">Import a scan or open Integrations to begin.</p>
               </div>
               <div class="mc-first-run-actions">
                 <button type="button" class="btn-primary-cc" data-workspace="vulns">Import scan</button>
@@ -390,6 +397,14 @@
             </section>
             <section class="cc-panel">
               <header>
+                <h2>Correlation hotspots</h2>
+                <button type="button" class="btn-secondary" data-workspace="graph">Open graph</button>
+              </header>
+              <p class="hint" id="ccCorrDoctrine">Assets where VAPT, XDR, incidents, and controls intersect</p>
+              <ul id="ccCorrelation" class="cc-list"><li class="hint">—</li></ul>
+            </section>
+            <section class="cc-panel">
+              <header>
                 <h2>Threat intelligence</h2>
                 <button type="button" class="btn-secondary" data-workspace="intel">Open</button>
               </header>
@@ -435,7 +450,7 @@
           </div>
         </section>
 
-        <section id="viewChat" class="workspace-view hidden" data-view-panel="chat">
+        <section id="viewChat" class="workspace-view" data-view-panel="chat">
           <div class="ai-tabs" role="tablist" aria-label="AI workspace">
             <button type="button" class="ai-tab active" data-ai-tab="chat">Assistant</button>
             <button type="button" class="ai-tab" data-ai-tab="memory">Memory</button>
@@ -448,10 +463,12 @@
           </div>
           <div id="aiTab-chat" class="ai-tab-panel">
             <div id="emptyState" class="empty-state">
+              <div class="empty-mark" aria-hidden="true"><img src="/icon.svg" alt="" width="52" height="52" /></div>
               <p class="empty-brand">SecuraIQ</p>
-              <p class="empty-lead" id="emptyLead">Ask anything about your authorized security work — or open a module from the sidebar.</p>
+              <p class="empty-tag">Industrial Security Control</p>
+              <p class="empty-lead" id="emptyLead">Query authorized posture, findings, and controls. Live jobs and KPIs stream on the ticker above.</p>
               <div class="empty-suite" id="emptySuite">
-                <button type="button" class="suite-chip" data-view="command">Mission Control</button>
+                <button type="button" class="suite-chip" data-view="command">Control Board</button>
                 <button type="button" class="suite-chip" data-workspace="vulns">Import scan</button>
                 <button type="button" class="suite-chip" data-module="gap">Gap analysis</button>
               </div>
@@ -489,7 +506,13 @@
         </section>
 
         <section id="viewAssets" class="workspace-view hidden" data-module-page data-view-panel="assets">
-          <div class="page-head"><h1>Asset inventory</h1><button type="button" class="btn-primary-cc" id="assetsOpenCreate">Add asset</button></div>
+          <div class="page-head">
+            <h1>Asset inventory</h1>
+            <div class="page-head-actions">
+              <button type="button" class="btn-secondary" id="oaSyncBtn">Sync inventory</button>
+              <button type="button" class="btn-primary-cc" id="assetsOpenCreate">Add asset</button>
+            </div>
+          </div>
           <div id="assetsPageBody"></div>
         </section>
         <section id="viewRisks" class="workspace-view hidden" data-module-page data-view-panel="risks">
@@ -500,17 +523,30 @@
           <div class="page-head"><h1>Vulnerability management</h1>
               <div class="page-head-actions">
               <button type="button" class="btn-secondary" id="vulnsOpenImport">Import scan</button>
-              <details class="lab-fixtures">
-                <summary class="btn-secondary" title="Optional authorized lab fixtures">Lab fixtures</summary>
-                <div class="lab-fixtures-menu" id="vulnsSampleRow">
-                  <span class="hint">Loading lab fixtures…</span>
-                </div>
-              </details>
+              <button type="button" class="btn-secondary" id="sonarSyncBtn">Sync SonarQube</button>
               <button type="button" class="btn-secondary" id="vulnsOpenExport">Export</button>
             </div>
           </div>
           <div class="vuln-layout">
             <div class="vuln-main">
+              <section class="cc-panel vuln-side-panel" id="sonarPanel">
+                <header><h2>SonarQube</h2>
+                  <div class="page-head-actions">
+                    <button type="button" class="btn-secondary" id="sonarPanelSyncBtn">Sync</button>
+                  </div>
+                </header>
+                <div id="sonarPanelBody"><p class="hint">Loading…</p></div>
+              </section>
+              <section class="cc-panel vuln-side-panel" id="cloudPosturePanel">
+                <header><h2>Cloud posture</h2>
+                  <div class="page-head-actions">
+                    <button type="button" class="btn-secondary" id="cloudImportBtn">Import JSON</button>
+                    <button type="button" class="btn-secondary" id="cloudSyncBtn">Sync cloud</button>
+                  </div>
+                </header>
+                <input type="file" id="cloudImportInput" accept=".json,application/json" class="hidden" />
+                <div id="cloudPosturePanelBody"><p class="hint">Loading…</p></div>
+              </section>
               <div id="vulnFilterBar" class="filter-bar" aria-label="Vulnerability filters"></div>
               <div id="vulnsPageBody"></div>
             </div>
@@ -572,12 +608,23 @@
           <div id="orgsPageBody"></div>
         </section>
         <section id="viewFrameworks" class="workspace-view hidden" data-module-page data-view-panel="frameworks">
-          <div class="page-head">
-            <h1>Compliance frameworks</h1>
-            <button type="button" class="btn-primary-cc" id="frameworksRunGap">Run gap analysis</button>
+          <div class="fw-page">
+            <div class="page-head">
+              <h1>Compliance frameworks</h1>
+              <div class="page-head-actions">
+                <button type="button" class="btn-secondary" id="hkAuditBtn">Run HardeningKitty audit</button>
+                <button type="button" class="btn-primary-cc" id="frameworksRunGap">Run gap analysis</button>
+              </div>
+            </div>
+            <p class="page-intro hint">Control libraries for gap analysis, evidence mapping, and remediation tracking. AI recommends; humans approve.</p>
+            <div class="fw-page-stack">
+              <section class="cc-panel fw-hk-panel" id="hkPanel">
+                <header><h2>Windows hardening</h2></header>
+                <div id="hkPanelBody"><p class="hint">Loading…</p></div>
+              </section>
+              <div id="frameworksPageBody"></div>
+            </div>
           </div>
-          <p class="page-intro hint">Control libraries for gap analysis, evidence mapping, and remediation tracking. AI recommends; humans approve.</p>
-          <div id="frameworksPageBody"></div>
         </section>
         <section id="viewIntegrations" class="workspace-view hidden" data-module-page data-view-panel="integrations">
           <div class="page-head"><h1>Integrations</h1></div>
@@ -607,8 +654,8 @@
           <div id="attachChips" class="attach-chips hidden" aria-live="polite"></div>
           <div class="ai-assist-head" id="aiAssistHead">
             <div>
-              <strong>AI Assistant</strong>
-              <span class="hint" id="aiAssistContext">Context-aware · authorized labs</span>
+              <strong>Operator console</strong>
+              <span class="hint" id="aiAssistContext">Live context · authorized labs</span>
             </div>
             <div class="ai-assist-head-actions">
               <button type="button" class="btn-ghost" id="aiAssistOpenWorkspace" title="Open full AI Workspace">Workspace</button>
@@ -651,7 +698,7 @@
               enterkeyhint="send"
               autocomplete="off"
               autocapitalize="sentences"
-              placeholder="Ask SecuraIQ..."
+              placeholder="Issue a control query…"
             ></textarea>
 
             <div class="composer-bottom">
@@ -700,7 +747,7 @@
                 <option value="cloud">Cloud Architect</option>
                 <option value="appsec">Secure Code Reviewer</option>
                 <option value="ir">Incident Responder</option>
-                <option value="ciso">Executive Advisor</option>
+                <option value="assess">Executive Advisor</option>
                 <option value="malware">Malware Analyst</option>
                 <option value="awareness">Awareness Lead</option>
                 <option value="tabletop">Tabletop Facilitator</option>
@@ -765,7 +812,7 @@
         </div>
         <p class="composer-hint visually-hidden">Authorized labs and owned systems only.</p>
       </footer>
-      <button type="button" id="aiFab" class="ai-fab hidden" aria-controls="composerWrap" aria-expanded="false" title="Open AI Assistant">
+      <button type="button" id="aiFab" class="ai-fab hidden" aria-controls="composerWrap" aria-expanded="false" title="Open operator console">
         <span class="ai-fab-mark" aria-hidden="true">AI</span>
         <span class="ai-fab-label">Assistant</span>
       </button>
@@ -910,11 +957,266 @@
             <input type="password" id="setWazuhIndexerPassword" autocomplete="off" placeholder="leave blank to keep" />
           </label>
           <p class="hint" id="wazuhIndexerPasswordHint">Not set</p>
+          <div class="cc-action-row">
+            <button type="button" class="btn-secondary" id="setWazuhTestBtn">Test connection</button>
+          </div>
+          <p class="hint" id="wazuhTestHint"></p>
           <p class="hint">After save, open <strong>Incidents</strong> (SOC) and click Sync Wazuh.</p>
         </fieldset>
 
-        <fieldset>
-          <legend>Enterprise auth (beta)</legend>
+        <fieldset id="settingsInventory">
+          <legend>Network inventory</legend>
+          <p class="hint">Optional discovery appliance. Credentials are POSTed (never placed in a URL). Synced hosts appear on the Assets page.</p>
+          <label>Base URL
+            <input type="text" id="setOaUrl" inputmode="url" autocomplete="off" placeholder="http://192.168.56.10" />
+          </label>
+          <label>Username
+            <input type="text" id="setOaUser" autocomplete="username" placeholder="admin" />
+          </label>
+          <label>Password
+            <input type="password" id="setOaPassword" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="oaPasswordHint">Not set</p>
+          <label>API prefix
+            <input type="text" id="setOaPrefix" autocomplete="off" placeholder="/index.php" />
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="setOaVerifySsl" />
+            Verify TLS certificates
+          </label>
+          <label>Sync interval (seconds)
+            <input type="number" id="setOaSyncInterval" min="300" max="86400" step="60" inputmode="numeric" />
+          </label>
+          <div class="cc-action-row">
+            <button type="button" class="btn-secondary" id="setOaTestBtn">Test connection</button>
+          </div>
+          <p class="hint" id="oaTestHint"></p>
+          <p class="hint">After save, open <strong>Assets</strong> and click Sync inventory.</p>
+        </fieldset>
+
+        <fieldset id="settingsHardening">
+          <legend>Windows hardening (CIS)</legend>
+          <p class="hint">
+            <a href="https://github.com/scipag/HardeningKitty" target="_blank" rel="noopener">HardeningKitty</a>
+            audits this Windows host against CIS-style finding lists.
+            Official CIS Benchmark PDFs / CIS-CAT:
+            <a href="https://downloads.cisecurity.org/#/" target="_blank" rel="noopener">CIS Downloads</a>
+            (account required). SecuraIQ runs <strong>Audit</strong> / <strong>Config</strong> only — not HailMary.
+          </p>
+          <label>Module path
+            <input type="text" id="setHkPath" autocomplete="off" placeholder="C:\Program Files\WindowsPowerShell\Modules\HardeningKitty\0.9.3" />
+          </label>
+          <label>Default finding list (optional)
+            <input type="text" id="setHkList" autocomplete="off" placeholder="finding_list_cis_microsoft_windows_11_….csv" />
+          </label>
+          <div class="cc-action-row">
+            <button type="button" class="btn-secondary" id="setHkTestBtn">Detect module</button>
+          </div>
+          <p class="hint" id="hkTestHint"></p>
+          <p class="hint">After install, open <strong>Frameworks</strong> → Hardening panel, or import a report CSV under Vulnerabilities.</p>
+        </fieldset>
+
+        <fieldset id="settingsSonar">
+          <legend>SonarQube / SonarCloud</legend>
+          <p class="hint">
+            Live issues sync into Vulnerabilities (authorized projects only).
+            Token: SonarQube user token or SonarCloud account token.
+            You can also use <strong>Import scan</strong> with an issues JSON export.
+          </p>
+          <label>Base URL
+            <input type="text" id="setSonarUrl" inputmode="url" autocomplete="off" placeholder="https://sonar.example.com" />
+          </label>
+          <label>Token
+            <input type="password" id="setSonarToken" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="sonarTokenHint">Not set</p>
+          <label>Project key (optional)
+            <input type="text" id="setSonarProject" autocomplete="off" placeholder="my-project" />
+          </label>
+          <label>Issue types
+            <input type="text" id="setSonarTypes" autocomplete="off" placeholder="VULNERABILITY,SECURITY_HOTSPOT,BUG" />
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="setSonarVerifySsl" checked />
+            Verify TLS certificates
+          </label>
+          <label>Sync interval (seconds)
+            <input type="number" id="setSonarSyncInterval" min="300" max="86400" step="60" inputmode="numeric" />
+          </label>
+          <div class="cc-action-row">
+            <button type="button" class="btn-secondary" id="setSonarTestBtn">Test connection</button>
+          </div>
+          <p class="hint" id="sonarTestHint"></p>
+          <p class="hint">After save, open <strong>Vulnerabilities</strong> and click Sync SonarQube.</p>
+        </fieldset>
+
+        <fieldset id="settingsTheHive">
+          <legend>TheHive (case management)</legend>
+          <p class="hint">Sync cases into Incidents for authorized IR labs. TheHive 4/5 API key auth.</p>
+          <label>Base URL
+            <input type="text" id="setThUrl" inputmode="url" autocomplete="off" placeholder="https://thehive.lab" />
+          </label>
+          <label>API key
+            <input type="password" id="setThApiKey" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="thApiKeyHint">Not set</p>
+          <label class="toggle">
+            <input type="checkbox" id="setThVerifySsl" />
+            Verify TLS certificates
+          </label>
+          <div class="cc-action-row">
+            <button type="button" class="btn-secondary" id="setThTestBtn">Test connection</button>
+          </div>
+          <p class="hint" id="thTestHint"></p>
+          <p class="hint">After save, open <strong>Incidents</strong> and sync TheHive from Automation or SOC.</p>
+        </fieldset>
+
+        <fieldset id="settingsCloud">
+          <legend>Cloud posture</legend>
+          <p class="hint">AWS Security Hub (needs <code>boto3</code>), Azure Defender for Cloud, or GCP SCC. Lab alternative: <code>POST /api/cloud/import</code> with findings JSON.</p>
+          <label>AWS region
+            <input type="text" id="setAwsRegion" autocomplete="off" placeholder="us-east-1" />
+          </label>
+          <label>AWS access key ID
+            <input type="text" id="setAwsKey" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="awsKeyHint">Not set</p>
+          <label>AWS secret access key
+            <input type="password" id="setAwsSecret" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="awsSecretHint">Not set</p>
+          <label>Azure tenant ID
+            <input type="text" id="setAzTenant" autocomplete="off" />
+          </label>
+          <label>Azure client ID
+            <input type="text" id="setAzClient" autocomplete="off" />
+          </label>
+          <label>Azure client secret
+            <input type="password" id="setAzSecret" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="azSecretHint">Not set</p>
+          <label>Azure subscription ID
+            <input type="text" id="setAzSub" autocomplete="off" />
+          </label>
+          <label>GCP project ID
+            <input type="text" id="setGcpProject" autocomplete="off" />
+          </label>
+          <label>GCP service account JSON path
+            <input type="text" id="setGcpSa" autocomplete="off" placeholder="C:\secrets\gcp-sa.json" />
+          </label>
+          <div class="cc-action-row">
+            <button type="button" class="btn-secondary" id="setCloudTestBtn">Test cloud connectors</button>
+          </div>
+          <p class="hint" id="cloudTestHint"></p>
+        </fieldset>
+
+        <fieldset id="settingsXdr">
+          <legend>XDR / EDR vendors</legend>
+          <p class="hint">Configure one or more vendors, then open <strong>Incidents</strong> and sync XDR. Secrets are stored in <code>.env</code>.</p>
+          <label>Sophos client ID
+            <input type="text" id="setSophosClientId" autocomplete="off" />
+          </label>
+          <label>Sophos client secret
+            <input type="password" id="setSophosClientSecret" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="sophosSecretHint">Not set</p>
+          <label>CrowdStrike client ID
+            <input type="text" id="setCsClientId" autocomplete="off" />
+          </label>
+          <label>CrowdStrike client secret
+            <input type="password" id="setCsClientSecret" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="csSecretHint">Not set</p>
+          <label>CrowdStrike API base URL
+            <input type="text" id="setCsBaseUrl" autocomplete="off" placeholder="https://api.crowdstrike.com" />
+          </label>
+          <label>SentinelOne base URL
+            <input type="text" id="setS1BaseUrl" autocomplete="off" placeholder="https://tenant.sentinelone.net" />
+          </label>
+          <label>SentinelOne API token
+            <input type="password" id="setS1Token" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="s1TokenHint">Not set</p>
+          <label>Defender tenant ID
+            <input type="text" id="setDefTenant" autocomplete="off" />
+          </label>
+          <label>Defender client ID
+            <input type="text" id="setDefClient" autocomplete="off" />
+          </label>
+          <label>Defender client secret
+            <input type="password" id="setDefSecret" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="defSecretHint">Not set</p>
+          <label>Defender hunting API
+            <select id="setDefHuntingApi">
+              <option value="auto">auto (Graph, then legacy)</option>
+              <option value="graph">Microsoft Graph only</option>
+              <option value="legacy">Legacy MTP only</option>
+            </select>
+          </label>
+          <p class="hint">Advanced hunting needs Graph <code>ThreatHunting.Read.All</code> or MTP <code>AdvancedHunting.Read.All</code> (admin consent). Docs: Graph runHuntingQuery · legacy advancedhunting/run.</p>
+        </fieldset>
+
+        <fieldset id="settingsComms">
+          <legend>Notifications (Slack / Teams / SMTP)</legend>
+          <label>Slack incoming webhook URL
+            <input type="password" id="setSlackWebhook" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="slackWebhookHint">Not set</p>
+          <label>Microsoft Teams webhook URL
+            <input type="password" id="setTeamsWebhook" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="teamsWebhookHint">Not set</p>
+          <label>SMTP host
+            <input type="text" id="setSmtpHost" autocomplete="off" placeholder="smtp.example.com" />
+          </label>
+          <label>SMTP port
+            <input type="number" id="setSmtpPort" min="1" max="65535" value="587" />
+          </label>
+          <label>SMTP username
+            <input type="text" id="setSmtpUser" autocomplete="off" />
+          </label>
+          <label>SMTP password
+            <input type="password" id="setSmtpPassword" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="smtpPasswordHint">Not set</p>
+          <label>From address
+            <input type="email" id="setSmtpFrom" autocomplete="off" placeholder="securaiq@yourdomain.com" />
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="setSmtpTls" checked />
+            Use TLS
+          </label>
+        </fieldset>
+
+        <fieldset id="settingsServiceNow">
+          <legend>ServiceNow ITSM</legend>
+          <p class="hint">Push remediations to ServiceNow incidents from the Controls workspace.</p>
+          <label>Instance URL
+            <input type="text" id="setSnUrl" inputmode="url" autocomplete="off" placeholder="https://yourinstance.service-now.com" />
+          </label>
+          <label>Username
+            <input type="text" id="setSnUser" autocomplete="username" />
+          </label>
+          <label>Password
+            <input type="password" id="setSnPassword" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="snPasswordHint">Not set</p>
+        </fieldset>
+
+        <fieldset id="settingsPrefect">
+          <legend>Prefect orchestration</legend>
+          <p class="hint">Optional job orchestrator — local asyncio remains the default. Open <strong>Automation</strong> to enqueue jobs.</p>
+          <label class="toggle">
+            <input type="checkbox" id="setPrefectEnabled" />
+            Enable Prefect engine
+          </label>
+          <label>Prefect API URL (optional)
+            <input type="text" id="setPrefectApiUrl" autocomplete="off" placeholder="http://127.0.0.1:4200/api" />
+          </label>
+        </fieldset>
+
+        <fieldset id="settingsEnterprise">
           <label class="toggle">
             <input type="checkbox" id="setMfaRequiredAdmin" />
             Require MFA for admin accounts
@@ -939,10 +1241,35 @@
           <label>OIDC scopes
             <input type="text" id="setOidcScopes" placeholder="openid profile email" />
           </label>
+          <label class="check">
+            <input type="checkbox" id="setScimEnabled" />
+            Enable SCIM 2.0 user provisioning (Users + minimal PATCH/DELETE)
+          </label>
+          <label>SCIM bearer token
+            <input type="password" id="setScimToken" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="scimHint">IdP base URL: /scim/v2 — Users CRUD (no Groups/Bulk yet)</p>
           <label>GitHub webhook secret
             <input type="password" id="setGithubWebhookSecret" autocomplete="off" placeholder="leave blank to keep" />
           </label>
           <p class="hint" id="githubWebhookHint">Not set — enables POST /api/integrations/github/webhook</p>
+          <label>GitLab webhook secret
+            <input type="password" id="setGitlabWebhookSecret" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="gitlabWebhookHint">Not set — enables POST /api/integrations/gitlab/webhook (X-Gitlab-Token)</p>
+          <label>TAXII API root
+            <input type="text" id="setTaxiiApiRoot" inputmode="url" autocomplete="off" placeholder="https://cti.example/taxii2/root" />
+          </label>
+          <label>TAXII collection ID
+            <input type="text" id="setTaxiiCollectionId" autocomplete="off" placeholder="collection UUID or id" />
+          </label>
+          <label>TAXII username
+            <input type="text" id="setTaxiiUsername" autocomplete="username" />
+          </label>
+          <label>TAXII password
+            <input type="password" id="setTaxiiPassword" autocomplete="off" placeholder="leave blank to keep" />
+          </label>
+          <p class="hint" id="taxiiHint">Optional — poll from Threat Intel → STIX / TAXII</p>
           <div id="mfaAccountPanel">
             <p class="hint" id="mfaAccountHint">Sign in (Account) to manage two-factor authentication.</p>
             <button type="button" id="mfaEnrollBtn" class="btn-secondary hidden">Set up authenticator</button>
@@ -1202,13 +1529,24 @@
         <h2 id="gapHeading">Gap analysis</h2>
         <button type="button" class="btn-secondary" data-close-gap>Close</button>
       </div>
-      <p class="hint">Paste policies, interview notes, or evidence. Maps ISO 27001 / NIST CSF / CIS Controls into a score + 30/60/90 roadmap.</p>
+      <p class="hint">Paste policies, interview notes, or evidence. Maps current frameworks (ISO 27001:2022, NIST CSF 2.0, CIS v8.1, SOC 2, PCI 4.0.1, ASVS 5.0, and more) into a score + 30/60/90 roadmap.</p>
       <form id="gapForm" class="settings-form">
         <label>Framework
           <select id="gapFramework">
             <option value="iso27001">ISO/IEC 27001:2022 Annex A</option>
+            <option value="iso27701">ISO/IEC 27701:2025 PIMS</option>
             <option value="nist_csf">NIST CSF 2.0</option>
-            <option value="cis_controls">CIS Controls v8 (IG1)</option>
+            <option value="nist_800_53">NIST SP 800-53 Rev. 5</option>
+            <option value="nist_800_171">NIST SP 800-171</option>
+            <option value="cmmc_l2">CMMC 2.0 Level 2</option>
+            <option value="cis_controls">CIS Controls v8.1 (IG1)</option>
+            <option value="soc2">SOC 2 TSC (2017/2022 PoF)</option>
+            <option value="pci_dss">PCI DSS v4.0.1</option>
+            <option value="hipaa">HIPAA Security Rule</option>
+            <option value="gdpr">GDPR core articles</option>
+            <option value="nis2">NIS2 Directive</option>
+            <option value="owasp_asvs">OWASP ASVS 5.0</option>
+            <option value="owasp_top10">OWASP Top 10:2025</option>
           </select>
         </label>
         <label>Assessment title
@@ -1449,7 +1787,7 @@
     </div>
   </div>
 
-  <script src="/app.js?v=80"></script>
-  <script src="/workspace.js?v=80"></script>
+  <script src="/app.js?v=116"></script>
+  <script src="/workspace.js?v=116"></script>
 </body>
 </html>

@@ -5,9 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SecuraIQ — User Manual</title>
   <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
   <style>
     :root {
+      --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+      --display: "Segoe UI", system-ui, -apple-system, sans-serif;
       --bg: #0f1412;
       --panel: #171d1a;
       --text: #e8efea;
@@ -19,7 +20,7 @@
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: Manrope, system-ui, sans-serif;
+      font-family: var(--font);
       color: var(--text);
       background:
         radial-gradient(900px 420px at 0% -10%, #1a3d34 0%, transparent 55%),
@@ -37,7 +38,7 @@
       border-bottom: 1px solid var(--line);
     }
     .brand {
-      font-family: Syne, Manrope, sans-serif;
+      font-family: var(--display);
       font-size: 0.8rem;
       letter-spacing: 0.08em;
       text-transform: uppercase;
@@ -45,7 +46,7 @@
       margin: 0 0 0.4rem;
     }
     h1 {
-      font-family: Syne, Manrope, sans-serif;
+      font-family: var(--display);
       font-size: clamp(1.8rem, 4vw, 2.4rem);
       margin: 0 0 0.5rem;
       line-height: 1.15;
@@ -83,7 +84,7 @@
     }
     nav.toc a:hover { color: var(--accent); }
     h2 {
-      font-family: Syne, Manrope, sans-serif;
+      font-family: var(--display);
       font-size: 1.25rem;
       margin: 2rem 0 0.65rem;
       scroll-margin-top: 1rem;
@@ -214,7 +215,7 @@ Linux/macOS: bash scripts/run_proper.sh</pre>
       <span>Report</span>
     </div>
     <ol>
-      <li>Vulnerabilities → Import scan (or Lab fixtures)</li>
+      <li>Vulnerabilities → Import scan (real scanner JSON/XML)</li>
       <li>Select a finding → use the detail panel</li>
       <li>Triage or Triage+Jira</li>
       <li>Link evidence / remediations</li>

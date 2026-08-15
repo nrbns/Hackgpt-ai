@@ -1,0 +1,121 @@
+{
+  "id": "owasp_top10",
+  "name": "OWASP Top 10:2025",
+  "version": "2025",
+  "description": "OWASP Top 10:2025 risk categories for application security assessment.",
+  "controls": [
+    {
+      "id": "A01:2025",
+      "title": "Broken Access Control",
+      "domain": "Top 10",
+      "keywords": [
+        "access control",
+        "IDOR",
+        "BOLA",
+        "privilege escalation",
+        "authorization"
+      ]
+    },
+    {
+      "id": "A02:2025",
+      "title": "Security Misconfiguration",
+      "domain": "Top 10",
+      "keywords": [
+        "misconfiguration",
+        "hardening",
+        "default credentials",
+        "security headers"
+      ]
+    },
+    {
+      "id": "A03:2025",
+      "title": "Software Supply Chain Failures",
+      "domain": "Top 10",
+      "keywords": [
+        "supply chain",
+        "dependency",
+        "SBOM",
+        "compromised package"
+      ]
+    },
+    {
+      "id": "A04:2025",
+      "title": "Cryptographic Failures",
+      "domain": "Top 10",
+      "keywords": [
+        "cryptography",
+        "encryption",
+        "TLS",
+        "weak cipher",
+        "secrets"
+      ]
+    },
+    {
+      "id": "A05:2025",
+      "title": "Injection",
+      "domain": "Top 10",
+      "keywords": [
+        "injection",
+        "SQLi",
+        "XSS",
+        "command injection",
+        "ORM"
+      ]
+    },
+    {
+      "id": "A06:2025",
+      "title": "Insecure Design",
+      "domain": "Top 10",
+      "keywords": [
+        "insecure design",
+        "threat model",
+        "secure design",
+        "business logic"
+      ]
+    },
+    {
+      "id": "A07:2025",
+      "title": "Authentication Failures",
+      "domain": "Top 10",
+      "keywords": [
+        "authentication",
+        "MFA",
+        "credential stuffing",
+        "session"
+      ]
+    },
+    {
+      "id": "A08:2025",
+      "title": "Software or Data Integrity Failures",
+      "domain": "Top 10",
+      "keywords": [
+        "integrity",
+        "CI/CD",
+        "unsigned updates",
+        "deserialization"
+      ]
+    },
+    {
+      "id": "A09:2025",
+      "title": "Security Logging and Alerting Failures",
+      "domain": "Top 10",
+      "keywords": [
+        "logging",
+        "alerting",
+        "monitoring",
+        "SIEM"
+      ]
+    },
+    {
+      "id": "A10:2025",
+      "title": "Mishandling of Exceptional Conditions",
+      "domain": "Top 10",
+      "keywords": [
+        "error handling",
+        "fail open",
+        "exception",
+        "resilience"
+      ]
+    }
+  ]
+}

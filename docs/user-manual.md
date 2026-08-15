@@ -23,7 +23,7 @@ Authorized AI Security OS for labs, owned systems, CTFs, blue-team workflows, an
 
 ## 2. Start the application
 
-No manual `.env` setup is required. The scripts create `.venv`, install deps, and copy `.env.example` → `.env` if needed. Optional keys (models, Jira, Wazuh) can be set later in **Settings**.
+No manual `.env` setup is required. The scripts create `.venv`, install deps, and copy `.env.example` → `.env` if needed. Optional keys (models, Jira, Wazuh, network inventory) can be set later in **Settings**.
 
 ### Windows
 
@@ -83,7 +83,7 @@ Choose an **Agent** (SOC Analyst, Compliance Officer, …). Model backend/name s
 Import scan  →  AI triage  →  Assign / Jira  →  Evidence  →  Report
 ```
 
-1. **Vulnerabilities** → **Import scan** (or Lab fixtures for demos)  
+1. **Vulnerabilities** → **Import scan** (Trivy, Semgrep, Gitleaks, Nessus, etc.)  
 2. Select a finding → review the right-hand detail panel  
 3. **Triage** or **Triage+Jira**  
 4. Attach **Evidence** and track **Remediations**  
@@ -116,7 +116,15 @@ Import scan  →  AI triage  →  Assign / Jira  →  Evidence  →  Report
 ### Assets
 
 - Class tiles (server, endpoint, container, cloud, repo, database, app, domain, API)  
-- Inventory table with Ask AI per asset  
+- Inventory table (name, IP, type, owner) with Ask AI per asset  
+- Optional **Sync inventory** pulls discovered hosts into the same list (Settings → Network inventory)
+
+### Frameworks / Windows hardening
+
+- Gap analysis against ISO / NIST / CIS Controls catalogs  
+- **HardeningKitty** panel: install via `.\scripts\use_hardeningkitty.cmd -Download`, then **Run HardeningKitty audit** (Audit mode) or import a report CSV  
+- Official CIS Benchmarks / CIS-CAT: [CIS Downloads](https://downloads.cisecurity.org/#/) (account required)  
+- HailMary (apply hardening) is **not** exposed in SecuraIQ — use PowerShell on owned hosts after backup ([HardeningKitty](https://github.com/scipag/HardeningKitty))  
 
 ### Automation
 
