@@ -464,21 +464,40 @@ async function exportCurrentChat() {
   }
 }
 
-function openGap() {
+function openGap(preferredFrameworkId) {
   gapModal?.classList.remove("hidden");
   gapResult?.classList.add("hidden");
-  loadGapFrameworks(true);
+  const preferred =
+    typeof preferredFrameworkId === "string" && preferredFrameworkId.trim()
+      ? preferredFrameworkId.trim()
+      : "";
+  if (preferred) {
+    const sel = document.getElementById("gapFramework");
+    if (sel && [...sel.options].some((o) => o.value === preferred)) sel.value = preferred;
+  }
+  loadGapFrameworks(true, preferred);
 }
-async function loadGapFrameworks(force = false) {
+async function loadGapFrameworks(force = false, preferredId = "") {
   const sel = document.getElementById("gapFramework");
   if (!sel) return;
-  if (!force && sel.dataset.loaded === "1" && sel.options.length > 3) return;
+  if (!force && sel.dataset.loaded === "1" && sel.options.length > 3) {
+    if (preferredId && [...sel.options].some((o) => o.value === preferredId)) {
+      sel.value = preferredId;
+    }
+    return;
+  }
   try {
     const res = await fetch("/api/frameworks", { headers: authHeaders() });
     const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (typeof notifyUser === "function") {
+        notifyUser(`**Frameworks catalog failed:** ${formatApiDetail(data.detail, res.status)}`);
+      }
+      return;
+    }
     const frameworks = data.frameworks || [];
     if (!frameworks.length) return;
-    const current = sel.value;
+    const current = preferredId || sel.value;
     sel.innerHTML = frameworks
       .map((f) => {
         const label = f.version
@@ -490,8 +509,10 @@ async function loadGapFrameworks(force = false) {
       .join("");
     if (current && [...sel.options].some((o) => o.value === current)) sel.value = current;
     sel.dataset.loaded = "1";
-  } catch {
-    /* keep static fallback options */
+  } catch (err) {
+    if (typeof notifyUser === "function") {
+      notifyUser(`**Frameworks catalog failed:** ${err.message || err}`);
+    }
   }
 }
 function closeGap() {
@@ -513,11 +534,17 @@ async function runGapAnalysis(e) {
   const title = document.getElementById("gapTitle")?.value?.trim() || "Gap assessment";
   const evidence = document.getElementById("gapEvidence")?.value?.trim() || "";
   if (!evidence) {
-    appendMessage("assistant", renderMarkdown("**Gap analysis:** paste some evidence or notes first."), true);
+    const msg = "**Gap analysis:** paste policies / notes in Evidence, or click **Use sample evidence**.";
+    if (typeof notifyUser === "function") notifyUser(msg);
+    else appendMessage("assistant", renderMarkdown(msg), true);
+    document.getElementById("gapEvidence")?.focus();
     return;
   }
   const btn = document.getElementById("gapRunBtn");
-  if (btn) btn.disabled = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Running…";
+  }
   try {
     const res = await fetch("/api/gap/run", {
       method: "POST",
@@ -529,16 +556,15 @@ async function runGapAnalysis(e) {
         engagement_id: engagementSelectEl?.value || null,
       }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(formatApiDetail(data.detail, `HTTP ${res.status}`));
     renderGapResult(data);
-    appendMessage(
-      "assistant",
-      renderMarkdown(
-        `**Gap analysis complete** — ${data.framework_name}: **${data.compliance_percent}%**\n\n${data.executive_summary}\n\nOpen **Frameworks** to review controls, remediations, and evidence.`
-      ),
-      true
-    );
+    const summary =
+      `**Gap analysis complete** — ${data.framework_name}: **${data.compliance_percent}%**\n\n` +
+      `${data.executive_summary || ""}\n\n` +
+      `Created **${data.remediations_created || 0}** remediation tasks. Open **Frameworks** to review controls.`;
+    if (typeof notifyUser === "function") notifyUser(summary);
+    else appendMessage("assistant", renderMarkdown(summary), true);
     if (typeof loadCommandCenter === "function") loadCommandCenter();
     if (typeof window.renderFrameworksPage === "function" && window.__securaiqWorkspaceView === "frameworks") {
       try {
@@ -547,10 +573,22 @@ async function runGapAnalysis(e) {
         /* ignore */
       }
     }
+    if (typeof window.renderRemsPage === "function" && window.__securaiqWorkspaceView === "remediations") {
+      try {
+        window.renderRemsPage();
+      } catch {
+        /* ignore */
+      }
+    }
   } catch (err) {
-    appendMessage("assistant", renderMarkdown(`**Gap analysis failed:** ${err.message}`), true);
+    const fail = `**Gap analysis failed:** ${err.message || err}`;
+    if (typeof notifyUser === "function") notifyUser(fail);
+    else appendMessage("assistant", renderMarkdown(fail), true);
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Run gap analysis";
+    }
   }
 }
 
@@ -585,7 +623,7 @@ function renderGapResult(data) {
       <span class="gap-chip">missing ${counts.missing || 0}</span>
       <span class="gap-chip">remediation tasks ${data.remediations_created || 0}</span>
     </div>
-    <p>${escapeHtml(data.executive_summary || "")}</p>
+    <div class="gap-exec-summary">${renderMarkdown(data.executive_summary || "")}</div>
     <p class="sidebar-label">Top gaps</p>
     <ul>${gaps || "<li>None</li>"}</ul>
     <p class="sidebar-label">Remediation tracker (DB)</p>
@@ -1830,6 +1868,8 @@ function notifyUser(md, opts) {
 }
 window.notifyUser = notifyUser;
 window.formatApiDetail = formatApiDetail;
+window.openGap = openGap;
+window.runGapAnalysis = runGapAnalysis;
 window.refreshActiveWorkspace = refreshActiveWorkspace;
 
 function renderMarkdown(text) {
@@ -4642,8 +4682,25 @@ on(ingestBtn, "click", ingestRag);
 on(settingsBtn, "click", openSettings);
 on(topSettingsBtn, "click", openSettings);
 on(authBtn, "click", openAuth);
-on(gapBtn, "click", openGap);
+on(gapBtn, "click", () => openGap());
 // Module sidebar nav is owned by workspace.js (pages). Keep only gap modal opener here.
+on(document.getElementById("gapSampleEvidenceBtn"), "click", () => {
+  const ta = document.getElementById("gapEvidence");
+  if (!ta) return;
+  ta.value = [
+    "Information security policy approved by management and reviewed annually.",
+    "Multi-factor authentication (MFA) enforced for all privileged and remote access.",
+    "Endpoint detection and response (EDR) deployed on corporate workstations and servers.",
+    "Vulnerability scanning and patch management for internet-facing systems.",
+    "Encrypted backups with documented restore tests within the last 12 months.",
+    "Incident response playbook with defined roles, severity levels, and escalation paths.",
+    "Phishing awareness training completed for employees; metrics tracked quarterly.",
+    "Access control based on least privilege; joiner-mover-leaver process documented.",
+    "Risk assessment performed; residual risks accepted by business owners.",
+    "Supplier security questionnaires and contracts for critical vendors.",
+  ].join("\n");
+  ta.focus();
+});
 on(gapForm, "submit", runGapAnalysis);
 on(riskForm, "submit", submitRisk);
 on(assetForm, "submit", submitAsset);

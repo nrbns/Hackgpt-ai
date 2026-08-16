@@ -106,7 +106,7 @@ This enables auth, disables public registration, binds `127.0.0.1`, and prints a
 |---------|---------|---------|
 | `HOST` | `127.0.0.1` | Localhost only (use `-Lan` for Wi‑Fi) |
 | `AUTH_ENABLED` | `false` | Open lab on localhost |
-| `WORKSPACE_ZERO_START` | `true` | Wipe local workspace on each start when auth is off |
+| `WORKSPACE_ZERO_START` | `false` | When `true` and auth is off, wipe local workspace on each start |
 | `AUTH_ALLOW_REGISTER` | `false` | No public signup when auth is on |
 
 Set `WORKSPACE_ZERO_START=false` (or use secured mode) to keep assets and findings across restarts.

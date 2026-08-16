@@ -114,7 +114,7 @@ if (Get-Command ollama -ErrorAction SilentlyContinue) {
 $lines = Set-EnvLine $lines "AUTH_ALLOW_REGISTER" "false"
 # Only force wipe-on-start for first-run localhost labs when unset
 if (-not ($lines | Where-Object { $_ -match "^WORKSPACE_ZERO_START=" })) {
-    $lines = Set-EnvLine $lines "WORKSPACE_ZERO_START" "true"
+    $lines = Set-EnvLine $lines "WORKSPACE_ZERO_START" "false"
 }
 $utf8Bom = New-Object System.Text.UTF8Encoding $true
 [System.IO.File]::WriteAllLines((Join-Path (Get-Location) ".env"), $lines, $utf8Bom)

@@ -1573,7 +1573,7 @@ def apply_workspace_zero_start() -> dict[str, Any] | None:
     """Nil / zero boot for open local mode — Mission Control starts empty."""
     from app.config import settings as _settings
 
-    if _settings.auth_enabled or not getattr(_settings, "workspace_zero_start", True):
+    if _settings.auth_enabled or not getattr(_settings, "workspace_zero_start", False):
         return None
 
     user_ids: set[str] = {"local"}

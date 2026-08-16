@@ -105,7 +105,7 @@ if ($Lan) {
 }
 $envLines = Set-EnvLine $envLines "AUTH_ALLOW_REGISTER" "false"
 if (-not ($envLines | Where-Object { $_ -match "^WORKSPACE_ZERO_START=" })) {
-    $envLines = Set-EnvLine $envLines "WORKSPACE_ZERO_START" "true"
+    $envLines = Set-EnvLine $envLines "WORKSPACE_ZERO_START" "false"
 }
 $utf8Bom = New-Object System.Text.UTF8Encoding $true
 [System.IO.File]::WriteAllLines((Join-Path (Get-Location) ".env"), $envLines, $utf8Bom)

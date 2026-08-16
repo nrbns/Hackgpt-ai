@@ -51,8 +51,8 @@ class Settings(BaseSettings):
     # When false, knowledge files are not indexed until the user clicks Re-index (empty/fast start).
     rag_auto_ingest: bool = False
     # When true and auth is off, wipe the local workspace on each server start (nil / zero UI).
-    # Set false to keep assets/findings across restarts in open local mode.
-    workspace_zero_start: bool = True
+    # Default false so gap assessments, assets, and findings persist across restarts.
+    workspace_zero_start: bool = False
     # Optional Qdrant vector store (compose profile). Empty = use Chroma only.
     qdrant_url: str = ""
     qdrant_collection: str = "securaiq_knowledge"

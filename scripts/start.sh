@@ -68,7 +68,7 @@ else
 fi
 set_env AUTH_ALLOW_REGISTER false
 if ! grep -q "^WORKSPACE_ZERO_START=" .env 2>/dev/null; then
-  set_env WORKSPACE_ZERO_START true
+  set_env WORKSPACE_ZERO_START false
 fi
 if command -v ollama >/dev/null 2>&1; then
   set_env MODEL_BACKEND ollama

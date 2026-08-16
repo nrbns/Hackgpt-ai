@@ -977,7 +977,25 @@
 
   async function renderRemsPage() {
     const res = await fetch("/api/gap/remediations", { headers: authHeaders() });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      await renderTable(
+        "remsPageBody",
+        ["Control", "Title", "Owner", "Status", "Due", ""],
+        "",
+        `Failed to load remediations (${res.status})`
+      );
+      if (typeof notifyUser === "function") {
+        notifyUser(
+          `**Remediations:** ${
+            typeof window.formatApiDetail === "function"
+              ? window.formatApiDetail(data.detail, res.status)
+              : res.status
+          }`
+        );
+      }
+      return;
+    }
     const rows = (data.remediations || [])
       .map(
         (r) => `<tr>
@@ -1101,6 +1119,7 @@
       });
     }
   }
+  window.renderRemsPage = renderRemsPage;
 
   async function renderPlaybooksPage() {
     const res = await fetch("/api/playbooks", { headers: authHeaders() });
@@ -2748,10 +2767,21 @@
       fetch("/api/gap/remediations", { headers: authHeaders() }),
       fetch("/api/evidence", { headers: authHeaders() }),
     ]);
-    const fws = (await fwRes.json().catch(() => ({}))).frameworks || [];
+    const fwData = await fwRes.json().catch(() => ({}));
     const dash = await dashRes.json().catch(() => ({}));
-    const rems = (await remRes.json().catch(() => ({}))).remediations || [];
-    const evidence = (await evRes.json().catch(() => ({}))).evidence || [];
+    const remData = await remRes.json().catch(() => ({}));
+    const evData = await evRes.json().catch(() => ({}));
+    const apiErrors = [];
+    if (!fwRes.ok) apiErrors.push(`frameworks ${fwRes.status}`);
+    if (!dashRes.ok) apiErrors.push(`dashboard ${dashRes.status}`);
+    if (!remRes.ok) apiErrors.push(`remediations ${remRes.status}`);
+    if (!evRes.ok) apiErrors.push(`evidence ${evRes.status}`);
+    if (apiErrors.length && typeof notifyUser === "function") {
+      notifyUser(`**Frameworks page:** ${apiErrors.join(" · ")}`);
+    }
+    const fws = fwData.frameworks || [];
+    const rems = remData.remediations || [];
+    const evidence = evData.evidence || [];
     const scored = {};
     (dash.frameworks || []).forEach((f) => {
       scored[f.framework_id] = f;
@@ -2798,6 +2828,7 @@
     async function openControlCenter(frameworkId, assessmentId) {
       const detailEl = qs("fwControlDetail");
       if (!detailEl) return;
+      detailEl.classList.remove("hidden");
       detailEl.innerHTML = `<p class="hint">Loading controls…</p>`;
       let aid = assessmentId;
       if (!aid) {
@@ -2823,17 +2854,25 @@
               : ""
           }`;
         detailEl.querySelector(".fw-run-gap")?.addEventListener("click", () => {
-          if (typeof openGap === "function") openGap();
-          const sel = document.getElementById("gapFramework");
-          if (sel) sel.value = frameworkId;
+          if (typeof openGap === "function") openGap(frameworkId);
         });
         return;
       }
       const res = await fetch(`/api/gap/assessments/${aid}`, { headers: authHeaders() });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        detailEl.innerHTML = `<p class="hint">Could not load assessment</p>`;
+        detailEl.innerHTML = `<p class="hint">Could not load assessment (${res.status})</p>`;
         return;
+      }
+      let covLabel = "";
+      try {
+        const covRes = await fetch(`/api/gap/assessments/${aid}/coverage`, { headers: authHeaders() });
+        const coverage = covRes.ok ? await covRes.json().catch(() => ({})) : {};
+        if (coverage.coverage_percent != null) {
+          covLabel = ` · evidence coverage ${Number(coverage.coverage_percent)}%`;
+        }
+      } catch {
+        /* optional */
       }
       const rows = data.results || data.top_gaps || [];
       const counts = data.counts || {};
@@ -2845,7 +2884,7 @@
               data.compliance_percent || 0
             )}% · ${counts.implemented || 0} implemented · ${counts.partial || 0} partial · ${
               counts.missing || 0
-            } missing</p>
+            } missing${covLabel}</p>
           </div>
           <div class="cc-action-row">
             <button type="button" class="btn-secondary" id="fwExportAssessment">Export assessment</button>
@@ -2951,11 +2990,16 @@
     }
 
     body.innerHTML = `
+      ${
+        apiErrors.length
+          ? `<p class="hint" style="color:var(--danger,#b91c1c)">API issues: ${escapeHtml(apiErrors.join(" · "))}</p>`
+          : ""
+      }
       <div class="comp-kpi-row" aria-label="Compliance health">
         <div class="comp-kpi"><span>Implemented</span><strong>${totImpl}</strong></div>
         <div class="comp-kpi"><span>Partial</span><strong>${totPartial}</strong></div>
         <div class="comp-kpi"><span>Missing</span><strong>${totMissing}</strong></div>
-        <div class="comp-kpi"><span>Coverage</span><strong>${avgPct}%</strong></div>
+        <div class="comp-kpi"><span>Avg compliance</span><strong>${avgPct}%</strong></div>
         <div class="comp-kpi"><span>Evidence</span><strong>${evidence.length}</strong></div>
         <div class="comp-kpi"><span>Open remediations</span><strong>${openRems}</strong></div>
         <div class="comp-kpi"><span>Risk score</span><strong>${riskScore}</strong></div>
@@ -2984,7 +3028,7 @@
                       <strong>${c.partial || 0}</strong> partial ·
                       <strong>${c.missing || 0}</strong> missing</p>
                     <div class="cc-bar"><i style="width:${pct != null ? pct : 0}%"></i></div>
-                    <p class="fw-score">${pct != null ? `${pct}% assessed` : "Not assessed yet"}</p>
+                    <p class="fw-score">${pct != null ? `${pct}% assessed` : "Not assessed yet — run gap analysis"}</p>
                     <div class="cc-action-row">
                       <button type="button" class="cc-action fw-open-controls" data-id="${escapeHtml(
                         f.id
@@ -2997,7 +3041,7 @@
                   </article>`;
                 })
                 .join("")
-            : `<p class="hint">No frameworks installed</p>`
+            : `<p class="hint">No frameworks installed — check data/frameworks on the server.</p>`
         }
       </div>
       <section id="fwControlDetail" class="cc-panel fw-control-detail hidden"></section>
@@ -3023,9 +3067,8 @@
     });
     body.querySelectorAll(".fw-run-gap").forEach((btn) => {
       btn.addEventListener("click", () => {
-        if (typeof openGap === "function") openGap();
-        const sel = document.getElementById("gapFramework");
-        if (sel && btn.getAttribute("data-id")) sel.value = btn.getAttribute("data-id");
+        const fid = btn.getAttribute("data-id") || "";
+        if (typeof openGap === "function") openGap(fid);
       });
     });
     body.querySelectorAll(".fw-ask").forEach((btn) => {
