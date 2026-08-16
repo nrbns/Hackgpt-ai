@@ -1,4 +1,3 @@
 @echo off
-REM Double-click or: start.cmd [-Lan]
 cd /d "%~dp0"
-call "%~dp0scripts\start.cmd" %*
+call "%~dp0_ps.cmd" "%~dp0scripts\start.ps1" %*

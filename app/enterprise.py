@@ -241,7 +241,7 @@ def create_vulnerability(
             user_id,
             item.get("engagement_id"),
             item.get("asset_id"),
-            item.get("asset_name") or "",
+            item.get("asset_name") or item.get("asset") or "",
             (item.get("cve") or "").upper(),
             item.get("title") or "Untitled finding",
             (item.get("severity") or "medium").lower(),
@@ -276,7 +276,7 @@ def create_vulnerability(
         from app.notifications import notify
 
         title = item.get("title") or "Untitled finding"
-        asset = item.get("asset_name") or "unknown"
+        asset = item.get("asset_name") or item.get("asset") or "unknown"
         cve = (item.get("cve") or "n/a").upper()
 
         notify(

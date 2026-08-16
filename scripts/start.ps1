@@ -62,21 +62,37 @@ $pyInvoke = {
     }
 }
 
-if (-not (Test-Path ".venv\Scripts\python.exe")) {
-    Write-Host "Creating virtual environment..."
-    if ($py.Args.Count) {
-        & $py.Exe @($py.Args + @("-m", "venv", ".venv"))
-    } else {
-        & $py.Exe -m venv .venv
-    }
+function Ensure-VenvAndDeps {
     if (-not (Test-Path ".venv\Scripts\python.exe")) {
-        throw "Failed to create .venv - check Python install."
+        Write-Host "Creating virtual environment..."
+        if ($py.Args.Count) {
+            & $py.Exe @($py.Args + @("-m", "venv", ".venv"))
+        } else {
+            & $py.Exe -m venv .venv
+        }
+        if (-not (Test-Path ".venv\Scripts\python.exe")) {
+            throw "Failed to create .venv - check Python install."
+        }
     }
-    Write-Host "Installing dependencies (first run may take a few minutes)..."
-    & .\.venv\Scripts\python.exe -m pip install --upgrade pip -q
-    & .\.venv\Scripts\pip.exe install -r requirements.txt
+
+    # Critical: a half-created .venv (folder exists, packages missing) used to skip
+    # install forever and crash with ModuleNotFoundError: fastapi.
+    & .\.venv\Scripts\python.exe -c "import fastapi, uvicorn" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Installing dependencies (first run or repair - may take a few minutes)..."
+        & .\.venv\Scripts\python.exe -m pip install --upgrade pip
+        if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed - check network / Python install." }
+        & .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+        if ($LASTEXITCODE -ne 0) { throw "pip install -r requirements.txt failed." }
+        & .\.venv\Scripts\python.exe -c "import fastapi, uvicorn"
+        if ($LASTEXITCODE -ne 0) {
+            throw "fastapi/uvicorn still missing after install. Delete the .venv folder and run .\run_proper.cmd again."
+        }
+        Write-Host "Dependencies ready." -ForegroundColor Green
+    }
 }
 
+Ensure-VenvAndDeps
 Ensure-EnvFile
 
 $lines = @(Get-Content ".env" -Encoding UTF8)

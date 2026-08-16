@@ -21,10 +21,20 @@ ensure_venv() {
   local py
   py="$(python_cmd)"
   if [ ! -d ".venv" ]; then
+    echo "Creating .venv..."
     "$py" -m venv .venv
   fi
   # shellcheck disable=SC1091
   . .venv/bin/activate
+  if ! python -c "import fastapi, uvicorn" >/dev/null 2>&1; then
+    echo "Installing Python packages (fastapi missing or incomplete venv)..."
+    python -m pip install --upgrade pip
+    python -m pip install -r requirements.txt
+  fi
+  if ! python -c "import fastapi, uvicorn" >/dev/null 2>&1; then
+    echo "ERROR: fastapi still missing. Fix: rm -rf .venv && ./start.sh" >&2
+    exit 1
+  fi
 }
 
 ensure_env() {

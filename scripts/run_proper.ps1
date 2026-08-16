@@ -52,11 +52,21 @@ if (-not (Test-Path ".venv\Scripts\python.exe")) {
     } else {
         & $py.Exe -m venv .venv
     }
+    if (-not (Test-Path ".venv\Scripts\python.exe")) {
+        throw "Failed to create .venv - check Python install."
+    }
 }
 
 Write-Host "Installing dependencies..."
-& .\.venv\Scripts\python.exe -m pip install --upgrade pip -q
-& .\.venv\Scripts\pip.exe install -r requirements.txt -q
+& .\.venv\Scripts\python.exe -m pip install --upgrade pip
+if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
+& .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+if ($LASTEXITCODE -ne 0) { throw "pip install -r requirements.txt failed." }
+& .\.venv\Scripts\python.exe -c "import fastapi, uvicorn"
+if ($LASTEXITCODE -ne 0) {
+    throw "fastapi/uvicorn missing after install. Delete .venv and re-run .\run_proper.cmd"
+}
+Write-Host "Dependencies ready." -ForegroundColor Green
 
 if (-not (Test-Path ".env.example")) {
     throw "Missing .env.example - clone the full SecuraIQ repo."

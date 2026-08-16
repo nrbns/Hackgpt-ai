@@ -26,9 +26,18 @@ PY="$(find_python)"
 if [ ! -d .venv ] || [ ! -x .venv/bin/python ]; then
   echo "Creating virtual environment..."
   "$PY" -m venv .venv
-  echo "Installing dependencies (first run)..."
-  .venv/bin/pip install --upgrade pip -q
-  .venv/bin/pip install -r requirements.txt
+fi
+
+# Repair half-created venvs (folder exists but fastapi never installed)
+if ! .venv/bin/python -c "import fastapi, uvicorn" 2>/dev/null; then
+  echo "Installing dependencies (first run or repair)..."
+  .venv/bin/python -m pip install --upgrade pip
+  .venv/bin/python -m pip install -r requirements.txt
+  if ! .venv/bin/python -c "import fastapi, uvicorn" 2>/dev/null; then
+    echo "ERROR: fastapi/uvicorn still missing. Delete .venv and re-run." >&2
+    exit 1
+  fi
+  echo "Dependencies ready."
 fi
 
 if [ ! -f .env.example ]; then

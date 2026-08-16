@@ -14,9 +14,13 @@ done
 
 echo "SecuraIQ setup"
 ensure_venv
-
-echo "Installing dependencies..."
-python -m pip install -r requirements.txt -q
+echo "Installing / verifying Python packages..."
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+if ! python -c "import fastapi, uvicorn" >/dev/null 2>&1; then
+  echo "ERROR: fastapi still missing after install. Try: rm -rf .venv && ./run_proper.sh" >&2
+  exit 1
+fi
 ensure_env
 
 if command -v ollama >/dev/null 2>&1; then

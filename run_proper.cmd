@@ -1,4 +1,3 @@
 @echo off
-REM Double-click first-time setup + start
 cd /d "%~dp0"
-call "%~dp0scripts\run_proper.cmd" %*
+call "%~dp0_ps.cmd" "%~dp0scripts\run_proper.ps1" %*

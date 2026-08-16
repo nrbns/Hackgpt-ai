@@ -189,11 +189,18 @@ def parse_report_csv(
             f"test_result={lower.get('testresult') or ''}\n"
             f"source={filename or 'hardeningkitty'}"
         )
+        # asset_name must match create_vulnerability(); category is CIS area, not host.
+        try:
+            import socket
+
+            host_label = socket.gethostname() or "Windows host"
+        except Exception:
+            host_label = "Windows host"
         items.append(
             {
                 "title": title[:400],
                 "severity": severity,
-                "asset": category or "Windows host",
+                "asset_name": host_label[:200],
                 "cve": "",
                 "cvss": None,
                 "status": "open",
@@ -202,6 +209,7 @@ def parse_report_csv(
                 "engagement_id": engagement_id,
                 "scanner": "hardeningkitty",
                 "source": f"hardeningkitty:{filename or 'report'}",
+                "raw": {**lower, "category": category, "host": host_label},
             }
         )
     return items

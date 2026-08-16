@@ -691,6 +691,7 @@ async def _iter_build_messages(req: ChatRequest, user_id: str = "local"):
                 auto=not instruct_tools and not req.tools,
                 include_heavy=settings.local_tools_allow_heavy or bool(req.tools) or instruct_tools,
                 mode=req.mode,
+                user_id=user_id,
             ):
                 # Keep live marker static for the whole tools phase (UI already showed phase)
                 if ev.get("event") == "done":
@@ -988,10 +989,15 @@ class ToolsRunRequest(BaseModel):
 
 
 @app.post("/api/tools/run")
-async def api_tools_run(req: ToolsRunRequest):
+async def api_tools_run(req: ToolsRunRequest, request: Request):
     """Run selected security tools against an authorized/lab target."""
     if not settings.local_tools_enabled:
         raise HTTPException(status_code=400, detail="Local tools disabled")
+    user = resolve_user(
+        request.headers.get("authorization"),
+        request.headers.get("x-securaiq-key") or request.headers.get("x-hackgpt-key"),
+    )
+    uid = user.id if user else "local"
     result = await run_security_tools(
         req.message or (f"run tools on {req.target}" if req.target else ""),
         target=req.target,
@@ -1000,18 +1006,24 @@ async def api_tools_run(req: ToolsRunRequest):
         allow_public=req.authorized_target,
         auto=req.auto and not req.tools,
         include_heavy=settings.local_tools_allow_heavy or bool(req.tools),
+        user_id=uid,
     )
     result["markdown"] = format_tools_context(result)
     return result
 
 
 @app.post("/api/tools/run/stream")
-async def api_tools_run_stream(req: ToolsRunRequest):
+async def api_tools_run_stream(req: ToolsRunRequest, request: Request):
     """NDJSON realtime tool progress (lightweight builtins run in parallel)."""
     if not settings.local_tools_enabled:
         raise HTTPException(status_code=400, detail="Local tools disabled")
 
     message = req.message or (f"run tools on {req.target}" if req.target else "")
+    user = resolve_user(
+        request.headers.get("authorization"),
+        request.headers.get("x-securaiq-key") or request.headers.get("x-hackgpt-key"),
+    )
+    uid = user.id if user else "local"
 
     async def ndjson():
         async for ev in iter_security_tools(
@@ -1022,6 +1034,7 @@ async def api_tools_run_stream(req: ToolsRunRequest):
             allow_public=req.authorized_target,
             auto=req.auto and not req.tools,
             include_heavy=settings.local_tools_allow_heavy or bool(req.tools),
+            user_id=uid,
         ):
             if ev.get("event") == "done":
                 payload = dict(ev.get("payload") or {})
@@ -1076,8 +1089,9 @@ async def jobs_enqueue(req: JobEnqueueRequest, request: Request):
         request.headers.get("x-securaiq-key") or request.headers.get("x-hackgpt-key"),
     )
     payload = dict(req.payload)
-    if req.kind == "report_export":
-        payload.setdefault("user_id", user.id if user else "local")
+    # Assets / vulns / HK / OA / XDR jobs must land under the calling user,
+    # not a silent "local" tenant when auth is on.
+    payload.setdefault("user_id", user.id if user else "local")
     try:
         return enqueue_job(req.kind, payload, engine=req.engine)
     except ValueError as exc:
