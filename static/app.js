@@ -3071,7 +3071,7 @@ async function refreshMcIntegrations() {
         "HardeningKitty",
         Boolean(hkLive.installed || settings.hardeningkitty_module_path),
       ],
-      ["Wazuh", Boolean(wz.configured)],
+      ["SecuraIQ SIEM", Boolean(wz.configured)],
       ["TheHive", Boolean(th.configured)],
       ["Cloud posture", (cloud.configured_count || 0) > 0],
       ["Webhooks", (hooks.webhooks || []).length > 0],

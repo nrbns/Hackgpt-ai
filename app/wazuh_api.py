@@ -82,7 +82,47 @@ async def get_status(user: Annotated[AuthUser, Depends(require_user)]):
         st["ping"] = {"ok": False, "error": "not_configured"}
     st["webhook_path"] = "/api/wazuh/webhook"
     st["ingest_secret_set"] = bool((settings.ingest_webhook_secret or "").strip())
+    st["product"] = "SecuraIQ SIEM"
+    st["engine"] = "wazuh"
     return st
+
+
+@router.get("/overview")
+async def get_overview(user: Annotated[AuthUser, Depends(require_user)]):
+    """SecuraIQ SIEM console summary (agents, manager, groups, rules, SCA, FIM)."""
+    st = wazuh_status()
+    if not st.get("configured"):
+        return {
+            "configured": False,
+            "product": "SecuraIQ SIEM",
+            "engine": "wazuh",
+            "overview": {"ok": False, "error": "not_configured"},
+            "groups": [],
+            "rules": {"total": 0, "rules": []},
+            "sca": [],
+            "fim": [],
+            "agents_cached": list_agents(limit=50),
+            "alerts": list_events(limit=12, vendor="wazuh"),
+        }
+    overview = await wazuh_conn.fetch_manager_overview()
+    groups = await wazuh_conn.fetch_groups(limit=40)
+    rules = await wazuh_conn.fetch_rules_summary(limit=15)
+    sca = await wazuh_conn.fetch_sca_summary(limit=20)
+    fim = await wazuh_conn.fetch_fim_summary(limit=15)
+    return {
+        "configured": True,
+        "product": "SecuraIQ SIEM",
+        "engine": "wazuh",
+        "indexer_configured": st.get("indexer_configured"),
+        "base_url": st.get("base_url"),
+        "overview": overview,
+        "groups": groups,
+        "rules": rules,
+        "sca": sca,
+        "fim": fim,
+        "agents_cached": list_agents(limit=50),
+        "alerts": list_events(limit=20, vendor="wazuh"),
+    }
 
 
 @router.post("/sync")
@@ -95,12 +135,31 @@ async def trigger_sync(user: Annotated[AuthUser, Depends(require_user)]):
 
 @router.get("/agents")
 async def get_agents(user: Annotated[AuthUser, Depends(require_user)], limit: int = 100):
-    return {"agents": list_agents(limit=limit)}
+    return {"agents": list_agents(limit=limit), "product": "SecuraIQ SIEM"}
 
 
 @router.get("/alerts")
 async def get_alerts(user: Annotated[AuthUser, Depends(require_user)], limit: int = 50):
-    return {"events": list_events(limit=limit, vendor="wazuh")}
+    return {"events": list_events(limit=limit, vendor="wazuh"), "product": "SecuraIQ SIEM"}
+
+
+@router.get("/groups")
+async def get_groups(user: Annotated[AuthUser, Depends(require_user)], limit: int = 50):
+    if not wazuh_conn.is_configured():
+        return {"groups": []}
+    return {"groups": await wazuh_conn.fetch_groups(limit=limit)}
+
+
+@router.get("/modules")
+async def get_modules(user: Annotated[AuthUser, Depends(require_user)]):
+    """SCA + FIM + rules modules for the SecuraIQ SIEM console."""
+    if not wazuh_conn.is_configured():
+        return {"sca": [], "fim": [], "rules": {"total": 0, "rules": []}}
+    return {
+        "sca": await wazuh_conn.fetch_sca_summary(limit=25),
+        "fim": await wazuh_conn.fetch_fim_summary(limit=20),
+        "rules": await wazuh_conn.fetch_rules_summary(limit=20),
+    }
 
 
 @router.post("/webhook")

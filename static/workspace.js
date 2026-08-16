@@ -1970,68 +1970,161 @@
     const el = qs("wazuhPanelBody");
     if (!el) return;
     try {
-      const [stRes, agRes, alRes] = await Promise.all([
-        fetch("/api/wazuh/status", { headers: authHeaders() }),
-        fetch("/api/wazuh/agents?limit=12", { headers: authHeaders() }),
-        fetch("/api/wazuh/alerts?limit=8", { headers: authHeaders() }),
-      ]);
-      const st = await stRes.json().catch(() => ({}));
-      const ag = await agRes.json().catch(() => ({}));
-      const al = await alRes.json().catch(() => ({}));
-      const ping = st.ping || {};
-      const agents = ag.agents || [];
-      const events = al.events || [];
-      const statusChip = st.configured
-        ? ping.ok
+      const res = await fetch("/api/wazuh/overview", { headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        el.innerHTML = `<p class="hint">SecuraIQ SIEM unavailable (${res.status})</p>`;
+        return;
+      }
+      const ov = data.overview || {};
+      const agentsStats = ov.agents || {};
+      const manager = ov.manager || {};
+      const agents = data.agents_cached || [];
+      const events = data.alerts || [];
+      const groups = data.groups || [];
+      const rules = data.rules || {};
+      const sca = data.sca || [];
+      const fim = data.fim || [];
+      const statusChip = data.configured
+        ? ov.ok
           ? `<span class="auto-job-status status-done">connected</span>`
           : `<span class="auto-job-status status-error">auth/error</span>`
         : `<span class="auto-job-status status-planned">not configured</span>`;
+      const kpi = (label, val) =>
+        `<div class="comp-kpi"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(val ?? "—"))}</strong></div>`;
       const agentsHtml = agents.length
-        ? agents
+        ? `<div class="data-table-wrap"><table class="data-table"><thead><tr>
+            <th>Status</th><th>Agent</th><th>IP</th><th>OS</th><th>Group</th><th>Version</th>
+          </tr></thead><tbody>${agents
+            .slice(0, 25)
             .map(
-              (a) =>
-                `<li><strong>${escapeHtml(a.status || "?")}</strong> ${escapeHtml(a.name || a.agent_id || "")}
-                ${a.ip ? ` · <code>${escapeHtml(a.ip)}</code>` : ""}
-                ${a.os ? ` · ${escapeHtml(a.os)}` : ""}</li>`
+              (a) => `<tr>
+              <td><span class="wq-badge pri-${
+                (a.status || "").toLowerCase() === "active" ? "low" : "high"
+              }">${escapeHtml(a.status || "?")}</span></td>
+              <td>${escapeHtml(a.name || a.agent_id || "")}</td>
+              <td><code>${escapeHtml(a.ip || "—")}</code></td>
+              <td>${escapeHtml(a.os || "—")}</td>
+              <td>${escapeHtml(a.group_name || a.group || "—")}</td>
+              <td>${escapeHtml(a.version || "—")}</td>
+            </tr>`
             )
-            .join("")
-        : `<li class="hint">${st.configured ? "No agents synced yet — click Sync Wazuh" : "Set Wazuh credentials in Settings"}</li>`;
+            .join("")}</tbody></table></div>`
+        : `<p class="hint">${
+            data.configured
+              ? "No agents synced yet — click Sync SIEM"
+              : "Connect a Wazuh manager in Settings → SecuraIQ SIEM"
+          }</p>`;
       const alertsHtml = events.length
         ? events
+            .slice(0, 12)
             .map(
               (e) =>
-                `<li><strong>${escapeHtml(e.severity)}</strong> ${escapeHtml(e.title || "")}${
+                `<li><strong>${escapeHtml(e.severity || "")}</strong> ${escapeHtml(e.title || "")}${
                   e.host ? ` — <code>${escapeHtml(e.host)}</code>` : ""
                 }</li>`
             )
             .join("")
         : `<li class="hint">${
-            st.configured
-              ? st.indexer_configured
-                ? "No alerts yet"
-                : "No Indexer — showing agent/vuln signals after sync"
-              : "Configure Wazuh to pull SIEM data"
+            data.configured
+              ? data.indexer_configured
+                ? "No alerts yet — sync or push via webhook"
+                : "Indexer off — agent/vuln signals appear after Sync SIEM"
+              : "Configure manager credentials to pull SIEM data"
           }</li>`;
+      const groupsHtml = groups.length
+        ? groups
+            .slice(0, 10)
+            .map((g) => `<li><strong>${escapeHtml(g.name)}</strong> · ${escapeHtml(String(g.count ?? 0))} agents</li>`)
+            .join("")
+        : `<li class="hint">No groups yet</li>`;
+      const scaHtml = sca.length
+        ? sca
+            .slice(0, 8)
+            .map(
+              (s) =>
+                `<li><strong>${escapeHtml(String(s.score ?? "—"))}%</strong> ${escapeHtml(s.name || "")}
+                 — ${escapeHtml(s.agent_name || s.agent_id || "")}
+                 · fail ${escapeHtml(String(s.fail ?? 0))}</li>`
+            )
+            .join("")
+        : `<li class="hint">No SCA results (needs live manager + agents)</li>`;
+      const fimHtml = fim.length
+        ? fim
+            .slice(0, 8)
+            .map(
+              (f) =>
+                `<li><strong>${escapeHtml(f.severity || "info")}</strong> ${escapeHtml(f.event || "FIM")}
+                 · <code>${escapeHtml(f.path || "")}</code>
+                 ${f.agent ? ` — ${escapeHtml(f.agent)}` : ""}</li>`
+            )
+            .join("")
+        : `<li class="hint">${
+            data.indexer_configured
+              ? "No recent FIM events"
+              : "FIM feed needs Indexer (wazuh-alerts*)"
+          }</li>`;
+      const rulesHtml = (rules.rules || []).length
+        ? (rules.rules || [])
+            .slice(0, 6)
+            .map(
+              (r) =>
+                `<li><code>${escapeHtml(r.id || "")}</code> L${escapeHtml(String(r.level ?? ""))}
+                 — ${escapeHtml(r.description || "")}</li>`
+            )
+            .join("")
+        : `<li class="hint">${rules.error ? escapeHtml(rules.error) : "Rules catalog unavailable offline"}</li>`;
+
       el.innerHTML = `
         <p>${statusChip}
-          ${st.base_url ? `<span class="hint">${escapeHtml(st.base_url)}</span>` : ""}
-          ${st.indexer_configured ? '<span class="hint">Indexer on</span>' : '<span class="hint">Indexer off</span>'}
-          ${ping.api_version ? `<span class="hint">API ${escapeHtml(ping.api_version)}</span>` : ""}
-          ${ping.error && st.configured ? `<span class="hint">${escapeHtml(ping.error)}</span>` : ""}
+          <strong>SecuraIQ SIEM</strong>
+          <span class="hint">engine: Wazuh</span>
+          ${data.base_url ? `<span class="hint">${escapeHtml(data.base_url)}</span>` : ""}
+          ${data.indexer_configured ? '<span class="hint">Indexer on</span>' : '<span class="hint">Indexer off</span>'}
+          ${ov.api_version ? `<span class="hint">API ${escapeHtml(ov.api_version)}</span>` : ""}
+          ${manager.version ? `<span class="hint">Manager ${escapeHtml(manager.version)}</span>` : ""}
+          ${ov.error && data.configured ? `<span class="hint">${escapeHtml(ov.error)}</span>` : ""}
         </p>
-        <div class="ws-grid-2">
+        <div class="comp-kpi-row" aria-label="SIEM health">
+          ${kpi("Active agents", agentsStats.active)}
+          ${kpi("Disconnected", agentsStats.disconnected)}
+          ${kpi("Pending", agentsStats.pending)}
+          ${kpi("Total agents", agentsStats.total || agents.length)}
+          ${kpi("Rules", rules.total || (rules.rules || []).length)}
+          ${kpi("Groups", groups.length)}
+          ${kpi("SCA policies", sca.length)}
+          ${kpi("FIM events", fim.length)}
+        </div>
+        <div class="ws-grid-2" style="margin-top:0.75rem">
           <div>
-            <p class="hint">Agents (${agents.length})</p>
-            <ul class="cc-list">${agentsHtml}</ul>
+            <p class="hint">Endpoint agents</p>
+            ${agentsHtml}
           </div>
           <div>
-            <p class="hint">Recent Wazuh events</p>
+            <p class="hint">SIEM alerts & signals</p>
             <ul class="cc-list">${alertsHtml}</ul>
+            <p class="hint" style="margin-top:0.75rem">Agent groups</p>
+            <ul class="cc-list">${groupsHtml}</ul>
           </div>
         </div>
-        <p class="hint">Settings → Wazuh SIEM. Optional Indexer URL enables full alert search on wazuh-alerts*.</p>`;
+        <div class="ws-grid-2" style="margin-top:0.75rem">
+          <div>
+            <p class="hint">Configuration assessment (SCA)</p>
+            <ul class="cc-list">${scaHtml}</ul>
+          </div>
+          <div>
+            <p class="hint">File integrity (FIM)</p>
+            <ul class="cc-list">${fimHtml}</ul>
+            <p class="hint" style="margin-top:0.75rem">Detection rules (sample)</p>
+            <ul class="cc-list">${rulesHtml}</ul>
+          </div>
+        </div>
+        <p class="hint" style="margin-top:0.75rem">
+          Settings → <strong>SecuraIQ SIEM</strong> (Wazuh manager + optional Indexer).
+          Webhook ingest: <code>/api/wazuh/webhook</code>. Sync pulls agents into inventory and alerts into the SOC feed.
+        </p>`;
     } catch (err) {
-      el.innerHTML = `<p class="hint">Wazuh panel unavailable: ${escapeHtml(err.message)}</p>`;
+      el.innerHTML = `<p class="hint">SecuraIQ SIEM panel unavailable: ${escapeHtml(err.message)}</p>`;
     }
   }
 
@@ -2140,7 +2233,7 @@
         <div id="xdrPanelBody"><p class="hint">Loading…</p></div>
       </section>
       <section class="cc-panel" id="wazuhPanel" style="margin-top:1rem">
-        <header><h2>Wazuh SIEM</h2><button type="button" class="btn-secondary" id="wazuhSyncBtn">Sync Wazuh</button></header>
+        <header><h2>SecuraIQ SIEM</h2><button type="button" class="btn-secondary" id="wazuhSyncBtn">Sync SIEM</button></header>
         <div id="wazuhPanelBody"><p class="hint">Loading…</p></div>
       </section>
       <section class="cc-panel" id="thehivePanel" style="margin-top:1rem">
@@ -2178,20 +2271,20 @@
         const res = await fetch("/api/wazuh/sync", { method: "POST", headers: authHeaders() });
         const data = await res.json().catch(() => ({}));
         if (!res.ok && typeof notifyUser === "function") {
-          notifyUser(`**Wazuh sync failed:** ${data.detail || res.status}`);
+          notifyUser(`**SecuraIQ SIEM sync failed:** ${data.detail || res.status}`);
         } else if (typeof notifyUser === "function") {
-          notifyUser(`**Wazuh sync queued** · job \`${(data.job && data.job.id) || "?"}\``);
+          notifyUser(`**SecuraIQ SIEM sync queued** · job \`${(data.job && data.job.id) || "?"}\``);
         }
         const jobId = data.job && data.job.id;
         if (jobId && typeof window.waitForJob === "function") {
           await window.waitForJob(jobId, { timeoutMs: 120000 });
         }
       } catch (err) {
-        if (typeof notifyUser === "function") notifyUser(`**Wazuh sync error:** ${err.message || err}`);
+        if (typeof notifyUser === "function") notifyUser(`**SecuraIQ SIEM sync error:** ${err.message || err}`);
       }
       renderWazuhPanel();
       renderXdrPanel();
-      if (btn) { btn.disabled = false; btn.textContent = "Sync Wazuh"; }
+      if (btn) { btn.disabled = false; btn.textContent = "Sync SIEM"; }
     });
     qs("thehiveSyncBtn")?.addEventListener("click", async () => {
       const btn = qs("thehiveSyncBtn");
@@ -3304,7 +3397,7 @@
           }</span>
           <span class="integ-pill ${ghOk ? "ok" : ""}">GitHub: ${ghOk ? "webhook ready" : "not set"}</span>
           <span class="integ-pill ${hookCount ? "ok" : ""}">Webhooks: ${hookCount}</span>
-          <span class="integ-pill ${wzOk ? "ok" : ""}">Wazuh: ${wzOk ? "configured" : "not set"}</span>
+          <span class="integ-pill ${wzOk ? "ok" : ""}">SecuraIQ SIEM: ${wzOk ? "configured" : "not set"}</span>
           <span class="integ-pill ${thOk ? "ok" : ""}">TheHive: ${thOk ? "configured" : "not set"}</span>
           <span class="integ-pill ${cloudOk ? "ok" : ""}">Cloud: ${cloudOk ? `${cloud.configured_count} vendor(s)` : "not set"}</span>
           <span class="integ-pill ok">AI backend: ${escapeHtml(String(backend))}</span>
@@ -3954,7 +4047,7 @@
           </label>
           <button type="button" class="btn-primary-cc" data-job-kind="kev_sync">Run KEV sync</button>
           <button type="button" class="btn-secondary" data-job-kind="xdr_sync">Run XDR sync</button>
-          <button type="button" class="btn-secondary" data-job-kind="wazuh_sync">Run Wazuh sync</button>
+          <button type="button" class="btn-secondary" data-job-kind="wazuh_sync">Run SecuraIQ SIEM sync</button>
           <button type="button" class="btn-secondary" data-job-kind="thehive_sync">Run TheHive sync</button>
           <button type="button" class="btn-secondary" data-job-kind="cloud_posture_sync">Run cloud posture sync</button>
           <button type="button" class="btn-secondary" data-job-kind="openaudit_sync">Run inventory sync</button>

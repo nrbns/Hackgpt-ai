@@ -132,7 +132,7 @@ async def sync(user_id: str = "local") -> dict[str, Any]:
 
             inc = create_incident(
                 user_id,
-                title=f"[wazuh] {item.get('title', 'Wazuh alert')}",
+                title=f"[SIEM] {item.get('title', 'SecuraIQ SIEM alert')}",
                 severity=item.get("severity", "high"),
                 status="open",
                 source="siem:wazuh",
