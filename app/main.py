@@ -115,6 +115,9 @@ async def lifespan(app: FastAPI):
         from app.hardeningkitty import ensure_schema as ensure_hk_schema
 
         ensure_hk_schema()
+        from app.wazuh import ensure_schema as ensure_wazuh_schema
+
+        ensure_wazuh_schema()
     except Exception as exc:
         print(f"DB/auth bootstrap: {exc}")
     try:
@@ -249,7 +252,8 @@ app.include_router(commercial_ext_router)
 app.include_router(platform_router)
 app.include_router(billing_router)
 app.include_router(xdr_router)
-app.include_router(wazuh_router)
+app.include_router(wazuh_router, prefix="/api/siem")
+app.include_router(wazuh_router, prefix="/api/wazuh")  # compat alias
 app.include_router(openaudit_router)
 app.include_router(hardeningkitty_router)
 app.include_router(thehive_router)
@@ -270,6 +274,8 @@ _PUBLIC_API_PREFIXES = (
     "/api/billing/webhook",
     "/api/health",
     "/api/realtime",
+    "/api/siem/webhook",
+    "/api/wazuh/webhook",
 )
 
 

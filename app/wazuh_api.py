@@ -1,4 +1,8 @@
-"""API routes for Wazuh SIEM integration."""
+"""SecuraIQ SIEM API — branded console backed by a Wazuh manager when configured.
+
+Primary routes: /api/siem/*
+Compat alias:   /api/wazuh/* (webhooks / older clients)
+"""
 
 from __future__ import annotations
 
@@ -15,7 +19,8 @@ from app.wazuh import list_agents
 from app.wazuh import status as wazuh_status
 from app.xdr import ingest_detections, list_events
 
-router = APIRouter(prefix="/api/wazuh", tags=["wazuh"])
+# Shared route table (no prefix) — mounted under /api/siem and /api/wazuh
+router = APIRouter(tags=["securaiq-siem"])
 
 
 def _require_ingest_secret(header_val: str | None) -> None:
@@ -31,14 +36,14 @@ def _require_ingest_secret(header_val: str | None) -> None:
         )
 
 
-def _normalize_wazuh_alert(alert: dict[str, Any]) -> dict[str, Any]:
-    """Map a Wazuh alert / Integrator payload into an XDR detection row."""
+def normalize_siem_alert(alert: dict[str, Any]) -> dict[str, Any]:
+    """Map a manager / Integrator alert payload into an XDR detection row."""
     rule = alert.get("rule") if isinstance(alert.get("rule"), dict) else {}
     agent = alert.get("agent") if isinstance(alert.get("agent"), dict) else {}
     data = alert.get("data") if isinstance(alert.get("data"), dict) else {}
     rule_id = str(rule.get("id") or alert.get("id") or alert.get("external_id") or "")
     ts = str(alert.get("id") or alert.get("timestamp") or rule_id)
-    external_id = str(alert.get("external_id") or f"wazuh:{rule_id}:{ts}")
+    external_id = str(alert.get("external_id") or f"siem:{rule_id}:{ts}")
     level = int(rule.get("level") or alert.get("level") or 5)
     if level >= 12:
         severity = "critical"
@@ -59,7 +64,7 @@ def _normalize_wazuh_alert(alert: dict[str, Any]) -> dict[str, Any]:
         rule.get("description")
         or alert.get("title")
         or alert.get("full_log")
-        or f"Wazuh rule {rule_id or 'alert'}"
+        or f"SIEM rule {rule_id or 'alert'}"
     )
     return {
         "vendor": "wazuh",
@@ -73,6 +78,10 @@ def _normalize_wazuh_alert(alert: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Back-compat name used by older imports / tests
+_normalize_wazuh_alert = normalize_siem_alert
+
+
 @router.get("/status")
 async def get_status(user: Annotated[AuthUser, Depends(require_user)]):
     st = wazuh_status()
@@ -80,10 +89,11 @@ async def get_status(user: Annotated[AuthUser, Depends(require_user)]):
         st["ping"] = await wazuh_conn.ping()
     else:
         st["ping"] = {"ok": False, "error": "not_configured"}
-    st["webhook_path"] = "/api/wazuh/webhook"
+    st["webhook_path"] = "/api/siem/webhook"
+    st["webhook_path_compat"] = "/api/wazuh/webhook"
     st["ingest_secret_set"] = bool((settings.ingest_webhook_secret or "").strip())
     st["product"] = "SecuraIQ SIEM"
-    st["engine"] = "wazuh"
+    st["brand"] = "SecuraIQ"
     return st
 
 
@@ -95,7 +105,7 @@ async def get_overview(user: Annotated[AuthUser, Depends(require_user)]):
         return {
             "configured": False,
             "product": "SecuraIQ SIEM",
-            "engine": "wazuh",
+            "brand": "SecuraIQ",
             "overview": {"ok": False, "error": "not_configured"},
             "groups": [],
             "rules": {"total": 0, "rules": []},
@@ -112,7 +122,7 @@ async def get_overview(user: Annotated[AuthUser, Depends(require_user)]):
     return {
         "configured": True,
         "product": "SecuraIQ SIEM",
-        "engine": "wazuh",
+        "brand": "SecuraIQ",
         "indexer_configured": st.get("indexer_configured"),
         "base_url": st.get("base_url"),
         "overview": overview,
@@ -130,7 +140,7 @@ async def trigger_sync(user: Annotated[AuthUser, Depends(require_user)]):
     from app.jobs import enqueue_job
 
     job = enqueue_job("wazuh_sync", {"user_id": user.id}, engine="auto")
-    return {"job": job}
+    return {"job": job, "product": "SecuraIQ SIEM"}
 
 
 @router.get("/agents")
@@ -146,28 +156,29 @@ async def get_alerts(user: Annotated[AuthUser, Depends(require_user)], limit: in
 @router.get("/groups")
 async def get_groups(user: Annotated[AuthUser, Depends(require_user)], limit: int = 50):
     if not wazuh_conn.is_configured():
-        return {"groups": []}
-    return {"groups": await wazuh_conn.fetch_groups(limit=limit)}
+        return {"groups": [], "product": "SecuraIQ SIEM"}
+    return {"groups": await wazuh_conn.fetch_groups(limit=limit), "product": "SecuraIQ SIEM"}
 
 
 @router.get("/modules")
 async def get_modules(user: Annotated[AuthUser, Depends(require_user)]):
     """SCA + FIM + rules modules for the SecuraIQ SIEM console."""
     if not wazuh_conn.is_configured():
-        return {"sca": [], "fim": [], "rules": {"total": 0, "rules": []}}
+        return {"sca": [], "fim": [], "rules": {"total": 0, "rules": []}, "product": "SecuraIQ SIEM"}
     return {
         "sca": await wazuh_conn.fetch_sca_summary(limit=25),
         "fim": await wazuh_conn.fetch_fim_summary(limit=20),
         "rules": await wazuh_conn.fetch_rules_summary(limit=20),
+        "product": "SecuraIQ SIEM",
     }
 
 
 @router.post("/webhook")
-async def wazuh_webhook(
+async def siem_webhook(
     request: Request,
     x_securaiq_ingest: Annotated[str | None, Header(alias="X-SecuraIQ-Ingest")] = None,
 ):
-    """Inbound Wazuh Integrator / custom hook — upserts into xdr_events.
+    """Inbound SIEM Integrator / custom hook — upserts into xdr_events.
 
     Accepts a single alert object, ``{"alerts":[...]}``, or a list.
     """
@@ -188,7 +199,11 @@ async def wazuh_webhook(
     else:
         raise HTTPException(status_code=400, detail="Expected object or list")
 
-    items = [_normalize_wazuh_alert(a) for a in raw_alerts if isinstance(a, dict)]
+    items = [normalize_siem_alert(a) for a in raw_alerts if isinstance(a, dict)]
     result = ingest_detections(items, user_id="local")
-    audit("wazuh_webhook", "local", {"new": result.get("new"), "total": result.get("total")})
-    return {"ok": True, **result}
+    audit("siem_webhook", "local", {"new": result.get("new"), "total": result.get("total")})
+    return {"ok": True, "product": "SecuraIQ SIEM", **result}
+
+
+# Alias for older call sites
+wazuh_webhook = siem_webhook

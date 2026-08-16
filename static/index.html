@@ -928,8 +928,8 @@
         </fieldset>
 
         <fieldset id="settingsWazuh">
-          <legend>SecuraIQ SIEM (Wazuh engine)</legend>
-          <p class="hint">Connect your Wazuh manager into SecuraIQ. Manager API (JWT). Optional Indexer URL pulls alerts from <code>wazuh-alerts*</code>. Without Indexer, sync uses agent health + vulnerability signals. Features shown in SOC: agents, groups, alerts, SCA, FIM, rules.</p>
+          <legend>SecuraIQ SIEM</legend>
+          <p class="hint">Connect your endpoint SIEM manager into SecuraIQ. Uses Manager API (JWT). Optional Indexer URL pulls live alerts. Without Indexer, sync uses agent health + vulnerability signals. SOC shows: agents, groups, alerts, SCA, FIM, rules.</p>
           <label>Manager API URL
             <input type="text" id="setWazuhUrl" inputmode="url" autocomplete="off" placeholder="https://wazuh.example:55000" />
           </label>

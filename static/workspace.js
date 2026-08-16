@@ -1970,7 +1970,7 @@
     const el = qs("wazuhPanelBody");
     if (!el) return;
     try {
-      const res = await fetch("/api/wazuh/overview", { headers: authHeaders() });
+      const res = await fetch("/api/siem/overview", { headers: authHeaders() });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         el.innerHTML = `<p class="hint">SecuraIQ SIEM unavailable (${res.status})</p>`;
@@ -2013,7 +2013,7 @@
         : `<p class="hint">${
             data.configured
               ? "No agents synced yet — click Sync SIEM"
-              : "Connect a Wazuh manager in Settings → SecuraIQ SIEM"
+              : "Connect your SIEM manager in Settings → SecuraIQ SIEM"
           }</p>`;
       const alertsHtml = events.length
         ? events
@@ -2062,7 +2062,7 @@
         : `<li class="hint">${
             data.indexer_configured
               ? "No recent FIM events"
-              : "FIM feed needs Indexer (wazuh-alerts*)"
+              : "FIM feed needs Indexer configured in SecuraIQ SIEM settings"
           }</li>`;
       const rulesHtml = (rules.rules || []).length
         ? (rules.rules || [])
@@ -2078,7 +2078,7 @@
       el.innerHTML = `
         <p>${statusChip}
           <strong>SecuraIQ SIEM</strong>
-          <span class="hint">engine: Wazuh</span>
+          <span class="hint">SecuraIQ brand · manager-connected</span>
           ${data.base_url ? `<span class="hint">${escapeHtml(data.base_url)}</span>` : ""}
           ${data.indexer_configured ? '<span class="hint">Indexer on</span>' : '<span class="hint">Indexer off</span>'}
           ${ov.api_version ? `<span class="hint">API ${escapeHtml(ov.api_version)}</span>` : ""}
@@ -2120,8 +2120,8 @@
           </div>
         </div>
         <p class="hint" style="margin-top:0.75rem">
-          Settings → <strong>SecuraIQ SIEM</strong> (Wazuh manager + optional Indexer).
-          Webhook ingest: <code>/api/wazuh/webhook</code>. Sync pulls agents into inventory and alerts into the SOC feed.
+          Settings → <strong>SecuraIQ SIEM</strong>. Optional Indexer enables full alert + FIM search.
+          Webhook ingest: <code>/api/siem/webhook</code>. Sync pulls agents and alerts into your SOC.
         </p>`;
     } catch (err) {
       el.innerHTML = `<p class="hint">SecuraIQ SIEM panel unavailable: ${escapeHtml(err.message)}</p>`;
@@ -2268,7 +2268,7 @@
       const btn = qs("wazuhSyncBtn");
       if (btn) { btn.disabled = true; btn.textContent = "Syncing…"; }
       try {
-        const res = await fetch("/api/wazuh/sync", { method: "POST", headers: authHeaders() });
+        const res = await fetch("/api/siem/sync", { method: "POST", headers: authHeaders() });
         const data = await res.json().catch(() => ({}));
         if (!res.ok && typeof notifyUser === "function") {
           notifyUser(`**SecuraIQ SIEM sync failed:** ${data.detail || res.status}`);
@@ -3373,7 +3373,7 @@
           fetch("/api/settings", { headers: authHeaders() }),
           fetch("/api/webhooks", { headers: authHeaders() }),
           fetch("/api/integrations/github/status", { headers: authHeaders() }),
-          fetch("/api/wazuh/status", { headers: authHeaders() }),
+          fetch("/api/siem/status", { headers: authHeaders() }),
           fetch("/api/thehive/status", { headers: authHeaders() }),
           fetch("/api/cloud/status", { headers: authHeaders() }),
         ]);

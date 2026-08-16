@@ -3048,7 +3048,7 @@ async function refreshMcIntegrations() {
       fetch("/api/settings", { headers: authHeaders() }),
       fetch("/api/tools", { headers: authHeaders() }),
       fetch("/api/webhooks", { headers: authHeaders() }),
-      fetch("/api/wazuh/status", { headers: authHeaders() }),
+      fetch("/api/siem/status", { headers: authHeaders() }),
       fetch("/api/thehive/status", { headers: authHeaders() }),
       fetch("/api/cloud/status", { headers: authHeaders() }),
     ]);
@@ -4976,20 +4976,20 @@ on(document.getElementById("setWazuhTestBtn"), "click", async () => {
   if (hint) hint.textContent = "Testing…";
   if (btn) btn.disabled = true;
   try {
-    const res = await fetch("/api/wazuh/status", { headers: authHeaders() });
+    const res = await fetch("/api/siem/status", { headers: authHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(formatApiDetail(data.detail, `HTTP ${res.status}`));
     const ping = data.ping || {};
     if (!data.configured) {
-      if (hint) hint.textContent = "Not configured — save Manager URL, user, and password first.";
+      if (hint) hint.textContent = "Not configured — save Manager URL, user, and password, then Test again.";
     } else if (ping.ok) {
       if (hint) {
-        hint.textContent = `Connected${data.base_url ? ` to ${data.base_url}` : ""}${
+        hint.textContent = `SecuraIQ SIEM connected${data.base_url ? ` · ${data.base_url}` : ""}${
           ping.api_version ? ` · API ${ping.api_version}` : ""
         }${data.indexer_configured ? " · Indexer on" : " · Indexer off"}`;
       }
     } else {
-      if (hint) hint.textContent = ping.error || "Connection failed";
+      if (hint) hint.textContent = ping.error || "SecuraIQ SIEM connection failed";
     }
   } catch (err) {
     if (hint) hint.textContent = err.message || String(err);

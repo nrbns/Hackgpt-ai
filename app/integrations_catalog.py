@@ -23,7 +23,7 @@ MVP_STACK: list[dict[str, str]] = [
     {"category": "IaC", "tool": "Checkov", "status": "import"},
     {"category": "DAST", "tool": "OWASP ZAP + Nuclei", "status": "path+import"},
     {"category": "Threat intel", "tool": "MITRE + NVD + CISA KEV", "status": "shipped"},
-    {"category": "SIEM", "tool": "SecuraIQ SIEM (Wazuh)", "status": "shipped"},
+    {"category": "SIEM", "tool": "SecuraIQ SIEM", "status": "shipped"},
     {"category": "CMDB / inventory", "tool": "Network inventory", "status": "shipped"},
     {"category": "Hardening", "tool": "HardeningKitty + CIS Downloads", "status": "shipped"},
     {"category": "Automation", "tool": "n8n via webhooks", "status": "shipped"},
@@ -115,7 +115,7 @@ CATALOG: list[dict[str, Any]] = [
     {"id": "pulsedive", "name": "Pulsedive", "category": "intel", "status": "partial", "hint": "Set PULSEDIVE_API_KEY — GET /api/intel/lookup"},
     {"id": "malwarebazaar", "name": "MalwareBazaar", "category": "intel", "status": "partial", "hint": "Set MALWAREBAZAAR_API_KEY — GET /api/intel/lookup"},
     # SIEM / SOAR / IR / EDR
-    {"id": "wazuh", "name": "SecuraIQ SIEM (Wazuh)", "category": "siem", "status": "shipped", "hint": "Set WAZUH_BASE_URL / USER / PASSWORD — SecuraIQ SIEM console on SOC (agents, alerts, SCA, FIM)"},
+    {"id": "wazuh", "name": "SecuraIQ SIEM", "category": "siem", "status": "shipped", "hint": "Settings → SecuraIQ SIEM — agents, alerts, SCA, FIM on the SOC console"},
     {"id": "openaudit", "name": "Network inventory", "category": "inventory", "status": "shipped", "hint": "Settings → Network inventory — sync discovered hosts into Assets"},
     {"id": "elastic", "name": "Elastic Stack", "category": "siem", "status": "planned"},
     {"id": "graylog", "name": "Graylog", "category": "siem", "status": "planned"},
