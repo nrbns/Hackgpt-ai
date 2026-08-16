@@ -250,13 +250,13 @@
           <section id="mcFirstRun" class="mc-first-run" aria-label="Quick start">
             <div class="mc-first-run-head">
               <div>
-                <p class="mc-kicker">Start at zero</p>
+                <p class="mc-kicker">Start here</p>
                 <h2>Your workspace is ready</h2>
-                <p class="hint">Load a lab demo to populate Mission Control, or import your own scan.</p>
+                <p class="hint">Import a real scanner export or add assets to populate Mission Control. No demo data.</p>
               </div>
               <div class="mc-first-run-actions">
-                <button type="button" class="btn-primary-cc" id="mcLoadLabDemo">Load lab demo</button>
-                <button type="button" class="btn-secondary" data-workspace="vulns">Import scan</button>
+                <button type="button" class="btn-primary-cc" data-workspace="vulns">Import scan</button>
+                <button type="button" class="btn-secondary" data-workspace="assets">Add assets</button>
                 <button type="button" class="btn-secondary" data-workspace="integrations">Integrations</button>
               </div>
             </div>
@@ -1557,7 +1557,6 @@
           <textarea id="gapEvidence" rows="10" placeholder="Example: information security policy approved by management, MFA, EDR, vulnerability scanning, backups with restore tests, incident response playbook, phishing awareness training…"></textarea>
         </label>
         <div class="modal-footer">
-          <button type="button" class="btn-secondary" id="gapSampleEvidenceBtn">Use sample evidence</button>
           <button type="submit" id="gapRunBtn">Run gap analysis</button>
         </div>
       </form>

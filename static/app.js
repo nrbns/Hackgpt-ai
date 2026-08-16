@@ -534,7 +534,7 @@ async function runGapAnalysis(e) {
   const title = document.getElementById("gapTitle")?.value?.trim() || "Gap assessment";
   const evidence = document.getElementById("gapEvidence")?.value?.trim() || "";
   if (!evidence) {
-    const msg = "**Gap analysis:** paste policies / notes in Evidence, or click **Use sample evidence**.";
+    const msg = "**Gap analysis:** paste real policies, interview notes, or evidence first.";
     if (typeof notifyUser === "function") notifyUser(msg);
     else appendMessage("assistant", renderMarkdown(msg), true);
     document.getElementById("gapEvidence")?.focus();
@@ -2879,34 +2879,6 @@ function wireMissionFirstRunOnce() {
       if (ws && typeof window.showWorkspace === "function") window.showWorkspace(ws);
     });
   });
-  document.getElementById("mcLoadLabDemo")?.addEventListener("click", async () => {
-    const btn = document.getElementById("mcLoadLabDemo");
-    if (btn) {
-      btn.disabled = true;
-      btn.textContent = "Loading…";
-    }
-    try {
-      const res = await fetch("/api/workspace/seed-lab", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(formatApiDetail(data.detail, res.status));
-      notifyUser(
-        `**Lab demo loaded** · ${data.assets || 0} assets · ${data.vulnerabilities || 0} vulns · ${
-          data.compliance_percent ?? "—"
-        }% compliance`
-      );
-      await loadCommandCenter();
-    } catch (err) {
-      notifyUser(`**Lab demo failed:** ${err.message || err}`);
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = "Load lab demo";
-      }
-    }
-  });
 }
 
 function renderWorkQueue(items) {
@@ -3030,7 +3002,7 @@ function renderMcDecisionPanel(data) {
     actions.querySelector("#mcCreateTickets")?.addEventListener("click", async () => {
       const tops = (data.findings?.top_vulns || []).slice(0, 3);
       if (!tops.length) {
-        notifyUser("**No open vulns** — import a scan or Load lab demo first.");
+        notifyUser("**No open vulns** — import a real scanner export first.");
         return;
       }
       let n = 0;
@@ -4744,23 +4716,6 @@ on(topSettingsBtn, "click", openSettings);
 on(authBtn, "click", openAuth);
 on(gapBtn, "click", () => openGap());
 // Module sidebar nav is owned by workspace.js (pages). Keep only gap modal opener here.
-on(document.getElementById("gapSampleEvidenceBtn"), "click", () => {
-  const ta = document.getElementById("gapEvidence");
-  if (!ta) return;
-  ta.value = [
-    "Information security policy approved by management and reviewed annually.",
-    "Multi-factor authentication (MFA) enforced for all privileged and remote access.",
-    "Endpoint detection and response (EDR) deployed on corporate workstations and servers.",
-    "Vulnerability scanning and patch management for internet-facing systems.",
-    "Encrypted backups with documented restore tests within the last 12 months.",
-    "Incident response playbook with defined roles, severity levels, and escalation paths.",
-    "Phishing awareness training completed for employees; metrics tracked quarterly.",
-    "Access control based on least privilege; joiner-mover-leaver process documented.",
-    "Risk assessment performed; residual risks accepted by business owners.",
-    "Supplier security questionnaires and contracts for critical vendors.",
-  ].join("\n");
-  ta.focus();
-});
 on(gapForm, "submit", runGapAnalysis);
 on(riskForm, "submit", submitRisk);
 on(assetForm, "submit", submitAsset);

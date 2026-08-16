@@ -33,7 +33,6 @@ from app.enterprise import (
     list_remediations,
     list_risks,
     list_vulnerabilities,
-    seed_lab_mvp,
     triage_vulnerability,
     update_asset,
     update_campaign,
@@ -173,13 +172,6 @@ class CampaignUpdate(BaseModel):
 async def dashboard(user: Annotated[AuthUser, Depends(require_user)]):
     ensure_gap_schema()
     return enterprise_dashboard(user.id)
-
-
-@router.post("/workspace/seed-lab")
-async def workspace_seed_lab(user: Annotated[AuthUser, Depends(require_user)]):
-    """Populate a local MVP demo so every Mission Control panel has real data."""
-    ensure_gap_schema()
-    return seed_lab_mvp(user.id)
 
 
 @router.get("/dashboard/brief")

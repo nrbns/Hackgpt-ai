@@ -1058,14 +1058,14 @@ def _morning_brief(
             "Import a scanner export or run gap analysis when you are ready."
         )
         attention = "Your workspace is empty by design."
-        next_step = "Import an authorized lab scan, add assets, or run a gap analysis."
+        next_step = "Import a scanner export, add assets, or run a gap analysis with your evidence."
     elif crit == 0 and risks == 0 and incidents == 0 and not work_queue:
         summary = (
             f"{hello}. {org_name} is quiet — no critical findings or open incidents. "
             "Import a scanner export or run gap analysis when you are ready."
         )
         attention = "Maintain baseline monitoring and keep evidence current."
-        next_step = "Connect integrations or import an authorized lab scan."
+        next_step = "Connect integrations or import an authorized scanner export."
     else:
         top = (work_queue[0]["title"] if work_queue else "Triage critical findings")
         summary = (
@@ -1585,143 +1585,6 @@ def reset_workspace(user_id: str, *, clear_rag: bool = False) -> dict[str, Any]:
             rag_cleared = False
 
     return {"ok": True, "deleted": counts, "rag_cleared": rag_cleared}
-
-
-def seed_lab_mvp(user_id: str = "local") -> dict[str, Any]:
-    """One-click local MVP demo data for Mission Control (no external vendors)."""
-    from app.gap_analysis import run_gap_analysis
-    from app.ops import create_incident
-
-    assets_out = []
-    for name, atype, crit in (
-        ("lab-web-01", "server", "high"),
-        ("lab-db-01", "server", "critical"),
-        ("analyst-laptop", "endpoint", "medium"),
-    ):
-        assets_out.append(
-            create_asset(
-                user_id,
-                name,
-                asset_type=atype,
-                criticality=crit,
-                owner="SecOps",
-                notes="Lab demo asset",
-            )
-        )
-
-    vulns_spec = (
-        {
-            "title": "OpenSSH outdated — potential RCE",
-            "severity": "critical",
-            "cve": "CVE-2024-6387",
-            "asset_name": "lab-web-01",
-            "source": "lab:seed",
-        },
-        {
-            "title": "Missing MFA on privileged VPN access",
-            "severity": "high",
-            "cve": "",
-            "asset_name": "analyst-laptop",
-            "source": "lab:seed",
-        },
-        {
-            "title": "TLS 1.0 enabled on public endpoint",
-            "severity": "medium",
-            "cve": "",
-            "asset_name": "lab-web-01",
-            "source": "lab:seed",
-        },
-        {
-            "title": "Database backup share world-readable",
-            "severity": "high",
-            "cve": "",
-            "asset_name": "lab-db-01",
-            "source": "lab:seed",
-        },
-    )
-    vulns_out = [create_vulnerability(user_id, v, emit_realtime=False) for v in vulns_spec]
-
-    risks_out = [
-        create_risk(
-            user_id,
-            threat="Ransomware via exposed SSH",
-            vulnerability="Unpatched OpenSSH on lab-web-01",
-            asset_name="lab-web-01",
-            impact=5,
-            likelihood=3,
-            owner="SecOps",
-            status="open",
-            mitigation="Lab demo risk",
-        ),
-        create_risk(
-            user_id,
-            threat="Credential stuffing on VPN",
-            vulnerability="No MFA on remote access",
-            asset_name="analyst-laptop",
-            impact=4,
-            likelihood=4,
-            owner="IAM",
-            status="open",
-            mitigation="Lab demo risk",
-        ),
-    ]
-
-    remediations_out = []
-    for v in vulns_out[:3]:
-        try:
-            tri = triage_vulnerability(user_id, v["id"], owner="SecOps", create_ticket_hint=False)
-            if tri.get("remediation"):
-                remediations_out.append(tri["remediation"])
-        except Exception:
-            remediations_out.append(
-                create_remediation(
-                    user_id,
-                    control_id="LAB",
-                    title=f"Remediate: {v.get('title')}",
-                    owner="SecOps",
-                    recommendation=f"Fix {v.get('title')} on {v.get('asset_name')}",
-                )
-            )
-
-    incident = create_incident(
-        user_id,
-        title="Lab: suspicious SSH brute-force against lab-web-01",
-        severity="high",
-        status="open",
-        source="lab:seed",
-        summary="Demo incident for Mission Control SOC panel.",
-    )
-
-    evidence = (
-        "Information security policy approved by management and reviewed annually.\n"
-        "Multi-factor authentication (MFA) enforced for privileged access.\n"
-        "Endpoint detection and response (EDR) on workstations.\n"
-        "Vulnerability scanning and patch management for internet-facing systems.\n"
-        "Encrypted backups with restore tests.\n"
-        "Incident response playbook with escalation paths.\n"
-        "Phishing awareness training completed.\n"
-        "Access control least privilege; joiner-mover-leaver documented.\n"
-        "Risk assessment performed with residual risk acceptance.\n"
-    )
-    gap = run_gap_analysis(
-        framework_id="owasp_top10",
-        evidence=evidence,
-        title="Lab MVP gap assessment",
-        user_id=user_id,
-    )
-
-    return {
-        "ok": True,
-        "product": "SecuraIQ",
-        "assets": len(assets_out),
-        "vulnerabilities": len(vulns_out),
-        "risks": len(risks_out),
-        "remediations": len(remediations_out),
-        "incidents": 1 if incident else 0,
-        "gap_assessment_id": gap.get("id"),
-        "compliance_percent": gap.get("compliance_percent"),
-        "message": "Lab demo loaded — Mission Control is live.",
-    }
 
 
 def apply_workspace_zero_start() -> dict[str, Any] | None:
