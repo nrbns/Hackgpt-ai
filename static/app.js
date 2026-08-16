@@ -2567,7 +2567,7 @@ async function loadCommandCenter() {
         "ccRecommendedToday",
         "ccTodayList",
         "mcDecisionActions",
-        "mcWorkQueue",
+        "ccWorkQueue",
       ];
       emptyLists.forEach((id) => {
         const el = document.getElementById(id);
@@ -2595,6 +2595,11 @@ async function loadCommandCenter() {
       const key = step.getAttribute("data-wf");
       const n = Number(wf[key] || 0);
       step.classList.toggle("active", n > 0);
+      step.style.cursor = "pointer";
+      step.onclick = () => {
+        if (key === "actions") window.showWorkspace?.("remediations");
+        else window.showWorkspace?.("vulns");
+      };
     });
 
     // Work queue
@@ -2874,6 +2879,34 @@ function wireMissionFirstRunOnce() {
       if (ws && typeof window.showWorkspace === "function") window.showWorkspace(ws);
     });
   });
+  document.getElementById("mcLoadLabDemo")?.addEventListener("click", async () => {
+    const btn = document.getElementById("mcLoadLabDemo");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Loading…";
+    }
+    try {
+      const res = await fetch("/api/workspace/seed-lab", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(formatApiDetail(data.detail, res.status));
+      notifyUser(
+        `**Lab demo loaded** · ${data.assets || 0} assets · ${data.vulnerabilities || 0} vulns · ${
+          data.compliance_percent ?? "—"
+        }% compliance`
+      );
+      await loadCommandCenter();
+    } catch (err) {
+      notifyUser(`**Lab demo failed:** ${err.message || err}`);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Load lab demo";
+      }
+    }
+  });
 }
 
 function renderWorkQueue(items) {
@@ -2907,8 +2940,8 @@ function renderWorkQueue(items) {
             <button type="button" class="btn-primary-cc wq-task" data-title="${escapeHtml(
               w.title
             )}" data-workspace="${escapeHtml(w.workspace || "remediations")}" data-action="${escapeHtml(
-          w.action || "task"
-        )}">Act</button>
+          w.action || "open"
+        )}" data-entity="${escapeHtml(w.entity_id || "")}">Act</button>
           </td>
         </tr>`;
       })
@@ -2919,39 +2952,41 @@ function renderWorkQueue(items) {
   });
   el.querySelectorAll(".wq-task").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      const action = btn.getAttribute("data-action");
+      const action = btn.getAttribute("data-action") || "open";
       const title = btn.getAttribute("data-title") || "Mission task";
-      const ws = btn.getAttribute("data-workspace");
+      const ws = btn.getAttribute("data-workspace") || "remediations";
       if (action === "gap") {
         openGap();
         return;
       }
-      if (action === "report" && ws) {
+      if (action === "report" || action === "open") {
         window.showWorkspace?.(ws);
+        notifyUser(`**Opened ${ws}:** ${title}`);
         return;
       }
-      try {
-        const res = await fetch("/api/gap/remediations", {
-          method: "POST",
-          headers: authHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({
-            control_id: "MC",
-            title,
-            status: "open",
-            owner: "Unassigned",
-            recommendation: title,
-          }),
-        });
-        if (res.ok) {
-          notifyUser(`**Task created:** ${title}`);
-          window.showWorkspace?.("remediations");
-        } else {
-          notifyUser(`**Open module** to track: ${title}`);
+      if (action === "task") {
+        try {
+          const res = await fetch("/api/gap/remediations", {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({
+              control_id: "MC",
+              title,
+              status: "open",
+              owner: "Unassigned",
+              recommendation: title,
+            }),
+          });
+          if (res.ok) {
+            notifyUser(`**Task created:** ${title}`);
+            window.showWorkspace?.("remediations");
+          } else if (ws) window.showWorkspace?.(ws);
+        } catch {
           if (ws) window.showWorkspace?.(ws);
         }
-      } catch {
-        if (ws) window.showWorkspace?.(ws);
+        return;
       }
+      window.showWorkspace?.(ws);
     });
   });
 }
@@ -2984,7 +3019,7 @@ function renderMcDecisionPanel(data) {
     actions.innerHTML = `
       <button type="button" class="cc-action" data-workspace="vulns">Triage vulns</button>
       <button type="button" class="cc-action" data-module="gap">Gap analysis</button>
-      <button type="button" class="cc-action" data-view="chat" data-mode="ciso" data-prompt="Create Jira-ready remediation tickets for our top 3 findings">Create tickets</button>
+      <button type="button" class="cc-action" id="mcCreateTickets">Create remediations</button>
       <button type="button" class="cc-action" data-workspace="reports">Board report</button>`;
     actions.querySelectorAll("[data-workspace]").forEach((b) =>
       b.addEventListener("click", () => window.showWorkspace?.(b.getAttribute("data-workspace")))
@@ -2992,28 +3027,43 @@ function renderMcDecisionPanel(data) {
     actions.querySelectorAll("[data-module]").forEach((b) =>
       b.addEventListener("click", () => handleModuleAction(b.getAttribute("data-module")))
     );
-    actions.querySelectorAll("[data-view]").forEach((b) =>
-      b.addEventListener("click", () =>
-        runNavPrompt(b.getAttribute("data-mode") || "ciso", b.getAttribute("data-prompt"))
-      )
-    );
+    actions.querySelector("#mcCreateTickets")?.addEventListener("click", async () => {
+      const tops = (data.findings?.top_vulns || []).slice(0, 3);
+      if (!tops.length) {
+        notifyUser("**No open vulns** — import a scan or Load lab demo first.");
+        return;
+      }
+      let n = 0;
+      for (const v of tops) {
+        const res = await fetch(`/api/vulnerabilities/${v.id}/triage`, {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ owner: "SecOps", create_jira: false }),
+        });
+        if (res.ok) n += 1;
+      }
+      notifyUser(`**Created ${n} remediation(s)** from top findings.`);
+      window.showWorkspace?.("remediations");
+      loadCommandCenter();
+    });
   }
 }
 
 function renderMcCharts(data) {
   const sev = document.getElementById("ccSevBars");
   if (sev) {
-    const findings = data.findings?.top_vulns || [];
-    const buckets = { critical: 0, high: 0, medium: 0, low: 0 };
-    findings.forEach((v) => {
-      const s = (v.severity || "medium").toLowerCase();
-      if (buckets[s] != null) buckets[s] += 1;
-    });
-    // Prefer aggregate counts when available
-    const crit = Number(data.vulnerabilities_critical_high || 0);
-    if (crit && buckets.critical + buckets.high === 0) {
-      buckets.critical = Math.ceil(crit / 2);
-      buckets.high = Math.floor(crit / 2);
+    const counts = data.severity_counts || {};
+    const buckets = {
+      critical: Number(counts.critical || 0),
+      high: Number(counts.high || 0),
+      medium: Number(counts.medium || 0),
+      low: Number(counts.low || 0),
+    };
+    if (!(buckets.critical + buckets.high + buckets.medium + buckets.low)) {
+      (data.findings?.top_vulns || []).forEach((v) => {
+        const s = (v.severity || "medium").toLowerCase();
+        if (buckets[s] != null) buckets[s] += 1;
+      });
     }
     const max = Math.max(1, ...Object.values(buckets));
     sev.innerHTML = Object.entries(buckets)
@@ -3044,7 +3094,7 @@ async function refreshMcIntegrations() {
   if (!list) return;
   try {
     const rt = window.__securaiqRealtime || {};
-    const [setRes, toolsRes, hookRes, wzRes, thRes, cloudRes] = await Promise.all([
+    const settled = await Promise.allSettled([
       fetch("/api/settings", { headers: authHeaders() }),
       fetch("/api/tools", { headers: authHeaders() }),
       fetch("/api/webhooks", { headers: authHeaders() }),
@@ -3052,12 +3102,16 @@ async function refreshMcIntegrations() {
       fetch("/api/thehive/status", { headers: authHeaders() }),
       fetch("/api/cloud/status", { headers: authHeaders() }),
     ]);
-    const settings = await setRes.json().catch(() => ({}));
-    const tools = await toolsRes.json().catch(() => ({}));
-    const hooks = await hookRes.json().catch(() => ({}));
-    const wz = await wzRes.json().catch(() => ({}));
-    const th = await thRes.json().catch(() => ({}));
-    const cloud = await cloudRes.json().catch(() => ({}));
+    const jsonOf = async (i) => {
+      const r = settled[i].status === "fulfilled" ? settled[i].value : null;
+      return r && r.ok ? r.json().catch(() => ({})) : {};
+    };
+    const settings = await jsonOf(0);
+    const tools = await jsonOf(1);
+    const hooks = await jsonOf(2);
+    const wz = await jsonOf(3);
+    const th = await jsonOf(4);
+    const cloud = await jsonOf(5);
     const hkLive = rt.hardeningkitty || {};
     const invLive = rt.inventory || {};
     const rows = [
@@ -3168,6 +3222,9 @@ function runNavPrompt(mode, prompt, opts = {}) {
       inputEl.focus();
     }
     syncAiAssistThread();
+    if (opts.autoSend !== false && prompt && typeof sendMessage === "function") {
+      setTimeout(() => sendMessage(), 80);
+    }
     return;
   }
   showView("chat");
@@ -3179,6 +3236,9 @@ function runNavPrompt(mode, prompt, opts = {}) {
     inputEl.value = prompt;
     resizeInput();
     inputEl.focus();
+  }
+  if (opts.autoSend !== false && prompt && typeof sendMessage === "function") {
+    setTimeout(() => sendMessage(), 80);
   }
 }
 window.runNavPrompt = runNavPrompt;

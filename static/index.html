@@ -252,10 +252,11 @@
               <div>
                 <p class="mc-kicker">Start at zero</p>
                 <h2>Your workspace is ready</h2>
-                <p class="hint">Import a scan or open Integrations to begin.</p>
+                <p class="hint">Load a lab demo to populate Mission Control, or import your own scan.</p>
               </div>
               <div class="mc-first-run-actions">
-                <button type="button" class="btn-primary-cc" data-workspace="vulns">Import scan</button>
+                <button type="button" class="btn-primary-cc" id="mcLoadLabDemo">Load lab demo</button>
+                <button type="button" class="btn-secondary" data-workspace="vulns">Import scan</button>
                 <button type="button" class="btn-secondary" data-workspace="integrations">Integrations</button>
               </div>
             </div>
@@ -292,7 +293,7 @@
           </div>
 
           <div class="cc-kpi-grid mc-kpi-grid mc-kpi-hero" id="ccKpis">
-            <button type="button" class="cc-kpi mc-kpi mc-kpi-primary" data-workspace="reports">
+            <button type="button" class="cc-kpi mc-kpi mc-kpi-primary" data-workspace="frameworks">
               <span class="mc-kpi-label">Security score</span>
               <div class="mc-gauge" id="ccScoreGauge" style="--p:0">
                 <strong id="ccScore">0</strong>
@@ -326,7 +327,7 @@
               <strong id="ccAssets">0</strong>
               <em class="mc-trend" id="ccAssetTrend">—</em>
             </button>
-            <button type="button" class="cc-kpi mc-kpi" data-workspace="remediations" hidden>
+            <button type="button" class="cc-kpi mc-kpi" data-workspace="remediations">
               <span class="mc-kpi-label">Open actions</span>
               <strong id="ccRems">0</strong>
               <em class="mc-trend" id="ccRemTrend">Work queue</em>
@@ -390,7 +391,7 @@
           <div class="cc-panels mc-secondary">
             <section class="cc-panel">
               <header>
-                <h2>Pending approvals</h2>
+                <h2>Needs attention</h2>
                 <button type="button" class="btn-secondary" data-workspace="remediations">Open</button>
               </header>
               <ul id="ccApprovals" class="cc-list"><li class="hint">None</li></ul>
@@ -762,7 +763,7 @@
                 <option value="ctf">CTF</option>
               </optgroup>
             </select>
-            <input type="text" id="targetIp" class="target-input composer-target" placeholder="Target IP (lab)" autocomplete="off" spellcheck="false" />
+            <input type="text" id="targetIp" class="target-input composer-target" placeholder="Target IP (lab) — or a local folder path for code_scan" autocomplete="off" spellcheck="false" />
             <details class="composer-advanced">
               <summary>Advanced model routing</summary>
               <div class="composer-advanced-body">

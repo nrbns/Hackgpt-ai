@@ -938,11 +938,20 @@ def enterprise_dashboard(user_id: str) -> dict[str, Any]:
     except Exception:
         pass
 
+    severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    for v in vulns:
+        if (v.get("status") or "") in {"closed", "resolved", "fixed"}:
+            continue
+        s = (v.get("severity") or "medium").lower()
+        if s in severity_counts:
+            severity_counts[s] += 1
+
     return {
         **gap,
         "is_empty": is_empty,
         "security_index": security_index,
         "correlation": correlation,
+        "severity_counts": severity_counts,
         "risks_open": len(open_risks),
         "risks_total": len(risks),
         "avg_open_risk_score": avg_risk,
@@ -964,6 +973,7 @@ def enterprise_dashboard(user_id: str) -> dict[str, Any]:
         },
         "recommendations": [w["title"] for w in work_queue],
         "work_queue": work_queue,
+        "needs_attention": pending_approvals,
         "mission_control": {
             "organization": org_name,
             "environment": "Production" if org_name != "Local workspace" else "Lab / local",
@@ -1140,6 +1150,7 @@ def _work_queue(
         framework: str = "",
         risk: str | int | float = "",
         ai: str = "",
+        entity_id: str = "",
     ) -> None:
         items.append(
             {
@@ -1156,6 +1167,7 @@ def _work_queue(
                 "framework": framework,
                 "risk": risk,
                 "ai": ai or "Ask AI for root cause, impact, and remediation steps.",
+                "entity_id": entity_id or "",
             }
         )
 
@@ -1183,12 +1195,13 @@ def _work_queue(
             title=f"Patch / triage {v.get('cve') or v.get('title')}",
             owner=v.get("owner") or "SecOps",
             due=v.get("sla_due") or "72h",
-            action="task",
+            action="open",
             mode="blueteam",
             prompt=f"Draft remediation and verification for {v.get('cve') or ''} {v.get('title')}",
             workspace="vulns",
             risk=v.get("severity") or "",
             ai=f"Triage {v.get('cve') or 'finding'} → remediate → verify.",
+            entity_id=str(v.get("id") or ""),
         )
     if risks:
         top = risks[0]
@@ -1197,12 +1210,13 @@ def _work_queue(
             title=f"Mitigate risk: {top.get('threat')}",
             owner=top.get("owner") or "Risk owner",
             due="This week",
-            action="task",
+            action="open",
             mode="ciso",
             prompt=f"Draft mitigation plan for risk: {top.get('threat')}",
             workspace="risks",
             risk=top.get("risk_score") or "",
             ai="Reduce likelihood/impact; set residual score.",
+            entity_id=str(top.get("id") or ""),
         )
     for r in rems[:2]:
         add(
@@ -1210,12 +1224,13 @@ def _work_queue(
             title=f"Close control {r.get('control_id')}: {r.get('title')}",
             owner=r.get("owner") or "Control owner",
             due=r.get("due_date") or "30 days",
-            action="task",
+            action="open",
             mode="ciso",
             prompt=f"Implementation checklist for {r.get('control_id')} — {r.get('title')}",
             workspace="remediations",
             framework=str(r.get("framework_id") or r.get("control_id") or ""),
             ai="Attach evidence and close when verified.",
+            entity_id=str(r.get("id") or ""),
         )
     # de-dupe by title, keep priority order high>medium>low
     order = {"high": 0, "medium": 1, "low": 2}
@@ -1333,8 +1348,11 @@ def _mitre_coverage(
     out = []
     for name, kws in tactics:
         hits = sum(1 for k in kws if k in text)
-        base = 20 + hits * 18
-        if playbooks and name.lower() in " ".join(p.get("category", "") for p in playbooks).lower():
+        # Honest estimate: no fake floor when nothing matches
+        base = hits * 22
+        if playbooks and name.lower() in " ".join(
+            (p.get("category") or "") + " " + (p.get("title") or "") for p in playbooks
+        ).lower():
             base += 15
         out.append({"tactic": name, "coverage": min(95, base)})
     return out
@@ -1567,6 +1585,143 @@ def reset_workspace(user_id: str, *, clear_rag: bool = False) -> dict[str, Any]:
             rag_cleared = False
 
     return {"ok": True, "deleted": counts, "rag_cleared": rag_cleared}
+
+
+def seed_lab_mvp(user_id: str = "local") -> dict[str, Any]:
+    """One-click local MVP demo data for Mission Control (no external vendors)."""
+    from app.gap_analysis import run_gap_analysis
+    from app.ops import create_incident
+
+    assets_out = []
+    for name, atype, crit in (
+        ("lab-web-01", "server", "high"),
+        ("lab-db-01", "server", "critical"),
+        ("analyst-laptop", "endpoint", "medium"),
+    ):
+        assets_out.append(
+            create_asset(
+                user_id,
+                name,
+                asset_type=atype,
+                criticality=crit,
+                owner="SecOps",
+                notes="Lab demo asset",
+            )
+        )
+
+    vulns_spec = (
+        {
+            "title": "OpenSSH outdated — potential RCE",
+            "severity": "critical",
+            "cve": "CVE-2024-6387",
+            "asset_name": "lab-web-01",
+            "source": "lab:seed",
+        },
+        {
+            "title": "Missing MFA on privileged VPN access",
+            "severity": "high",
+            "cve": "",
+            "asset_name": "analyst-laptop",
+            "source": "lab:seed",
+        },
+        {
+            "title": "TLS 1.0 enabled on public endpoint",
+            "severity": "medium",
+            "cve": "",
+            "asset_name": "lab-web-01",
+            "source": "lab:seed",
+        },
+        {
+            "title": "Database backup share world-readable",
+            "severity": "high",
+            "cve": "",
+            "asset_name": "lab-db-01",
+            "source": "lab:seed",
+        },
+    )
+    vulns_out = [create_vulnerability(user_id, v, emit_realtime=False) for v in vulns_spec]
+
+    risks_out = [
+        create_risk(
+            user_id,
+            threat="Ransomware via exposed SSH",
+            vulnerability="Unpatched OpenSSH on lab-web-01",
+            asset_name="lab-web-01",
+            impact=5,
+            likelihood=3,
+            owner="SecOps",
+            status="open",
+            mitigation="Lab demo risk",
+        ),
+        create_risk(
+            user_id,
+            threat="Credential stuffing on VPN",
+            vulnerability="No MFA on remote access",
+            asset_name="analyst-laptop",
+            impact=4,
+            likelihood=4,
+            owner="IAM",
+            status="open",
+            mitigation="Lab demo risk",
+        ),
+    ]
+
+    remediations_out = []
+    for v in vulns_out[:3]:
+        try:
+            tri = triage_vulnerability(user_id, v["id"], owner="SecOps", create_ticket_hint=False)
+            if tri.get("remediation"):
+                remediations_out.append(tri["remediation"])
+        except Exception:
+            remediations_out.append(
+                create_remediation(
+                    user_id,
+                    control_id="LAB",
+                    title=f"Remediate: {v.get('title')}",
+                    owner="SecOps",
+                    recommendation=f"Fix {v.get('title')} on {v.get('asset_name')}",
+                )
+            )
+
+    incident = create_incident(
+        user_id,
+        title="Lab: suspicious SSH brute-force against lab-web-01",
+        severity="high",
+        status="open",
+        source="lab:seed",
+        summary="Demo incident for Mission Control SOC panel.",
+    )
+
+    evidence = (
+        "Information security policy approved by management and reviewed annually.\n"
+        "Multi-factor authentication (MFA) enforced for privileged access.\n"
+        "Endpoint detection and response (EDR) on workstations.\n"
+        "Vulnerability scanning and patch management for internet-facing systems.\n"
+        "Encrypted backups with restore tests.\n"
+        "Incident response playbook with escalation paths.\n"
+        "Phishing awareness training completed.\n"
+        "Access control least privilege; joiner-mover-leaver documented.\n"
+        "Risk assessment performed with residual risk acceptance.\n"
+    )
+    gap = run_gap_analysis(
+        framework_id="owasp_top10",
+        evidence=evidence,
+        title="Lab MVP gap assessment",
+        user_id=user_id,
+    )
+
+    return {
+        "ok": True,
+        "product": "SecuraIQ",
+        "assets": len(assets_out),
+        "vulnerabilities": len(vulns_out),
+        "risks": len(risks_out),
+        "remediations": len(remediations_out),
+        "incidents": 1 if incident else 0,
+        "gap_assessment_id": gap.get("id"),
+        "compliance_percent": gap.get("compliance_percent"),
+        "message": "Lab demo loaded — Mission Control is live.",
+    }
 
 
 def apply_workspace_zero_start() -> dict[str, Any] | None:
