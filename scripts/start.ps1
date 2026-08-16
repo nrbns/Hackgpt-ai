@@ -85,7 +85,7 @@ if ($Lan) {
     # SPA is same-origin on the phone, but allow * so preflighted tools / PWA
     # edge cases on LAN IPs do not fail closed after a prior localhost start.
     $lines = Set-EnvLine $lines "CORS_ORIGINS" "*"
-    # Keep data across restarts when sharing with other devices on Wi‑Fi
+    # Keep data across restarts when sharing with other devices on Wi-Fi
     $lines = Set-EnvLine $lines "WORKSPACE_ZERO_START" "false"
 } else {
     $lines = Set-EnvLine $lines "HOST" "127.0.0.1"
@@ -110,7 +110,7 @@ $appUrl = "http://127.0.0.1:$port"
 
 Write-Host ""
 if ($Lan) {
-    Write-Host "Starting SecuraIQ (LAN mode — other devices on Wi‑Fi can open)" -ForegroundColor Yellow
+    Write-Host "Starting SecuraIQ (LAN mode - other devices on Wi-Fi can open)" -ForegroundColor Yellow
     Write-Host "  This PC:     $appUrl"
     try {
         Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
@@ -155,6 +155,6 @@ if ($ready) {
         Start-Process $appUrl
     }
 } else {
-    Write-Host "  Server starting — open $appUrl when ready" -ForegroundColor Yellow
+    Write-Host "  Server starting - open $appUrl when ready" -ForegroundColor Yellow
 }
 Wait-Process -Id $proc.Id

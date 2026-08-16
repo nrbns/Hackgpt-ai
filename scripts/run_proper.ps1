@@ -1,4 +1,4 @@
-# One-command setup + start for SecuraIQ (Windows) — zero-config, no manual .env
+# One-command setup + start for SecuraIQ (Windows) - zero-config, no manual .env
 param(
     [switch]$Lan
 )
