@@ -30,24 +30,29 @@ def create_asset(
     owner: str = "",
     notes: str = "",
     engagement_id: str | None = None,
+    org_id: str | None = None,
 ) -> dict[str, Any]:
+    from app.tenancy import ensure_tenant_schema, primary_org_id
+
+    ensure_tenant_schema()
+    oid = org_id or primary_org_id(user_id)
     aid = new_id()
     ts = now()
     c = get_conn()
     c.execute(
         """
         INSERT INTO assets
-        (id, user_id, engagement_id, name, asset_type, criticality, owner, notes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, user_id, engagement_id, org_id, name, asset_type, criticality, owner, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (aid, user_id, engagement_id, name.strip(), asset_type, criticality, owner, notes, ts, ts),
+        (aid, user_id, engagement_id, oid, name.strip(), asset_type, criticality, owner, notes, ts, ts),
     )
     c.commit()
-    audit("asset_create", user_id, {"id": aid, "name": name})
+    audit("asset_create", user_id, {"id": aid, "name": name, "org_id": oid})
     try:
         from app.realtime_bus import publish
 
-        publish(type="asset", id=aid, user_id=user_id)
+        publish(type="asset", id=aid, user_id=user_id, org_id=oid)
     except Exception:
         pass
     return get_asset(user_id, aid)  # type: ignore[return-value]
@@ -85,25 +90,34 @@ def ensure_asset_for_target(
 
 
 def get_asset(user_id: str, asset_id: str) -> dict[str, Any] | None:
+    from app.tenancy import row_visible_to_user, tenant_visibility_sql
+
+    where, args = tenant_visibility_sql(user_id)
     row = get_conn().execute(
-        "SELECT * FROM assets WHERE id = ? AND user_id = ?", (asset_id, user_id)
+        f"SELECT * FROM assets WHERE id = ? AND {where}",
+        (asset_id, *args),
     ).fetchone()
-    return row_to_dict(row)
+    data = row_to_dict(row)
+    return data if row_visible_to_user(user_id, data) else None
 
 
-def list_assets(user_id: str, engagement_id: str | None = None) -> list[dict[str, Any]]:
+def list_assets(
+    user_id: str,
+    engagement_id: str | None = None,
+    *,
+    org_id: str | None = None,
+) -> list[dict[str, Any]]:
+    from app.tenancy import ensure_tenant_schema, tenant_visibility_sql
+
+    ensure_tenant_schema()
     c = get_conn()
+    where, args = tenant_visibility_sql(user_id, org_id=org_id)
+    q = f"SELECT * FROM assets WHERE {where}"
     if engagement_id:
-        rows = c.execute(
-            "SELECT * FROM assets WHERE user_id = ? AND engagement_id = ? ORDER BY updated_at DESC",
-            (user_id, engagement_id),
-        ).fetchall()
-    else:
-        rows = c.execute(
-            "SELECT * FROM assets WHERE user_id = ? ORDER BY updated_at DESC LIMIT 200",
-            (user_id,),
-        ).fetchall()
-    return [row_to_dict(r) for r in rows]  # type: ignore[misc]
+        q += " AND engagement_id = ?"
+        args.append(engagement_id)
+    q += " ORDER BY updated_at DESC LIMIT 500"
+    return [row_to_dict(r) for r in c.execute(q, args).fetchall()]  # type: ignore[misc]
 
 
 def update_asset(user_id: str, asset_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
@@ -117,8 +131,8 @@ def update_asset(user_id: str, asset_id: str, patch: dict[str, Any]) -> dict[str
     data["updated_at"] = now()
     sets = ", ".join(f"{k} = ?" for k in data)
     get_conn().execute(
-        f"UPDATE assets SET {sets} WHERE id = ? AND user_id = ?",
-        (*data.values(), asset_id, user_id),
+        f"UPDATE assets SET {sets} WHERE id = ?",
+        (*data.values(), asset_id),
     )
     get_conn().commit()
     audit("asset_update", user_id, {"id": asset_id, **data})
@@ -126,9 +140,9 @@ def update_asset(user_id: str, asset_id: str, patch: dict[str, Any]) -> dict[str
 
 
 def delete_asset(user_id: str, asset_id: str) -> bool:
-    cur = get_conn().execute(
-        "DELETE FROM assets WHERE id = ? AND user_id = ?", (asset_id, user_id)
-    )
+    if not get_asset(user_id, asset_id):
+        return False
+    cur = get_conn().execute("DELETE FROM assets WHERE id = ?", (asset_id,))
     get_conn().commit()
     if cur.rowcount:
         audit("asset_delete", user_id, {"id": asset_id})
@@ -152,7 +166,12 @@ def create_risk(
     mitigation: str = "",
     status: str = "open",
     engagement_id: str | None = None,
+    org_id: str | None = None,
 ) -> dict[str, Any]:
+    from app.tenancy import ensure_tenant_schema, primary_org_id
+
+    ensure_tenant_schema()
+    oid = org_id or primary_org_id(user_id)
     rid = new_id()
     ts = now()
     score = _score(impact, likelihood)
@@ -161,16 +180,16 @@ def create_risk(
         """
         INSERT INTO risks
         (id, user_id, engagement_id, asset_id, asset_name, threat, vulnerability,
-         impact, likelihood, risk_score, owner, mitigation, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         impact, likelihood, risk_score, owner, mitigation, status, created_at, updated_at, org_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             rid, user_id, engagement_id, asset_id, asset_name, threat.strip(), vulnerability,
-            impact, likelihood, score, owner, mitigation, status, ts, ts,
+            impact, likelihood, score, owner, mitigation, status, ts, ts, oid,
         ),
     )
     c.commit()
-    audit("risk_create", user_id, {"id": rid, "score": score})
+    audit("risk_create", user_id, {"id": rid, "score": score, "org_id": oid})
     try:
         from app.realtime_bus import publish
 
@@ -192,10 +211,14 @@ def list_risks(
     *,
     engagement_id: str | None = None,
     status: str | None = None,
+    org_id: str | None = None,
 ) -> list[dict[str, Any]]:
+    from app.tenancy import ensure_tenant_schema, tenant_visibility_sql
+
+    ensure_tenant_schema()
     c = get_conn()
-    q = "SELECT * FROM risks WHERE user_id = ?"
-    args: list[Any] = [user_id]
+    where, args = tenant_visibility_sql(user_id, org_id=org_id)
+    q = f"SELECT * FROM risks WHERE {where}"
     if engagement_id:
         q += " AND engagement_id = ?"
         args.append(engagement_id)
@@ -257,20 +280,25 @@ def create_vulnerability(
     *,
     emit_realtime: bool = True,
 ) -> dict[str, Any]:
+    from app.tenancy import ensure_tenant_schema, primary_org_id
+
+    ensure_tenant_schema()
     vid = new_id()
     ts = now()
+    oid = item.get("org_id") or primary_org_id(user_id)
     c = get_conn()
     c.execute(
         """
         INSERT INTO vulnerabilities
-        (id, user_id, engagement_id, asset_id, asset_name, cve, title, severity, cvss,
+        (id, user_id, engagement_id, org_id, asset_id, asset_name, cve, title, severity, cvss,
          status, owner, sla_due, source, raw_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             vid,
             user_id,
             item.get("engagement_id"),
+            oid,
             item.get("asset_id"),
             item.get("asset_name") or item.get("asset") or "",
             (item.get("cve") or "").upper(),
@@ -298,6 +326,7 @@ def create_vulnerability(
                 id=vid,
                 severity=(item.get("severity") or "medium").lower(),
                 user_id=user_id,
+                org_id=oid,
             )
         except Exception:
             pass
@@ -334,10 +363,15 @@ def create_vulnerability(
 
 
 def get_vulnerability(user_id: str, vuln_id: str) -> dict[str, Any] | None:
+    from app.tenancy import row_visible_to_user, tenant_visibility_sql
+
+    where, args = tenant_visibility_sql(user_id)
     row = get_conn().execute(
-        "SELECT * FROM vulnerabilities WHERE id = ? AND user_id = ?", (vuln_id, user_id)
+        f"SELECT * FROM vulnerabilities WHERE id = ? AND {where}",
+        (vuln_id, *args),
     ).fetchone()
-    return row_to_dict(row)
+    data = row_to_dict(row)
+    return data if row_visible_to_user(user_id, data) else None
 
 
 def list_vulnerabilities(
@@ -345,10 +379,14 @@ def list_vulnerabilities(
     *,
     engagement_id: str | None = None,
     status: str | None = None,
+    org_id: str | None = None,
 ) -> list[dict[str, Any]]:
+    from app.tenancy import ensure_tenant_schema, tenant_visibility_sql
+
+    ensure_tenant_schema()
     c = get_conn()
-    q = "SELECT * FROM vulnerabilities WHERE user_id = ?"
-    args: list[Any] = [user_id]
+    where, args = tenant_visibility_sql(user_id, org_id=org_id)
+    q = f"SELECT * FROM vulnerabilities WHERE {where}"
     if engagement_id:
         q += " AND engagement_id = ?"
         args.append(engagement_id)
@@ -372,8 +410,8 @@ def update_vulnerability(user_id: str, vuln_id: str, patch: dict[str, Any]) -> d
     data["updated_at"] = now()
     sets = ", ".join(f"{k} = ?" for k in data)
     get_conn().execute(
-        f"UPDATE vulnerabilities SET {sets} WHERE id = ? AND user_id = ?",
-        (*data.values(), vuln_id, user_id),
+        f"UPDATE vulnerabilities SET {sets} WHERE id = ?",
+        (*data.values(), vuln_id),
     )
     get_conn().commit()
     audit("vuln_update", user_id, {"id": vuln_id, "status": data.get("status")})
@@ -696,8 +734,13 @@ def create_remediations_from_assessment(
     assessment_id: str,
     gaps: list[dict[str, Any]],
     engagement_id: str | None = None,
+    org_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Persist trackable remediation tasks for missing/partial controls."""
+    from app.tenancy import ensure_tenant_schema, primary_org_id
+
+    ensure_tenant_schema()
+    oid = org_id or primary_org_id(user_id)
     c = get_conn()
     # clear prior open tasks for this assessment (re-run)
     c.execute("DELETE FROM gap_remediations WHERE assessment_id = ?", (assessment_id,))
@@ -711,8 +754,8 @@ def create_remediations_from_assessment(
             """
             INSERT INTO gap_remediations
             (id, assessment_id, user_id, engagement_id, control_id, title, status,
-             owner, due_date, notes, recommendation, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'open', '', '', '', ?, ?, ?)
+             owner, due_date, notes, recommendation, created_at, updated_at, org_id)
+            VALUES (?, ?, ?, ?, ?, ?, 'open', '', '', '', ?, ?, ?, ?)
             """,
             (
                 rid,
@@ -724,6 +767,7 @@ def create_remediations_from_assessment(
                 g.get("recommendation") or "",
                 ts,
                 ts,
+                oid,
             ),
         )
         out.append(
@@ -754,10 +798,14 @@ def list_remediations(
     assessment_id: str | None = None,
     engagement_id: str | None = None,
     status: str | None = None,
+    org_id: str | None = None,
 ) -> list[dict[str, Any]]:
+    from app.tenancy import ensure_tenant_schema, tenant_visibility_sql
+
+    ensure_tenant_schema()
     c = get_conn()
-    q = "SELECT * FROM gap_remediations WHERE user_id = ?"
-    args: list[Any] = [user_id]
+    where, args = tenant_visibility_sql(user_id, org_id=org_id)
+    q = f"SELECT * FROM gap_remediations WHERE {where}"
     if assessment_id:
         q += " AND assessment_id = ?"
         args.append(assessment_id)
@@ -1717,20 +1765,25 @@ def create_playbook(
     status: str = "ready",
     owner: str = "",
     engagement_id: str | None = None,
+    org_id: str | None = None,
 ) -> dict[str, Any]:
+    from app.tenancy import ensure_tenant_schema, primary_org_id
+
+    ensure_tenant_schema()
+    oid = org_id or primary_org_id(user_id)
     pid = new_id()
     ts = now()
     c = get_conn()
     c.execute(
         """
         INSERT INTO playbooks
-        (id, user_id, engagement_id, title, category, severity, steps, status, owner, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, user_id, engagement_id, title, category, severity, steps, status, owner, created_at, updated_at, org_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (pid, user_id, engagement_id, title.strip(), category, severity, steps, status, owner, ts, ts),
+        (pid, user_id, engagement_id, title.strip(), category, severity, steps, status, owner, ts, ts, oid),
     )
     c.commit()
-    audit("playbook_create", user_id, {"id": pid, "title": title})
+    audit("playbook_create", user_id, {"id": pid, "title": title, "org_id": oid})
     try:
         from app.realtime_bus import publish
 
@@ -1747,18 +1800,22 @@ def get_playbook(user_id: str, playbook_id: str) -> dict[str, Any] | None:
     return row_to_dict(row)
 
 
-def list_playbooks(user_id: str, engagement_id: str | None = None) -> list[dict[str, Any]]:
+def list_playbooks(
+    user_id: str, engagement_id: str | None = None, *, org_id: str | None = None
+) -> list[dict[str, Any]]:
+    from app.tenancy import ensure_tenant_schema, tenant_visibility_sql
+
+    ensure_tenant_schema()
     c = get_conn()
+    where, args = tenant_visibility_sql(user_id, org_id=org_id)
+    q = f"SELECT * FROM playbooks WHERE {where}"
     if engagement_id:
-        rows = c.execute(
-            "SELECT * FROM playbooks WHERE user_id = ? AND engagement_id = ? ORDER BY updated_at DESC",
-            (user_id, engagement_id),
-        ).fetchall()
+        q += " AND engagement_id = ?"
+        args.append(engagement_id)
+        q += " ORDER BY updated_at DESC"
     else:
-        rows = c.execute(
-            "SELECT * FROM playbooks WHERE user_id = ? ORDER BY updated_at DESC LIMIT 200",
-            (user_id,),
-        ).fetchall()
+        q += " ORDER BY updated_at DESC LIMIT 200"
+    rows = c.execute(q, args).fetchall()
     return [row_to_dict(r) for r in rows]  # type: ignore[misc]
 
 
@@ -1807,7 +1864,12 @@ def create_campaign(
     report_count: int = 0,
     notes: str = "",
     engagement_id: str | None = None,
+    org_id: str | None = None,
 ) -> dict[str, Any]:
+    from app.tenancy import ensure_tenant_schema, primary_org_id
+
+    ensure_tenant_schema()
+    oid = org_id or primary_org_id(user_id)
     cid = new_id()
     ts = now()
     c = get_conn()
@@ -1815,8 +1877,8 @@ def create_campaign(
         """
         INSERT INTO campaigns
         (id, user_id, engagement_id, name, campaign_type, audience, status,
-         sent_count, click_count, report_count, notes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         sent_count, click_count, report_count, notes, created_at, updated_at, org_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             cid,
@@ -1832,10 +1894,11 @@ def create_campaign(
             notes,
             ts,
             ts,
+            oid,
         ),
     )
     c.commit()
-    audit("campaign_create", user_id, {"id": cid, "name": name})
+    audit("campaign_create", user_id, {"id": cid, "name": name, "org_id": oid})
     try:
         from app.realtime_bus import publish
 
@@ -1852,18 +1915,22 @@ def get_campaign(user_id: str, campaign_id: str) -> dict[str, Any] | None:
     return row_to_dict(row)
 
 
-def list_campaigns(user_id: str, engagement_id: str | None = None) -> list[dict[str, Any]]:
+def list_campaigns(
+    user_id: str, engagement_id: str | None = None, *, org_id: str | None = None
+) -> list[dict[str, Any]]:
+    from app.tenancy import ensure_tenant_schema, tenant_visibility_sql
+
+    ensure_tenant_schema()
     c = get_conn()
+    where, args = tenant_visibility_sql(user_id, org_id=org_id)
+    q = f"SELECT * FROM campaigns WHERE {where}"
     if engagement_id:
-        rows = c.execute(
-            "SELECT * FROM campaigns WHERE user_id = ? AND engagement_id = ? ORDER BY updated_at DESC",
-            (user_id, engagement_id),
-        ).fetchall()
+        q += " AND engagement_id = ?"
+        args.append(engagement_id)
+        q += " ORDER BY updated_at DESC"
     else:
-        rows = c.execute(
-            "SELECT * FROM campaigns WHERE user_id = ? ORDER BY updated_at DESC LIMIT 200",
-            (user_id,),
-        ).fetchall()
+        q += " ORDER BY updated_at DESC LIMIT 200"
+    rows = c.execute(q, args).fetchall()
     return [row_to_dict(r) for r in rows]  # type: ignore[misc]
 
 

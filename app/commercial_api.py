@@ -18,6 +18,8 @@ from app.auth import (
     login,
     logout,
     register_user,
+    request_password_reset,
+    reset_password_with_token,
     resolve_user,
     revoke_api_key,
 )
@@ -68,17 +70,29 @@ class MfaDisableRequest(BaseModel):
 class RegisterRequest(BaseModel):
     username: str
     password: str = Field(min_length=8)
+    email: str | None = None
+
+
+class PasswordResetRequest(BaseModel):
+    username: str
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str = Field(min_length=8)
 
 
 class EngagementCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     scope_notes: str = ""
+    scope_json: list[str] | str | None = None
     status: str = "active"
 
 
 class EngagementUpdate(BaseModel):
     name: str | None = None
     scope_notes: str | None = None
+    scope_json: list[str] | str | None = None
 
 
 class EngagementStatusUpdate(BaseModel):
@@ -195,7 +209,7 @@ async def auth_register(req: RegisterRequest):
     if not settings.auth_allow_register:
         raise HTTPException(status_code=403, detail="Registration closed")
     try:
-        u = register_user(req.username, req.password)
+        u = register_user(req.username, req.password, email=req.email)
         result = login(req.username, req.password)
         if isinstance(result, dict):
             return {"user": {"id": u.id, "username": u.username, "role": u.role}, **result}
@@ -217,6 +231,24 @@ async def auth_login(req: LoginRequest):
         return {"user": {"id": user.id, "username": user.username, "role": user.role}, "token": token}
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@router.post("/auth/password-reset/request")
+async def auth_password_reset_request(req: PasswordResetRequest):
+    if not settings.auth_enabled:
+        raise HTTPException(status_code=400, detail="Auth disabled — set AUTH_ENABLED=true")
+    return request_password_reset(req.username)
+
+
+@router.post("/auth/password-reset/confirm")
+async def auth_password_reset_confirm(req: PasswordResetConfirm):
+    if not settings.auth_enabled:
+        raise HTTPException(status_code=400, detail="Auth disabled — set AUTH_ENABLED=true")
+    try:
+        reset_password_with_token(req.token, req.new_password)
+        return {"ok": True, "message": "Password updated — sign in with the new password"}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/auth/mfa/verify")
@@ -352,12 +384,12 @@ async def eng_list(
 async def eng_create(req: EngagementCreate, user: Annotated[AuthUser, Depends(require_user)]):
     if req.status not in ENGAGEMENT_STATUSES:
         raise HTTPException(status_code=400, detail=f"status must be one of: {', '.join(ENGAGEMENT_STATUSES)}")
-    return create_engagement(user.id, req.name, req.scope_notes, req.status)
+    return create_engagement(user.id, req.name, req.scope_notes, req.status, scope_json=req.scope_json)
 
 
 @router.patch("/engagements/{engagement_id}")
 async def eng_update(engagement_id: str, req: EngagementUpdate, user: Annotated[AuthUser, Depends(require_user)]):
-    out = update_engagement(user.id, engagement_id, req.name, req.scope_notes)
+    out = update_engagement(user.id, engagement_id, req.name, req.scope_notes, scope_json=req.scope_json)
     if not out:
         raise HTTPException(status_code=404, detail="Not found")
     return out

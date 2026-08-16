@@ -468,18 +468,31 @@
     const panel = qs("vulnDetailPanel");
     if (!panel) return;
     if (!v) {
-      panel.innerHTML = `<p class="hint">Select a finding to see AI summary, patch guidance, and evidence.</p>`;
+      panel.innerHTML = `<p class="hint vuln-detail-empty">Select a finding to see severity, guidance, and AI actions.</p>`;
       return;
     }
     const age = vulnAgeDays(v);
     const src = (v.source || "").split(":")[0] || "import";
     const refs = [];
     if (v.cve) refs.push(`https://nvd.nist.gov/vuln/detail/${encodeURIComponent(v.cve)}`);
+    let raw = v.raw;
+    if (typeof raw === "string") {
+      try {
+        raw = JSON.parse(raw);
+      } catch {
+        raw = null;
+      }
+    }
+    const guidance =
+      (raw && (raw.guidance || raw.note)) ||
+      "";
+    const scope = (raw && raw.scope) || "";
+    const sev = (v.severity || "info").toLowerCase();
     panel.innerHTML = `
       <header class="entity-detail-head">
-        <p class="sev sev-${escapeHtml(v.severity)}">${escapeHtml(v.severity || "—")}</p>
-        <h2>${escapeHtml(v.cve || "Finding")}</h2>
-        <p class="entity-detail-title">${escapeHtml(v.title || "")}</p>
+        <p class="sev-badge sev-${escapeHtml(sev)}">${escapeHtml(sev)}</p>
+        <h2 class="entity-detail-title">${escapeHtml(v.title || v.cve || "Finding")}</h2>
+        ${v.cve ? `<p class="entity-detail-cve">${escapeHtml(v.cve)}</p>` : ""}
       </header>
       <dl class="entity-meta">
         <div><dt>CVSS</dt><dd>${escapeHtml(v.cvss != null ? v.cvss : "—")}</dd></div>
@@ -489,12 +502,16 @@
         <div><dt>SLA</dt><dd>${escapeHtml(v.sla_due || "—")}</dd></div>
         <div><dt>Age</dt><dd>${age == null ? "—" : age + "d"}</dd></div>
         <div><dt>Scanner</dt><dd>${escapeHtml(src)}</dd></div>
-        <div><dt>Exploit</dt><dd>${v.cve ? "Check KEV / advisory" : "—"}</dd></div>
+        <div><dt>Exposure</dt><dd>${escapeHtml(scope || (v.cve ? "Check KEV / advisory" : "—"))}</dd></div>
       </dl>
+      ${
+        guidance
+          ? `<section class="entity-section"><h3>Guidance</h3><p class="entity-guidance">${escapeHtml(String(guidance))}</p></section>`
+          : ""
+      }
       <section class="entity-section">
-        <h3>AI Summary</h3>
-        <p class="hint">Use the assistant for root cause, attack path, and suggested fix without leaving this page.</p>
-        <div class="cc-action-row">
+        <h3>AI actions</h3>
+        <div class="cc-action-row entity-ai-actions">
           <button type="button" class="btn-primary-cc ws-ask-ai" data-kind="vuln" data-json="${escapeHtml(
             JSON.stringify({
               id: v.id,
@@ -503,11 +520,12 @@
               severity: v.severity,
               asset_name: v.asset_name,
               cvss: v.cvss,
+              scope,
             })
           )}">Ask AI</button>
           <button type="button" class="btn-secondary ws-vuln-ai" data-prompt="root">Root cause</button>
           <button type="button" class="btn-secondary ws-vuln-ai" data-prompt="patch">Suggest fix</button>
-          <button type="button" class="btn-secondary ws-vuln-ai" data-prompt="ticket">Generate ticket</button>
+          <button type="button" class="btn-secondary ws-vuln-ai" data-prompt="ticket">Ticket</button>
         </div>
       </section>
       <section class="entity-section">
@@ -520,13 +538,13 @@
           }
         </ul>
       </section>
-      <section class="entity-section">
-        <h3>MITRE / Evidence / Timeline</h3>
-        <p class="hint">Map techniques via Knowledge Graph · attach evidence on triage · SLA ${escapeHtml(
+      <section class="entity-section entity-section-muted">
+        <h3>Context</h3>
+        <p class="hint">MITRE / evidence via Knowledge Graph · SLA ${escapeHtml(
           v.sla_due || "unset"
         )} · updated ${escapeHtml(v.updated_at || v.created_at || "—")}</p>
       </section>
-      <div class="cc-action-row">
+      <div class="cc-action-row entity-triage-actions">
         <button type="button" class="btn-primary-cc ws-triage-vuln" data-id="${escapeHtml(v.id)}" data-jira="0">Triage</button>
         <button type="button" class="btn-secondary ws-triage-vuln" data-id="${escapeHtml(v.id)}" data-jira="1">Triage+Jira</button>
         <button type="button" class="btn-secondary ws-vuln-jira" data-id="${escapeHtml(v.id)}">Jira</button>
@@ -538,10 +556,14 @@
     panel.querySelectorAll(".ws-vuln-ai").forEach((btn) => {
       btn.addEventListener("click", () => {
         const kind = btn.getAttribute("data-prompt");
+        const scopeHint =
+          /127\.|localhost|::1/i.test(String(v.asset_name || "")) || scope === "loopback"
+            ? " Asset is loopback — not remotely exposed; focus on local Windows hardening for SMB/RDP, not internet RCE."
+            : "";
         const prompts = {
-          root: `Root-cause analysis for ${v.cve || ""} — ${v.title || v.id} on asset ${v.asset_name || "?"}. Include contributing config issues and blast radius.`,
-          patch: `Suggest fix and verify steps for ${v.cve || ""} — ${v.title || v.id} (severity=${v.severity}, CVSS=${v.cvss ?? "?"}).`,
-          ticket: `Draft a Jira-ready remediation ticket for ${v.cve || ""} — ${v.title || v.id} with acceptance criteria and SLA.`,
+          root: `Root-cause analysis for ${v.cve || ""} — ${v.title || v.id} on asset ${v.asset_name || "?"}.${scopeHint} Include contributing config issues and realistic blast radius.`,
+          patch: `Suggest fix and verify steps for ${v.cve || ""} — ${v.title || v.id} (severity=${v.severity}, CVSS=${v.cvss ?? "?"}, exposure=${scope || "unknown"}).${scopeHint}`,
+          ticket: `Draft a Jira-ready remediation ticket for ${v.cve || ""} — ${v.title || v.id} with acceptance criteria and SLA.${scopeHint}`,
         };
         if (typeof window.runNavPrompt === "function") {
           window.runNavPrompt("blueteam", prompts[kind] || prompts.patch, { stay: true });
@@ -781,11 +803,22 @@
     wireCloudSyncBtn();
     wireCloudImportBtn();
     wireSonarSyncBtns();
+    wireCodeScanUi();
   }
 
   async function renderSonarPanel() {
     const el = qs("sonarPanelBody");
     if (!el) return;
+    const pathEl = qs("codeScanPath");
+    if (pathEl && !pathEl.value) {
+      const fromLive =
+        (typeof window.getScanTarget === "function" && window.getScanTarget()) ||
+        (document.getElementById("scanTargetIp") || {}).value ||
+        "";
+      if (fromLive && (/[\\/]/.test(fromLive) || fromLive.length > 2)) {
+        pathEl.value = fromLive;
+      }
+    }
     try {
       const res = await fetch("/api/code/status", { headers: authHeaders() });
       const st = await res.json().catch(() => ({}));
@@ -794,22 +827,172 @@
         ? ping.ok
           ? `<span class="auto-job-status status-done">connected</span>`
           : `<span class="auto-job-status status-error">error</span>`
-        : `<span class="auto-job-status status-planned">not configured</span>`;
+        : `<span class="auto-job-status status-planned">local SAST</span>`;
       el.innerHTML = `
-        <p>${chip}
-          <strong>SecuraIQ Code</strong>
-          ${st.base_url ? `<span class="hint">${escapeHtml(st.base_url)}</span>` : ""}
-          ${st.project_key ? `<span class="hint">project ${escapeHtml(st.project_key)}</span>` : ""}
-        </p>
+        <p class="vuln-source-status">${chip}${
+          st.base_url ? ` <span class="hint">${escapeHtml(st.base_url)}</span>` : ""
+        }${st.project_key ? ` <span class="hint">· ${escapeHtml(st.project_key)}</span>` : ""}</p>
         <p class="hint">${
           st.configured
             ? ping.ok
-              ? `Ready · ${escapeHtml(String(ping.status || "UP"))}${ping.version ? ` · v${escapeHtml(String(ping.version))}` : ""} · Sync pulls open issues into this register (realtime).`
-              : escapeHtml(ping.error || "Connection failed — check token in Settings → SecuraIQ Code")
-            : "Settings → SecuraIQ Code: set engine URL + token, then Sync. Or run the SecuraIQ Code tool / local code_scan."
+              ? `Engine ready · ${escapeHtml(String(ping.status || "UP"))}${ping.version ? ` · v${escapeHtml(String(ping.version))}` : ""}`
+              : escapeHtml(ping.error || "Connection failed — check Settings → SecuraIQ Code")
+            : "Path + Auth → Scan folder. Findings stream into the register. Optional engine Sync in Settings."
         }</p>`;
     } catch (err) {
       el.innerHTML = `<p class="hint">SecuraIQ Code panel unavailable: ${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  function setCodeScanLive(text, show) {
+    const live = qs("codeScanLive");
+    if (!live) return;
+    if (!show) {
+      live.hidden = true;
+      live.textContent = "";
+      return;
+    }
+    live.hidden = false;
+    live.textContent = text || "";
+  }
+
+  async function runCodeFolderScan() {
+    const pathEl = qs("codeScanPath");
+    const authEl = qs("codeScanAuth");
+    const btn = qs("codeScanRunBtn");
+    const path = ((pathEl && pathEl.value) || "").trim();
+    const authorized = !!(authEl && authEl.checked);
+    if (!path) {
+      if (typeof notifyUser === "function") {
+        notifyUser("**Set a local project path** in SecuraIQ Code (folder you own), then Scan folder.");
+      }
+      pathEl?.focus();
+      return;
+    }
+    if (typeof window.setScanTarget === "function") {
+      window.setScanTarget(path, authorized);
+    } else {
+      const liveTarget = document.getElementById("scanTargetIp");
+      const liveAuth = document.getElementById("scanAuthorized");
+      if (liveTarget) liveTarget.value = path;
+      if (liveAuth) liveAuth.checked = authorized;
+    }
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Scanning…";
+    }
+    setCodeScanLive("Starting code analysis…", true);
+    if (typeof setLiveState === "function") {
+      setLiveState("live-busy", "Code analysis…", path);
+    }
+    try {
+      const res = await fetch("/api/code/scan/stream", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ path, authorized, sync_engine: false }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.detail || `HTTP ${res.status}`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let data = null;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n");
+        buf = parts.pop() || "";
+        for (const line of parts) {
+          const raw = line.trim();
+          if (!raw) continue;
+          let ev;
+          try {
+            ev = JSON.parse(raw);
+          } catch {
+            continue;
+          }
+          if (ev.event === "tool_progress") {
+            const scanned = Number(ev.scanned || 0);
+            const total = Number(ev.total || 0);
+            const findings = Number(ev.findings || 0);
+            setCodeScanLive(
+              `Scanning ${scanned}/${total || "?"} · ${findings} hit(s)${ev.file ? ` · ${ev.file}` : ""}`,
+              true
+            );
+            if (typeof setLiveState === "function") {
+              setLiveState(
+                "live-busy",
+                `Code scan ${scanned}/${total || "?"}`,
+                `${findings} findings`
+              );
+            }
+          } else if (ev.event === "tool_start") {
+            setCodeScanLive(`Running ${ev.name || ev.tool}…`, true);
+          } else if (ev.event === "done") {
+            data = ev.payload || {};
+          }
+        }
+      }
+      const vp = (data && data.vulnerabilities_persisted) || {};
+      const created = Number(vp.created || 0);
+      const ok = !!(data && data.ok);
+      setCodeScanLive(
+        ok
+          ? `Done · ${created} finding(s) saved${vp.asset_name ? ` · asset ${vp.asset_name}` : ""}`
+          : `Finished with errors · ${(data && data.error) || "see chat / tool output"}`,
+        true
+      );
+      if (typeof notifyUser === "function") {
+        notifyUser(
+          ok
+            ? `**Code analysis complete** · **${created}** finding(s) live in Vulnerabilities`
+            : `**Code analysis issue:** ${(data && data.error) || "see output"}`
+        );
+      }
+      renderSonarPanel();
+      renderVulnsPage();
+      if (typeof loadCommandCenter === "function") loadCommandCenter();
+      if (typeof loadAssets === "function") loadAssets();
+      if (typeof setLiveState === "function") setLiveState("live-on", "Ready", "");
+    } catch (err) {
+      setCodeScanLive(`Failed: ${err.message || err}`, true);
+      if (typeof notifyUser === "function") notifyUser(`**Code scan failed:** ${err.message || err}`);
+      if (typeof setLiveState === "function") setLiveState("live-off", "Code scan error", "");
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Scan folder";
+      }
+    }
+  }
+
+  function wireCodeScanUi() {
+    const runBtn = qs("codeScanRunBtn");
+    if (runBtn && !runBtn.dataset.wired) {
+      runBtn.dataset.wired = "1";
+      runBtn.addEventListener("click", () => runCodeFolderScan());
+    }
+    const pathEl = qs("codeScanPath");
+    if (pathEl && !pathEl.dataset.wired) {
+      pathEl.dataset.wired = "1";
+      pathEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          runCodeFolderScan();
+        }
+      });
+    }
+    const openBtn = qs("vulnsOpenCodeScan");
+    if (openBtn && !openBtn.dataset.wired) {
+      openBtn.dataset.wired = "1";
+      openBtn.addEventListener("click", () => {
+        const panel = qs("sonarPanel");
+        panel?.scrollIntoView({ behavior: "smooth", block: "start" });
+        qs("codeScanPath")?.focus();
+      });
     }
   }
 
@@ -894,13 +1077,13 @@
           }</li>`;
       el.innerHTML = `
         ${vendorChips}
-        <div class="cc-kpi-grid" style="margin:0.5rem 0">
-          <article class="cc-kpi"><span>Findings cached</span><strong>${st.findings_cached || 0}</strong></article>
-          <article class="cc-kpi"><span>Vendors configured</span><strong>${st.configured_count || 0}</strong></article>
+        <div class="vuln-cloud-kpis">
+          <article class="cc-kpi"><span>Cached</span><strong>${st.findings_cached || 0}</strong></article>
+          <article class="cc-kpi"><span>Vendors</span><strong>${st.configured_count || 0}</strong></article>
         </div>
-        <p class="hint">Recent cloud findings (also appear in vuln table)</p>
+        <p class="hint vuln-cloud-label">Recent cloud findings</p>
         <ul class="cc-list">${findingsHtml}</ul>
-        <p class="hint">Settings → Cloud posture. Sync pulls from Security Hub / Defender / SCC into vulnerabilities.</p>`;
+        <p class="hint">Settings → Cloud posture to connect Security Hub / Defender / SCC.</p>`;
     } catch (err) {
       el.innerHTML = `<p class="hint">Cloud posture panel unavailable: ${escapeHtml(err.message)}</p>`;
     }

@@ -29,7 +29,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/style.css?v=110" />
+  <link rel="stylesheet" href="/style.css?v=121" />
   <script src="/vendor/marked.min.js"></script>
 </head>
 <body>
@@ -174,15 +174,15 @@
             <span class="scope-kicker">Org</span>
             <strong id="topOrgName">Local</strong>
           </button>
-          <button type="button" class="scope-btn" id="topProjectsBtn" title="Project / engagement">
+          <button type="button" class="scope-btn scope-btn-project" id="topProjectsBtn" title="Project / engagement">
             <span class="scope-kicker">Project</span>
             <strong id="topProjectName">Workspace</strong>
+            <span class="scope-env" id="topEnvName" title="Environment">Live</span>
           </button>
-          <span class="scope-env" id="topEnvName" title="Environment">Empty</span>
         </div>
         <div class="topbar-search-wrap">
           <label class="visually-hidden" for="globalSearch">Search workspace</label>
-          <input id="globalSearch" type="search" class="topbar-search" placeholder="Search assets, CVEs, users, reports…" autocomplete="off" enterkeyhint="search" />
+          <input id="globalSearch" type="search" class="topbar-search" placeholder="Search…" autocomplete="off" enterkeyhint="search" />
           <div id="searchResults" class="search-results hidden" role="listbox" aria-label="Search results"></div>
         </div>
         <div class="live-ticker" id="liveTicker" data-state="live-off" title="Realtime control feed">
@@ -240,10 +240,8 @@
               <p class="hint hidden" id="mcTodaySummary" hidden></p>
             </div>
             <dl class="mc-context-meta">
-              <div><dt>Security score</dt><dd id="mcSecurityScore">0</dd></div>
-              <div><dt>Last scan</dt><dd id="mcLastScan">Never</dd></div>
               <div><dt>Framework</dt><dd id="mcFramework">—</dd></div>
-              <div><dt>Environment</dt><dd id="mcEnvironment">Empty</dd></div>
+              <div><dt>Last scan</dt><dd id="mcLastScan">Never</dd></div>
             </dl>
           </div>
 
@@ -271,78 +269,86 @@
           </section>
 
           <div id="mcLiveDashboard" class="mc-live-dashboard" hidden>
-          <div class="mc-workflow-progress" id="mcWorkflowProgress" aria-label="Security workflow">
+          <div class="mc-workflow-progress" id="mcWorkflowProgress" aria-label="Finding lifecycle">
             <div class="mc-wf-step" data-wf="imported"><span>Findings</span><strong id="wfImported">0</strong></div>
             <div class="mc-wf-step" data-wf="triaged"><span>Triaged</span><strong id="wfTriaged">0</strong></div>
             <div class="mc-wf-step" data-wf="actions"><span>Actions</span><strong id="wfActions">0</strong></div>
             <div class="mc-wf-step" data-wf="closed"><span>Closed</span><strong id="wfClosed">0</strong></div>
           </div>
-          <div class="mc-agent-row" aria-label="AI agents">
-            <button type="button" class="agent-chip" data-view="chat" data-mode="blueteam" data-prompt="Act as SOC Analyst: summarize open incidents and critical vulns, recommend next 3 actions">SOC Analyst</button>
-            <button type="button" class="agent-chip" data-view="chat" data-mode="xdr" data-prompt="Act as XDR Analyst: correlate endpoint, identity, email, and network signals for our open critical findings into an attack chain with verdict and response steps">XDR Analyst</button>
-            <button type="button" class="agent-chip" data-view="chat" data-mode="ciso" data-prompt="Act as Compliance Officer: review framework gaps and evidence needed this week">Compliance</button>
-            <button type="button" class="agent-chip" data-view="chat" data-mode="threat_hunt" data-prompt="Act as Threat Hunter: prioritize hunts from our critical findings and intel watchlist">Threat Hunter</button>
-            <button type="button" class="agent-chip" data-view="chat" data-mode="ciso" data-prompt="Act as Executive Advisor: draft a board-ready security posture summary">Executive</button>
-          </div>
 
-          <div class="mc-workflow-row" aria-label="Quick actions">
-            <button type="button" class="cc-action" id="mcLiveScanQuick" data-action="live-scan">Live scan</button>
-            <button type="button" class="cc-action" data-workspace="vulns" id="mcImportScanners">Import (optional)</button>
-            <button type="button" class="cc-action" data-module="gap">Gap analysis</button>
-            <button type="button" class="cc-action" data-workspace="evidence">Evidence</button>
-            <button type="button" class="cc-action" data-view="chat" data-mode="ciso" data-prompt="Draft a board update from Mission Control: score, top risks, compliance %, and this week’s remediations">Board update</button>
+          <div class="mc-action-bar" aria-label="Primary actions">
+            <div class="mc-workflow-row" aria-label="Quick actions">
+              <button type="button" class="cc-action cc-action-primary" id="mcLiveScanQuick" data-action="live-scan">Live scan</button>
+              <button type="button" class="cc-action" data-module="gap">Gap analysis</button>
+              <button type="button" class="cc-action" data-workspace="evidence">Evidence</button>
+              <button type="button" class="cc-action" data-view="chat" data-mode="ciso" data-prompt="Draft a board update from Mission Control: score, top risks, compliance %, and this week’s remediations">Board update</button>
+              <button type="button" class="cc-action cc-action-quiet" data-workspace="vulns" id="mcImportScanners">Import</button>
+            </div>
+            <div class="mc-agent-row" aria-label="Ask an agent">
+              <span class="mc-agent-label">Ask</span>
+              <button type="button" class="agent-chip" data-view="chat" data-mode="blueteam" data-prompt="Act as SOC Analyst: summarize open incidents and critical vulns, recommend next 3 actions">SOC</button>
+              <button type="button" class="agent-chip" data-view="chat" data-mode="xdr" data-prompt="Act as XDR Analyst: correlate endpoint, identity, email, and network signals for our open critical findings into an attack chain with verdict and response steps">XDR</button>
+              <button type="button" class="agent-chip" data-view="chat" data-mode="ciso" data-prompt="Act as Compliance Officer: review framework gaps and evidence needed this week">Compliance</button>
+              <button type="button" class="agent-chip" data-view="chat" data-mode="threat_hunt" data-prompt="Act as Threat Hunter: prioritize hunts from our critical findings and intel watchlist">Hunt</button>
+              <button type="button" class="agent-chip" data-view="chat" data-mode="ciso" data-prompt="Act as Executive Advisor: draft a board-ready security posture summary">Executive</button>
+            </div>
           </div>
 
           <div class="cc-kpi-grid mc-kpi-grid mc-kpi-hero" id="ccKpis">
+            <button type="button" class="cc-kpi mc-kpi mc-kpi-alert" data-workspace="vulns">
+              <span class="mc-kpi-label">Critical / high</span>
+              <strong id="ccCrit">0</strong>
+              <em class="mc-trend" id="ccCritTrend"></em>
+            </button>
             <button type="button" class="cc-kpi mc-kpi mc-kpi-primary" data-workspace="frameworks">
               <span class="mc-kpi-label">Security score</span>
               <div class="mc-gauge" id="ccScoreGauge" style="--p:0">
                 <strong id="ccScore">0</strong>
               </div>
-              <em class="mc-trend" id="ccScoreTrend">—</em>
               <span class="mc-kpi-level" id="ccScoreLevel">Nil</span>
-            </button>
-            <button type="button" class="cc-kpi mc-kpi" data-workspace="risks">
-              <span class="mc-kpi-label">Open risks</span>
-              <strong id="ccRisks">0</strong>
-              <em class="mc-trend" id="ccRiskTrend">—</em>
+              <em class="mc-trend" id="ccScoreTrend"></em>
             </button>
             <button type="button" class="cc-kpi mc-kpi" data-workspace="frameworks">
               <span class="mc-kpi-label">Compliance</span>
               <strong id="ccCompliance">0%</strong>
               <div class="cc-bar"><i id="ccComplianceBar" style="width:0%"></i></div>
-              <em class="mc-trend" id="ccCompTrend">—</em>
-            </button>
-            <button type="button" class="cc-kpi mc-kpi mc-kpi-alert" data-workspace="vulns">
-              <span class="mc-kpi-label">Critical alerts</span>
-              <strong id="ccCrit">0</strong>
-              <em class="mc-trend" id="ccCritTrend">—</em>
-            </button>
-            <button type="button" class="cc-kpi mc-kpi" data-workspace="soc">
-              <span class="mc-kpi-label">Open incidents</span>
-              <strong id="ccIncidents">0</strong>
-              <em class="mc-trend" id="ccIncidentTrend">—</em>
-            </button>
-            <button type="button" class="cc-kpi mc-kpi" data-workspace="assets">
-              <span class="mc-kpi-label">Assets</span>
-              <strong id="ccAssets">0</strong>
-              <em class="mc-trend" id="ccAssetTrend">—</em>
+              <em class="mc-trend" id="ccCompTrend"></em>
             </button>
             <button type="button" class="cc-kpi mc-kpi" data-workspace="remediations">
               <span class="mc-kpi-label">Open actions</span>
               <strong id="ccRems">0</strong>
-              <em class="mc-trend" id="ccRemTrend">Work queue</em>
+              <em class="mc-trend" id="ccRemTrend"></em>
+            </button>
+            <button type="button" class="cc-kpi mc-kpi" data-workspace="risks">
+              <span class="mc-kpi-label">Open risks</span>
+              <strong id="ccRisks">0</strong>
+              <em class="mc-trend" id="ccRiskTrend"></em>
+            </button>
+            <button type="button" class="cc-kpi mc-kpi" data-workspace="soc">
+              <span class="mc-kpi-label">Incidents</span>
+              <strong id="ccIncidents">0</strong>
+              <em class="mc-trend" id="ccIncidentTrend"></em>
+            </button>
+            <button type="button" class="cc-kpi mc-kpi" data-workspace="assets">
+              <span class="mc-kpi-label">Assets</span>
+              <strong id="ccAssets">0</strong>
+              <em class="mc-trend" id="ccAssetTrend"></em>
+            </button>
+            <button type="button" class="cc-kpi mc-kpi" data-workspace="vulns">
+              <span class="mc-kpi-label">All findings</span>
+              <strong id="ccFindingsTotal">0</strong>
+              <em class="mc-trend" id="ccFindingsTrend"></em>
             </button>
           </div>
 
           <section class="cc-panel mc-decision" id="mcDecisionPanel">
             <header>
-              <h2>AI recommendation</h2>
+              <h2>What to do next</h2>
               <button type="button" class="btn-secondary" id="mcAskDecision" data-view="chat" data-mode="ciso" data-prompt="From Mission Control posture, what happened, why, what should I do next, and create a remediation plan">Ask AI</button>
             </header>
             <div class="mc-decision-grid">
               <div>
-                <p class="mc-kicker">What needs attention</p>
+                <p class="mc-kicker">Attention</p>
                 <p id="mcDecisionWhat" class="mc-decision-body">Import a scan or run gap analysis to unlock guidance.</p>
               </div>
               <div>
@@ -465,10 +471,8 @@
           </div>
           <div id="aiTab-chat" class="ai-tab-panel">
             <div id="emptyState" class="empty-state">
-              <div class="empty-mark" aria-hidden="true"><img src="/icon.svg" alt="" width="52" height="52" /></div>
               <p class="empty-brand">SecuraIQ</p>
-              <p class="empty-tag">Industrial Security Control</p>
-              <p class="empty-lead" id="emptyLead">Live workspace — run tools on owned targets, or query posture from real findings and controls.</p>
+              <p class="empty-lead" id="emptyLead">Ask about authorized security work — posture, findings, or remediations.</p>
               <div class="empty-suite" id="emptySuite">
                 <button type="button" class="suite-chip" data-view="command">Control Board</button>
                 <button type="button" class="suite-chip" data-action="live-scan">Live scan</button>
@@ -527,35 +531,49 @@
               <div class="page-head-actions">
               <button type="button" class="btn-primary-cc" id="vulnsOpenLiveScan" data-action="live-scan">Live scan</button>
               <button type="button" class="btn-secondary" id="vulnsOpenImport">Import</button>
-              <button type="button" class="btn-secondary" id="sonarSyncBtn">Sync SecuraIQ Code</button>
+              <button type="button" class="btn-secondary" id="vulnsOpenCodeScan">Code scan</button>
+              <button type="button" class="btn-secondary" id="sonarSyncBtn">Sync engine</button>
               <button type="button" class="btn-secondary" id="vulnsOpenExport">Export</button>
             </div>
           </div>
           <div class="vuln-layout">
             <div class="vuln-main">
-              <section class="cc-panel vuln-side-panel" id="sonarPanel">
-                <header><h2>SecuraIQ Code</h2>
-                  <div class="page-head-actions">
-                    <button type="button" class="btn-secondary" id="sonarPanelSyncBtn">Sync</button>
+              <div class="vuln-sources">
+                <section class="cc-panel vuln-source-card" id="sonarPanel">
+                  <header>
+                    <h2>SecuraIQ Code</h2>
+                    <div class="page-head-actions">
+                      <button type="button" class="btn-primary-cc" id="codeScanRunBtn">Scan folder</button>
+                      <button type="button" class="btn-secondary" id="sonarPanelSyncBtn">Sync</button>
+                    </div>
+                  </header>
+                  <div class="code-scan-form" id="codeScanForm">
+                    <label class="sr-only" for="codeScanPath">Project path</label>
+                    <input type="text" id="codeScanPath" placeholder="Local project path (e.g. E:\Hackgpt\Hackgpt-ai)" autocomplete="off" />
+                    <label class="code-scan-auth"><input type="checkbox" id="codeScanAuth" checked /> Auth</label>
                   </div>
-                </header>
-                <div id="sonarPanelBody"><p class="hint">Loading…</p></div>
-              </section>
-              <section class="cc-panel vuln-side-panel" id="cloudPosturePanel">
-                <header><h2>Cloud posture</h2>
-                  <div class="page-head-actions">
-                    <button type="button" class="btn-secondary" id="cloudImportBtn">Import JSON</button>
-                    <button type="button" class="btn-secondary" id="cloudSyncBtn">Sync cloud</button>
-                  </div>
-                </header>
-                <input type="file" id="cloudImportInput" accept=".json,application/json" class="hidden" />
-                <div id="cloudPosturePanelBody"><p class="hint">Loading…</p></div>
-              </section>
-              <div id="vulnFilterBar" class="filter-bar" aria-label="Vulnerability filters"></div>
-              <div id="vulnsPageBody"></div>
+                  <p class="hint code-scan-live" id="codeScanLive" hidden></p>
+                  <div id="sonarPanelBody"><p class="hint">Loading…</p></div>
+                </section>
+                <section class="cc-panel vuln-source-card" id="cloudPosturePanel">
+                  <header>
+                    <h2>Cloud posture</h2>
+                    <div class="page-head-actions">
+                      <button type="button" class="btn-secondary" id="cloudImportBtn">Import JSON</button>
+                      <button type="button" class="btn-secondary" id="cloudSyncBtn">Sync cloud</button>
+                    </div>
+                  </header>
+                  <input type="file" id="cloudImportInput" accept=".json,application/json" class="hidden" />
+                  <div id="cloudPosturePanelBody"><p class="hint">Loading…</p></div>
+                </section>
+              </div>
+              <div class="vuln-findings">
+                <div id="vulnFilterBar" class="filter-bar" aria-label="Vulnerability filters"></div>
+                <div id="vulnsPageBody"></div>
+              </div>
             </div>
             <aside id="vulnDetailPanel" class="entity-detail-panel" aria-label="Finding detail">
-              <p class="hint">Select a finding to see AI summary, patch guidance, and evidence.</p>
+              <p class="hint vuln-detail-empty">Select a finding to see severity, guidance, and AI actions.</p>
             </aside>
           </div>
         </section>
@@ -690,15 +708,20 @@
           <div id="aiAssistThread" class="ai-assist-thread hidden" aria-live="polite"></div>
           <div class="intent-row" id="intentRow" role="group" aria-label="AI actions">
             <button type="button" class="intent-chip" data-intent="executive" data-mode="ciso" data-prompt="Write an executive summary of our Mission Control posture: score, critical risks, compliance, and decisions needed this week">Executive Summary</button>
-            <button type="button" class="intent-chip" data-intent="rootcause" data-mode="blueteam" data-prompt="For the highest priority open finding, explain root cause, contributing factors, and blast radius">Root Cause</button>
-            <button type="button" class="intent-chip" data-intent="attackpath" data-mode="threat_hunt" data-prompt="Map a plausible attack path from our critical findings using assets and knowledge-graph relationships">Attack Path</button>
-            <button type="button" class="intent-chip" data-intent="ticket" data-mode="blueteam" data-prompt="Draft a Jira-ready remediation ticket for the top critical vulnerability with acceptance criteria">Generate Ticket</button>
-            <button type="button" class="intent-chip" data-intent="report" data-mode="ciso" data-prompt="Generate a board-ready security report from Mission Control data">Generate Report</button>
+            <button type="button" class="intent-chip" data-intent="investigate" data-mode="threat_hunt" data-prompt="Run an investigation plan: hypotheses, evidence to collect, MITRE techniques, and next actions">Investigate</button>
             <button type="button" class="intent-chip" data-intent="fix" data-mode="blueteam" data-prompt="Suggest concrete fixes and verify steps for our top critical/high findings">Suggest Fix</button>
-            <button type="button" class="intent-chip" data-intent="playbook" data-mode="ir" data-prompt="Create an IR playbook outline for our highest severity open incident or critical vuln">Create Playbook</button>
-            <button type="button" class="intent-chip" data-intent="investigate" data-mode="threat_hunt" data-prompt="Run an investigation plan: hypotheses, evidence to collect, MITRE techniques, and next actions">Run Investigation</button>
-            <button type="button" class="intent-chip" data-intent="xdr" data-mode="xdr" data-prompt="XDR threat analysis: correlate EDR, identity, email, and network telemetry for our top alert into verdict, blast radius, and response">XDR Threat Analysis</button>
+            <button type="button" class="intent-chip" data-intent="report" data-mode="ciso" data-prompt="Generate a board-ready security report from Mission Control data">Report</button>
             <button type="button" class="intent-chip" data-intent="tools">Tools</button>
+            <details class="intent-more">
+              <summary>More</summary>
+              <div class="intent-more-menu" role="group" aria-label="More AI actions">
+                <button type="button" class="intent-chip" data-intent="rootcause" data-mode="blueteam" data-prompt="For the highest priority open finding, explain root cause, contributing factors, and blast radius">Root Cause</button>
+                <button type="button" class="intent-chip" data-intent="attackpath" data-mode="threat_hunt" data-prompt="Map a plausible attack path from our critical findings using assets and knowledge-graph relationships">Attack Path</button>
+                <button type="button" class="intent-chip" data-intent="ticket" data-mode="blueteam" data-prompt="Draft a Jira-ready remediation ticket for the top critical vulnerability with acceptance criteria">Generate Ticket</button>
+                <button type="button" class="intent-chip" data-intent="playbook" data-mode="ir" data-prompt="Create an IR playbook outline for our highest severity open incident or critical vuln">Create Playbook</button>
+                <button type="button" class="intent-chip" data-intent="xdr" data-mode="xdr" data-prompt="XDR threat analysis: correlate EDR, identity, email, and network telemetry for our top alert into verdict, blast radius, and response">XDR Analysis</button>
+              </div>
+            </details>
           </div>
 
           <div id="toolsPalette" class="tools-palette hidden" aria-label="Cyber tools palette">
@@ -771,35 +794,37 @@
           </div>
 
           <div class="composer-options">
-            <label class="composer-agent-label" for="mode">Agent</label>
-            <select id="mode" class="composer-select composer-select-mode" title="AI agent">
-              <optgroup label="Agents">
-                <option value="blueteam">SOC Analyst</option>
-                <option value="xdr">XDR Analyst</option>
-                <option value="threat_hunt">Threat Hunter</option>
-                <option value="ciso">Compliance Officer</option>
-                <option value="assess">Risk Advisor</option>
-                <option value="cloud">Cloud Architect</option>
-                <option value="appsec">Secure Code Reviewer</option>
-                <option value="ir">Incident Responder</option>
-                <option value="assess">Executive Advisor</option>
-                <option value="malware">Malware Analyst</option>
-                <option value="awareness">Awareness Lead</option>
-                <option value="tabletop">Tabletop Facilitator</option>
-              </optgroup>
-              <optgroup label="Labs">
-                <option value="default" selected>General security</option>
-                <option value="research">Threat Intel Research</option>
-                <option value="purple">Purple Team</option>
-                <option value="redteam">Red Team</option>
-                <option value="lab">Lab</option>
-                <option value="lab_offensive">Lab Offensive</option>
-                <option value="ctf">CTF</option>
-              </optgroup>
-            </select>
-            <input type="text" id="targetIp" class="target-input composer-target" placeholder="Owned target IP / host — or local folder for code_scan" autocomplete="off" spellcheck="false" />
+            <div class="composer-options-primary">
+              <label class="composer-agent-label" for="mode">Agent</label>
+              <select id="mode" class="composer-select composer-select-mode" title="AI agent">
+                <optgroup label="Agents">
+                  <option value="blueteam">SOC Analyst</option>
+                  <option value="xdr">XDR Analyst</option>
+                  <option value="threat_hunt">Threat Hunter</option>
+                  <option value="ciso">Compliance Officer</option>
+                  <option value="assess">Risk Advisor</option>
+                  <option value="cloud">Cloud Architect</option>
+                  <option value="appsec">Secure Code Reviewer</option>
+                  <option value="ir">Incident Responder</option>
+                  <option value="assess">Executive Advisor</option>
+                  <option value="malware">Malware Analyst</option>
+                  <option value="awareness">Awareness Lead</option>
+                  <option value="tabletop">Tabletop Facilitator</option>
+                </optgroup>
+                <optgroup label="Labs">
+                  <option value="default" selected>General security</option>
+                  <option value="research">Threat Intel Research</option>
+                  <option value="purple">Purple Team</option>
+                  <option value="redteam">Red Team</option>
+                  <option value="lab">Lab</option>
+                  <option value="lab_offensive">Lab Offensive</option>
+                  <option value="ctf">CTF</option>
+                </optgroup>
+              </select>
+              <input type="text" id="targetIp" class="target-input composer-target" placeholder="Owned target / code path" autocomplete="off" spellcheck="false" />
+            </div>
             <details class="composer-advanced">
-              <summary>Advanced model routing</summary>
+              <summary>Model &amp; routing</summary>
               <div class="composer-advanced-body">
                 <select id="backend" class="composer-select" title="Model backend">
                   <optgroup label="Local">
@@ -821,20 +846,20 @@
                 <select id="model" class="composer-select composer-select-grow" title="Model">
                   <option value="">Loading models...</option>
                 </select>
+                <div class="composer-meta-actions composer-advanced-actions">
+                  <button id="pullModel" type="button" class="meta-link" title="Pull selected model via Ollama">Pull</button>
+                  <button id="ingestRag" type="button" class="meta-link" title="Re-index knowledge base">Re-index</button>
+                  <button id="preloadModel" type="button" class="meta-link hidden" title="Preload local model">Preload</button>
+                  <button id="trainUnsloth" type="button" class="meta-link hidden" title="Fine-tune with Unsloth">Train Unsloth</button>
+                  <button id="hermesNewSession" type="button" class="meta-link hidden" title="Start a new Hermes Agent session">New Hermes</button>
+                </div>
               </div>
             </details>
             <span id="status" class="status composer-status visually-hidden" aria-live="polite">Connecting...</span>
           </div>
 
-          <div class="composer-meta-row">
-            <p id="toolsStatus" class="tools-status visually-hidden" title="Built-in tools always work; PATH tools when installed">Tools: ...</p>
-            <div class="composer-meta-actions">
-              <button id="pullModel" type="button" class="meta-link" title="Pull selected model via Ollama">Pull</button>
-              <button id="ingestRag" type="button" class="meta-link" title="Re-index knowledge base">Re-index</button>
-              <button id="preloadModel" type="button" class="meta-link hidden" title="Preload local model">Preload</button>
-              <button id="trainUnsloth" type="button" class="meta-link hidden" title="Fine-tune with Unsloth">Train Unsloth</button>
-              <button id="hermesNewSession" type="button" class="meta-link hidden" title="Start a new Hermes Agent session">New Hermes</button>
-            </div>
+          <div class="composer-meta-row visually-hidden" aria-hidden="true">
+            <p id="toolsStatus" class="tools-status" title="Built-in tools always work; PATH tools when installed">Tools: ...</p>
           </div>
 
           <input
@@ -1543,6 +1568,9 @@
         <label>Password
           <input type="password" id="authPass" autocomplete="current-password" />
         </label>
+        <label>Email (optional — needed for password reset)
+          <input type="email" id="authEmail" autocomplete="email" />
+        </label>
         <label id="authMfaWrap" class="hidden">Authenticator code
           <input type="text" id="authMfa" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code" maxlength="8" />
         </label>
@@ -1822,7 +1850,7 @@
     </div>
   </div>
 
-  <script src="/app.js?v=117"></script>
-  <script src="/workspace.js?v=117"></script>
+  <script src="/app.js?v=126"></script>
+  <script src="/workspace.js?v=125"></script>
 </body>
 </html>

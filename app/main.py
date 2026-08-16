@@ -103,9 +103,15 @@ def _encode_citations(sources: list[dict]) -> str:
 async def lifespan(app: FastAPI):
     try:
         init_schema()
+        from app.auth import assert_safe_deployment_auth
+
+        assert_safe_deployment_auth()
         bootstrap_auth()
         ensure_gap_schema()
         ensure_org_schema()
+        from app.tenancy import ensure_tenant_schema
+
+        ensure_tenant_schema()
         ensure_graph_schema()
         ensure_webhook_schema()
         ensure_intel_cache_schema()
@@ -120,6 +126,9 @@ async def lifespan(app: FastAPI):
         ensure_wazuh_schema()
     except Exception as exc:
         print(f"DB/auth bootstrap: {exc}")
+        # Hard-fail unsafe production auth misconfig
+        if "AUTH_ENABLED" in str(exc) or "DEPLOYMENT_MODE" in str(exc) or "HOST=" in str(exc):
+            raise
     try:
         from app.enterprise import apply_workspace_zero_start
 
@@ -993,6 +1002,7 @@ class ToolsRunRequest(BaseModel):
     tools: list[str] | None = None
     authorized_target: bool = False
     auto: bool = False
+    engagement_id: str | None = Field(default=None, max_length=64)
 
 
 @app.post("/api/tools/run")
@@ -1014,6 +1024,7 @@ async def api_tools_run(req: ToolsRunRequest, request: Request):
         auto=req.auto and not req.tools,
         include_heavy=settings.local_tools_allow_heavy or bool(req.tools),
         user_id=uid,
+        engagement_id=req.engagement_id,
     )
     result["markdown"] = format_tools_context(result)
     return result
@@ -1042,6 +1053,7 @@ async def api_tools_run_stream(req: ToolsRunRequest, request: Request):
             auto=req.auto and not req.tools,
             include_heavy=settings.local_tools_allow_heavy or bool(req.tools),
             user_id=uid,
+            engagement_id=req.engagement_id,
         ):
             if ev.get("event") == "done":
                 payload = dict(ev.get("payload") or {})

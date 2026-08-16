@@ -24,7 +24,18 @@ When `AUTH_ENABLED=false`, all API writes use synthetic user `local` with `admin
 | List members | ✓ | ✓ | ✓ |
 | Evidence links | ✓ | ✓ | read |
 
-Org checks enforced in `app/commercial_ext.py` — viewer is read-only for org admin actions.
+Org checks enforced in `app/commercial_ext.py` and `app/rbac.py` — viewer is read-only for org write actions.
+
+## Permission actions (`app/rbac.py`)
+
+| Action | Global | Org min role |
+|--------|--------|--------------|
+| asset.read / vuln.read / risk.read | admin, user | viewer |
+| asset.write / vuln.write / vuln.triage / tools.run | admin, user | analyst |
+| org.manage / audit.read | admin | admin |
+| settings.write | admin | (global admin only) |
+
+Tenant header: `X-SecuraIQ-Org: <org_id>` scopes asset/vuln lists. Core rows stamp `org_id` via `app/tenancy.py`.
 
 ## Auth endpoints
 

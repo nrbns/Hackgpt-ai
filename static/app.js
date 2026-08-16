@@ -81,6 +81,21 @@ function getScanAuthorized() {
   if (scanAuthorizedEl) return !!scanAuthorizedEl.checked;
   return !!(authorizedTargetEl && authorizedTargetEl.checked);
 }
+
+function setScanTarget(path, authorized) {
+  const t = (path || "").trim();
+  if (scanTargetIpEl) scanTargetIpEl.value = t;
+  if (targetIpEl) targetIpEl.value = t;
+  if (typeof authorized === "boolean") {
+    if (scanAuthorizedEl) scanAuthorizedEl.checked = authorized;
+    if (authorizedTargetEl) authorizedTargetEl.checked = authorized;
+  }
+  syncScanTargetFields(true);
+}
+
+window.getScanTarget = getScanTarget;
+window.getScanAuthorized = getScanAuthorized;
+window.setScanTarget = setScanTarget;
 const toolsStatusEl = document.getElementById("toolsStatus");
 const statusEl = document.getElementById("status");
 const liveBarEl = document.getElementById("liveBar");
@@ -1207,7 +1222,7 @@ function paintLiveDeck(state, phaseText, activity, data) {
     const vulns = rt.kpis && rt.kpis.vulns_open != null ? rt.kpis.vulns_open : null;
     const inc = rt.kpis && rt.kpis.incidents_open != null ? rt.kpis.incidents_open : null;
     if (vulns != null || inc != null) {
-      kpiEl.textContent = `open ${vulns ?? "—"}v / ${inc ?? "—"}i`;
+      kpiEl.textContent = `${vulns ?? "—"} findings · ${inc ?? "—"} incidents`;
     }
   }
 }
@@ -1385,6 +1400,17 @@ function startRealtimeFeed() {
           const n = Number(data.notifications_unread) || 0;
           badge.hidden = n <= 0;
           badge.textContent = n > 99 ? "99+" : String(n);
+        }
+        if (pushType === "tool_progress" && (streaming || window.__securaiqStreaming)) {
+          const p = push || {};
+          const scanned = Number(p.scanned || 0);
+          const total = Number(p.total || 0);
+          const findings = Number(p.findings || 0);
+          setLiveState(
+            "live-busy",
+            `Code scan ${scanned}/${total || "?"}`,
+            `${findings} findings${p.file ? ` · ${p.file}` : ""}`
+          );
         }
         // Detect job completions → notify workspace to refresh
         const prevJobs = JSON.stringify((prev.jobs_recent || []).map((j) => `${j.id}:${j.status}`));
@@ -2042,6 +2068,8 @@ function wireCommandCenterUi() {
   document.querySelectorAll(".intent-chip").forEach((chip) => {
     chip.addEventListener("click", () => {
       const intent = chip.getAttribute("data-intent");
+      const more = chip.closest(".intent-more");
+      if (more) more.open = false;
       showView("chat");
       if (intent === "attach") {
         chatAttachInput?.click();
@@ -2333,6 +2361,7 @@ async function runSelectedTools() {
         target,
         tools: selectedTools,
         authorized_target: authorized,
+        engagement_id: engagementSelectEl?.value || null,
         message: `authorized assessment of ${target}`,
       }),
     });
@@ -2364,6 +2393,16 @@ async function runSelectedTools() {
           if (toolsPaletteOutEl) {
             toolsPaletteOutEl.classList.remove("hidden");
             toolsPaletteOutEl.textContent = `Running: ${list}`;
+          }
+        } else if (ev.event === "tool_progress") {
+          const scanned = Number(ev.scanned || 0);
+          const total = Number(ev.total || 0);
+          const findings = Number(ev.findings || 0);
+          const label = `Code scan ${scanned}/${total || "?"} · ${findings} hit(s)`;
+          setLiveState("live-busy", label, ev.file || toolList);
+          if (toolsPaletteOutEl) {
+            toolsPaletteOutEl.classList.remove("hidden");
+            toolsPaletteOutEl.textContent = label + (ev.file ? ` · ${ev.file}` : "");
           }
         } else if (ev.event === "tool_done" && ev.run) {
           doneRuns.push(ev.run);
@@ -2446,7 +2485,12 @@ function askAboutEntity(kind, payload) {
     },
     vuln: {
       mode: "blueteam",
-      prompt: `Triage vulnerability ${p.cve || ""} — ${p.title || p.id} (severity=${p.severity || "?"}, asset=${p.asset_name || "?"}). Give exploitability notes, detection, and patch/workaround steps for an authorized environment.`,
+      prompt: `Triage vulnerability ${p.cve || ""} — ${p.title || p.id} (severity=${p.severity || "?"}, asset=${p.asset_name || "?"}).
+
+Rules:
+- If asset is 127.0.0.1, ::1, or localhost, treat as loopback-only: not internet-exposed; do NOT claim remote/unauthenticated RCE from the public internet.
+- Match severity to real exposure (loopback = local hardening; RFC1918 = LAN/lateral; public = remote).
+- Be concrete for an authorized environment: detection, patch/workaround, verify. No generic scanner marketing.`,
     },
     remediation: {
       mode: "ciso",
@@ -2571,7 +2615,7 @@ async function loadCommandCenter() {
     };
     const fmtApi = (d) => {
       const n = Number(d || 0);
-      if (!n) return "→ flat";
+      if (!n) return "";
       return n > 0 ? `↑ ${n}` : `↓ ${Math.abs(n)}`;
     };
     if (emptyWorkspace) {
@@ -2582,8 +2626,8 @@ async function loadCommandCenter() {
       } catch {
         /* ignore */
       }
-      ["ccScoreTrend", "ccCompTrend", "ccCritTrend", "ccRiskTrend", "ccRemTrend", "ccAssetTrend", "ccIncidentTrend"].forEach(
-        (id) => setTrend(id, "—", true)
+      ["ccScoreTrend", "ccCompTrend", "ccCritTrend", "ccRiskTrend", "ccRemTrend", "ccAssetTrend", "ccIncidentTrend", "ccFindingsTrend"].forEach(
+        (id) => setTrend(id, "", true)
       );
     } else if (trends.has_baseline) {
       setTrend("ccScoreTrend", fmtApi(trends.security_index_delta), true);
@@ -2593,6 +2637,7 @@ async function loadCommandCenter() {
       setTrend("ccRemTrend", fmtApi(trends.rems_delta), false);
       setTrend("ccAssetTrend", fmtApi(trends.assets_delta), true);
       setTrend("ccIncidentTrend", fmtApi(trends.incidents_delta), false);
+      setTrend("ccFindingsTrend", fmtApi(trends.findings_delta || trends.vulns_delta), false);
     } else {
       const snapKey = "securaiq.kpi.snap";
       let prev = {};
@@ -2602,9 +2647,9 @@ async function loadCommandCenter() {
         prev = {};
       }
       const delta = (cur, key) => {
-        if (prev[key] == null) return "New";
+        if (prev[key] == null) return "";
         const d = cur - Number(prev[key] || 0);
-        if (d === 0) return "→ flat";
+        if (d === 0) return "";
         return d > 0 ? `↑ ${d}` : `↓ ${Math.abs(d)}`;
       };
       setTrend("ccScoreTrend", delta(index, "index"), true);
@@ -2614,6 +2659,7 @@ async function loadCommandCenter() {
       setTrend("ccRemTrend", delta(openRems, "rems"), false);
       setTrend("ccAssetTrend", delta(Number(data.assets_total || 0), "assets"), true);
       setTrend("ccIncidentTrend", delta(Number(data.incidents_open || 0), "incidents"), false);
+      setTrend("ccFindingsTrend", delta(Number(data.vulnerabilities_total || 0), "findings"), false);
       localStorage.setItem(
         snapKey,
         JSON.stringify({
@@ -2624,18 +2670,24 @@ async function loadCommandCenter() {
           rems: openRems,
           assets: data.assets_total || 0,
           incidents: data.incidents_open || 0,
+          findings: data.vulnerabilities_total || 0,
           at: Date.now(),
         })
       );
     }
 
+    const complianceRounded = Math.round(emptyWorkspace ? 0 : compliance);
     if (scoreEl) scoreEl.textContent = String(emptyWorkspace ? 0 : index);
-    if (compEl) compEl.textContent = emptyWorkspace ? "0%" : `${compliance}%`;
-    if (barEl) barEl.style.width = `${Math.min(100, emptyWorkspace ? 0 : compliance)}%`;
+    if (compEl) compEl.textContent = emptyWorkspace ? "0%" : `${complianceRounded}%`;
+    if (barEl) barEl.style.width = `${Math.min(100, complianceRounded)}%`;
     if (critEl) critEl.textContent = String(emptyWorkspace ? 0 : crit);
     if (risksEl) risksEl.textContent = String(emptyWorkspace ? 0 : openRisks);
     if (remsEl) remsEl.textContent = String(emptyWorkspace ? 0 : openRems);
     if (assetsEl) assetsEl.textContent = String(emptyWorkspace ? 0 : data.assets_total || 0);
+    const findingsTotalEl = document.getElementById("ccFindingsTotal");
+    if (findingsTotalEl) {
+      findingsTotalEl.textContent = String(emptyWorkspace ? 0 : data.vulnerabilities_total || 0);
+    }
     const gauge = document.getElementById("ccScoreGauge");
     if (gauge) gauge.style.setProperty("--p", String(Math.min(100, Math.max(0, emptyWorkspace ? 0 : index))));
     const levelEl = document.getElementById("ccScoreLevel");
@@ -2659,7 +2711,10 @@ async function loadCommandCenter() {
     const topEnv = document.getElementById("topEnvName");
     if (topEnv) {
       const env = emptyWorkspace ? "Empty" : mc.environment || "Live";
-      topEnv.textContent = env.split(/[·/]/)[0].trim() || "Live";
+      const short = env.split(/[·/]/)[0].trim() || "Live";
+      topEnv.title = short;
+      // Keep topbar compact — full phrase belongs in title tooltip
+      topEnv.textContent = short.replace(/\s+workspace$/i, "").trim() || "Live";
     }
     const topProj = document.getElementById("topProjectName");
     if (topProj) topProj.textContent = engagementSelectEl?.selectedOptions?.[0]?.textContent || "Workspace";
@@ -2672,9 +2727,7 @@ async function loadCommandCenter() {
       if (el) el.textContent = v;
     };
     setTxt("mcOrgName", mc.organization || "Local workspace");
-    setTxt("mcSecurityScore", String(emptyWorkspace ? 0 : mc.security_score != null ? mc.security_score : index));
     setTxt("mcFramework", emptyWorkspace ? "—" : mc.framework || "—");
-    setTxt("mcEnvironment", emptyWorkspace ? "Empty" : mc.environment || "Live workspace");
     const brief = briefData.brief || data.morning_brief || {};
     const greetEl = document.getElementById("mcGreeting");
     if (greetEl) {
@@ -2685,31 +2738,25 @@ async function loadCommandCenter() {
     }
     const aiSum = document.getElementById("mcAiSummary");
     if (aiSum) {
-      // One lead line only when empty — the Start-at-zero card carries the CTA (avoid triple repeat).
-      aiSum.textContent =
-        emptyWorkspace
-          ? "Your workspace is empty — pick a path below when you’re ready."
-          : brief.summary || `Score ${index} · ${crit} critical/high · ${openRisks} open risks.`;
+      if (emptyWorkspace) {
+        aiSum.textContent = "Your workspace is empty — pick a path below when you’re ready.";
+      } else {
+        const fw = (mc.framework || "compliance").toString();
+        aiSum.textContent =
+          brief.summary ||
+          `Score ${index} · ${complianceRounded}% ${fw} · ${crit} critical/high need attention · ${openRems} open actions.`;
+      }
     }
     const lastScan = mc.last_scan;
     if (lastScan) {
       const d = new Date(Number(lastScan) * (Number(lastScan) < 1e12 ? 1000 : 1));
       setTxt("mcLastScan", Number.isNaN(d.getTime()) ? String(lastScan) : d.toLocaleString());
     } else setTxt("mcLastScan", emptyWorkspace ? "Never" : "No scans yet");
-    const today = mc.today || {};
     const todayEl = document.getElementById("mcTodaySummary");
     if (todayEl) {
-      if (emptyWorkspace) {
-        todayEl.textContent = "";
-        todayEl.hidden = true;
-        todayEl.classList.add("hidden");
-      } else {
-        todayEl.hidden = false;
-        todayEl.classList.remove("hidden");
-        todayEl.textContent = `Today: ${today.critical_findings || 0} critical/high · ${today.open_risks || 0} open risks · ${
-          today.open_actions || 0
-        } actions · ${today.open_incidents || 0} incidents`;
-      }
+      todayEl.textContent = "";
+      todayEl.hidden = true;
+      todayEl.classList.add("hidden");
     }
 
     const viewCommand = document.getElementById("viewCommand");
@@ -3539,10 +3586,11 @@ function appendMessage(role, content, isHtml = false) {
 function resizeInput() {
   if (!inputEl) return;
   inputEl.style.height = "auto";
-  const cap = Math.min(
-    inputEl.scrollHeight,
-    (window.visualViewport?.height || window.innerHeight) * 0.28
-  );
+  const vh = window.visualViewport?.height || window.innerHeight;
+  const isChat = composerWrapEl?.classList.contains("is-chat");
+  const maxFrac = isChat ? 0.14 : 0.28;
+  const minPx = isChat ? 28 : 0;
+  const cap = Math.max(minPx, Math.min(inputEl.scrollHeight, vh * maxFrac));
   inputEl.style.height = `${cap}px`;
 }
 
@@ -5114,11 +5162,12 @@ on(document.getElementById("mfaDisableBtn"), "click", async () => {
 on(document.getElementById("authRegisterBtn"), "click", async () => {
   const username = document.getElementById("authUser")?.value?.trim();
   const password = document.getElementById("authPass")?.value || "";
+  const email = document.getElementById("authEmail")?.value?.trim() || null;
   try {
     const res = await fetch("/api/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, email }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);

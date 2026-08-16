@@ -27,18 +27,25 @@ def create_engagement(
     name: str,
     scope_notes: str = "",
     status: str = "active",
+    scope_json: str | list | None = None,
 ) -> dict[str, Any]:
     if status not in ENGAGEMENT_STATUSES:
         status = "active"
+    from app.services.tool_policy import scope_to_storage
+
     eid = new_id()
     t = now()
+    scope_stored = scope_to_storage(scope_json)
     c = get_conn()
     c.execute(
-        "INSERT INTO engagements (id, user_id, name, scope_notes, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (eid, user_id, (name or "Engagement").strip(), scope_notes or "", status, t, t),
+        """
+        INSERT INTO engagements (id, user_id, name, scope_notes, scope_json, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (eid, user_id, (name or "Engagement").strip(), scope_notes or "", scope_stored, status, t, t),
     )
     c.commit()
-    audit("engagement_create", user_id, {"id": eid, "name": name, "status": status})
+    audit("engagement_create", user_id, {"id": eid, "name": name, "status": status, "scope_size": len(json.loads(scope_stored or "[]"))})
     return get_engagement(user_id, eid)  # type: ignore[return-value]
 
 
@@ -94,16 +101,32 @@ def get_engagement(user_id: str, engagement_id: str) -> dict[str, Any] | None:
     return row_to_dict(row)
 
 
-def update_engagement(user_id: str, engagement_id: str, name: str | None = None, scope_notes: str | None = None) -> dict[str, Any] | None:
+def update_engagement(
+    user_id: str,
+    engagement_id: str,
+    name: str | None = None,
+    scope_notes: str | None = None,
+    scope_json: str | list | None = None,
+) -> dict[str, Any] | None:
     eng = get_engagement(user_id, engagement_id)
     if not eng:
         return None
+    from app.services.tool_policy import scope_to_storage
+
+    next_scope = eng.get("scope_json") or "[]"
+    if scope_json is not None:
+        next_scope = scope_to_storage(scope_json)
     c = get_conn()
     c.execute(
-        "UPDATE engagements SET name = ?, scope_notes = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+        """
+        UPDATE engagements
+        SET name = ?, scope_notes = ?, scope_json = ?, updated_at = ?
+        WHERE id = ? AND user_id = ?
+        """,
         (
             name if name is not None else eng["name"],
             scope_notes if scope_notes is not None else eng["scope_notes"],
+            next_scope,
             now(),
             engagement_id,
             user_id,

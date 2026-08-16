@@ -42,6 +42,22 @@ jobs:
       - run: pip install bandit
       - run: bandit -r app -ll -x app/fine_tune -f screen
 
+  sast-semgrep:
+    name: Semgrep (SAST, broad ruleset)
+    runs-on: ubuntu-latest
+    # Bandit above only covers Python; Semgrep's `auto` config also covers
+    # static/app.js and picks up cross-language OWASP-class rules — the same
+    # `semgrep --config=auto` this repo's in-app `semgrep` tool runs locally.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install semgrep
+      - run: semgrep --config=auto --error app static || true
+        # `|| true` for now — report-only until findings are triaged, matching
+        # the other non-blocking jobs in this workflow.
+
   secret-scan:
     name: Gitleaks (secret scanning)
     runs-on: ubuntu-latest
@@ -78,3 +94,81 @@ jobs:
           directory: .
           framework: docker_compose
           soft_fail: true  # report-only until findings are triaged
+
+  codeql:
+    name: CodeQL (GitHub-native SAST)
+    runs-on: ubuntu-latest
+    # Was zero real CodeQL coverage anywhere — the in-app `codeql` tool can
+    # only detect the CLI and print guidance (a single generic invocation
+    # can't safely analyze an arbitrary repo without a per-language DB build),
+    # so *this* job is the actual automated CodeQL run against SecuraIQ
+    # itself. Findings land in the repo's Security tab (code scanning alerts).
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["python", "javascript"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+      - uses: github/codeql-action/autobuild@v3
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  sbom:
+    name: SBOM (CycloneDX)
+    runs-on: ubuntu-latest
+    # Was completely missing — nothing generated a software bill of materials
+    # for the pinned dependency set, so there was no artifact to hand a
+    # customer/auditor asking "what's actually in this build".
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install cyclonedx-bom
+      - name: Generate SBOM from requirements.txt
+        run: cyclonedx-py requirements requirements.txt -o sbom.cyclonedx.json --of json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cyclonedx.json
+          retention-days: 90
+
+  dast-self-scan:
+    name: ZAP baseline (DAST against SecuraIQ itself)
+    runs-on: ubuntu-latest
+    # Every other job here scans SecuraIQ's source/deps/container — none of
+    # them actually attacked the running app the way a DAST tool would.
+    # Boots the real Docker image (same one container-scan builds) and runs
+    # OWASP ZAP's baseline passive+light-active scan against its public
+    # surface (health, static assets, docs) before auth is involved.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t securaiq:ci .
+      - name: Run SecuraIQ
+        run: |
+          docker run -d --name securaiq-ci -p 8080:8080 securaiq:ci
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/api/health >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -sf http://localhost:8080/api/health || (docker logs securaiq-ci; exit 1)
+      - name: ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: "http://localhost:8080"
+          cmd_options: "-I"  # report-only for now — exit-code fails don't block the pipeline yet
+        # `|| true` at the job level would also work; -I keeps ZAP's own exit
+        # code informational until findings have a documented triage process,
+        # matching the pattern used by the other report-only jobs above.
+      - name: Dump app logs on failure
+        if: failure()
+        run: docker logs securaiq-ci || true

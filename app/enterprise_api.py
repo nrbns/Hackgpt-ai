@@ -5,41 +5,49 @@ from __future__ import annotations
 import re
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app.auth import AuthUser
 from app.commercial_api import require_user
-from app.enterprise import (
+from app.rbac import require_perm
+from app.services.tenancy import resolve_request_org
+from app.services.assets import (
     create_asset,
+    delete_asset,
+    list_assets,
+    update_asset,
+)
+from app.services.findings import (
+    get_vulnerability,
+    import_vulnerabilities,
+    list_vulnerabilities,
+    triage_vulnerability,
+    update_vulnerability,
+)
+from app.services.risk import (
+    create_risk,
+    delete_risk,
+    list_risks,
+    update_risk,
+)
+from app.enterprise import (
     create_campaign,
     create_playbook,
     create_remediation,
-    create_risk,
-    delete_asset,
     delete_campaign,
     delete_playbook,
-    delete_risk,
     enterprise_dashboard,
     evidence_from_files,
     export_risk_markdown,
     export_vuln_markdown,
-    get_vulnerability,
-    import_vulnerabilities,
-    list_assets,
     list_campaigns,
     list_playbooks,
     list_remediations,
-    list_risks,
-    list_vulnerabilities,
-    triage_vulnerability,
-    update_asset,
     update_campaign,
     update_playbook,
     update_remediation,
-    update_risk,
-    update_vulnerability,
 )
 from app.gap_analysis import ensure_gap_schema, run_gap_analysis
 
@@ -251,12 +259,25 @@ async def workspace_reset(req: WorkspaceResetRequest, user: Annotated[AuthUser, 
 
 
 @router.get("/assets")
-async def assets_list(user: Annotated[AuthUser, Depends(require_user)], engagement_id: str | None = None):
-    return {"assets": list_assets(user.id, engagement_id)}
+async def assets_list(
+    user: Annotated[AuthUser, Depends(require_user)],
+    engagement_id: str | None = None,
+    org_id: str | None = None,
+    x_securaiq_org: str | None = Header(default=None, alias="X-SecuraIQ-Org"),
+):
+    oid = resolve_request_org(user, org_id=org_id, header_org=x_securaiq_org)
+    require_perm(user, "asset.read", org_id=oid)
+    return {"assets": list_assets(user.id, engagement_id, org_id=oid), "org_id": oid}
 
 
 @router.post("/assets")
-async def assets_create(req: AssetCreate, user: Annotated[AuthUser, Depends(require_user)]):
+async def assets_create(
+    req: AssetCreate,
+    user: Annotated[AuthUser, Depends(require_user)],
+    x_securaiq_org: str | None = Header(default=None, alias="X-SecuraIQ-Org"),
+):
+    oid = resolve_request_org(user, header_org=x_securaiq_org)
+    require_perm(user, "asset.write", org_id=oid)
     return create_asset(
         user.id,
         req.name,
@@ -265,11 +286,13 @@ async def assets_create(req: AssetCreate, user: Annotated[AuthUser, Depends(requ
         owner=req.owner,
         notes=req.notes,
         engagement_id=req.engagement_id,
+        org_id=oid,
     )
 
 
 @router.patch("/assets/{asset_id}")
 async def assets_update(asset_id: str, req: AssetUpdate, user: Annotated[AuthUser, Depends(require_user)]):
+    require_perm(user, "asset.write")
     out = update_asset(user.id, asset_id, req.model_dump(exclude_none=True))
     if not out:
         raise HTTPException(status_code=404, detail="Not found")
@@ -278,6 +301,7 @@ async def assets_update(asset_id: str, req: AssetUpdate, user: Annotated[AuthUse
 
 @router.delete("/assets/{asset_id}")
 async def assets_delete(asset_id: str, user: Annotated[AuthUser, Depends(require_user)]):
+    require_perm(user, "asset.write")
     if not delete_asset(user.id, asset_id):
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}
@@ -288,8 +312,11 @@ async def risks_list(
     user: Annotated[AuthUser, Depends(require_user)],
     engagement_id: str | None = None,
     status: str | None = None,
+    org_id: str | None = None,
+    x_securaiq_org: str | None = Header(default=None, alias="X-SecuraIQ-Org"),
 ):
-    return {"risks": list_risks(user.id, engagement_id=engagement_id, status=status)}
+    oid = resolve_request_org(user, org_id=org_id, header_org=x_securaiq_org)
+    return {"risks": list_risks(user.id, engagement_id=engagement_id, status=status, org_id=oid), "org_id": oid}
 
 
 @router.get("/risks/export")
@@ -325,12 +352,22 @@ async def vulns_list(
     user: Annotated[AuthUser, Depends(require_user)],
     engagement_id: str | None = None,
     status: str | None = None,
+    org_id: str | None = None,
+    x_securaiq_org: str | None = Header(default=None, alias="X-SecuraIQ-Org"),
 ):
-    return {"vulnerabilities": list_vulnerabilities(user.id, engagement_id=engagement_id, status=status)}
+    oid = resolve_request_org(user, org_id=org_id, header_org=x_securaiq_org)
+    require_perm(user, "vuln.read", org_id=oid)
+    return {
+        "vulnerabilities": list_vulnerabilities(
+            user.id, engagement_id=engagement_id, status=status, org_id=oid
+        ),
+        "org_id": oid,
+    }
 
 
 @router.get("/vulnerabilities/export")
 async def vulns_export(user: Annotated[AuthUser, Depends(require_user)], engagement_id: str | None = None):
+    require_perm(user, "report.export")
     return PlainTextResponse(
         export_vuln_markdown(user.id, engagement_id),
         media_type="text/markdown; charset=utf-8",
@@ -342,7 +379,10 @@ async def vulns_import(
     user: Annotated[AuthUser, Depends(require_user)],
     file: UploadFile = File(...),
     engagement_id: str | None = None,
+    x_securaiq_org: str | None = Header(default=None, alias="X-SecuraIQ-Org"),
 ):
+    oid = resolve_request_org(user, header_org=x_securaiq_org)
+    require_perm(user, "vuln.write", org_id=oid)
     data = await file.read()
     try:
         return import_vulnerabilities(
@@ -382,6 +422,7 @@ async def vulns_sample_import(
 
 @router.patch("/vulnerabilities/{vuln_id}")
 async def vulns_update(vuln_id: str, req: VulnUpdate, user: Annotated[AuthUser, Depends(require_user)]):
+    require_perm(user, "vuln.write")
     out = update_vulnerability(user.id, vuln_id, req.model_dump(exclude_none=True))
     if not out:
         raise HTTPException(status_code=404, detail="Not found")
@@ -396,6 +437,7 @@ class VulnTriage(BaseModel):
 @router.post("/vulnerabilities/{vuln_id}/triage")
 async def vulns_triage(vuln_id: str, req: VulnTriage, user: Annotated[AuthUser, Depends(require_user)]):
     """Golden path: finding → risk + remediation (+ optional Jira)."""
+    require_perm(user, "vuln.triage")
     try:
         out = triage_vulnerability(user.id, vuln_id, owner=req.owner, create_ticket_hint=req.create_jira)
     except ValueError as exc:
@@ -453,11 +495,19 @@ async def rem_list(
     assessment_id: str | None = None,
     engagement_id: str | None = None,
     status: str | None = None,
+    org_id: str | None = None,
+    x_securaiq_org: str | None = Header(default=None, alias="X-SecuraIQ-Org"),
 ):
+    oid = resolve_request_org(user, org_id=org_id, header_org=x_securaiq_org)
     return {
         "remediations": list_remediations(
-            user.id, assessment_id=assessment_id, engagement_id=engagement_id, status=status
-        )
+            user.id,
+            assessment_id=assessment_id,
+            engagement_id=engagement_id,
+            status=status,
+            org_id=oid,
+        ),
+        "org_id": oid,
     }
 
 
@@ -478,8 +528,11 @@ async def rem_update(rem_id: str, req: RemediationUpdate, user: Annotated[AuthUs
 async def playbooks_list(
     user: Annotated[AuthUser, Depends(require_user)],
     engagement_id: str | None = None,
+    org_id: str | None = None,
+    x_securaiq_org: str | None = Header(default=None, alias="X-SecuraIQ-Org"),
 ):
-    return {"playbooks": list_playbooks(user.id, engagement_id)}
+    oid = resolve_request_org(user, org_id=org_id, header_org=x_securaiq_org)
+    return {"playbooks": list_playbooks(user.id, engagement_id, org_id=oid), "org_id": oid}
 
 
 @router.post("/playbooks")
@@ -508,8 +561,11 @@ async def playbooks_delete(playbook_id: str, user: Annotated[AuthUser, Depends(r
 async def campaigns_list(
     user: Annotated[AuthUser, Depends(require_user)],
     engagement_id: str | None = None,
+    org_id: str | None = None,
+    x_securaiq_org: str | None = Header(default=None, alias="X-SecuraIQ-Org"),
 ):
-    return {"campaigns": list_campaigns(user.id, engagement_id)}
+    oid = resolve_request_org(user, org_id=org_id, header_org=x_securaiq_org)
+    return {"campaigns": list_campaigns(user.id, engagement_id, org_id=oid), "org_id": oid}
 
 
 @router.post("/campaigns")

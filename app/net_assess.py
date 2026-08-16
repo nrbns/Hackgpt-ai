@@ -60,9 +60,14 @@ def extract_targets(text: str, explicit: str | None = None) -> list[str]:
         found.append(explicit.strip())
     for m in _IP_RE.finditer(text or ""):
         found.append(m.group(0))
+    _HINT_STOP = {
+        "target", "host", "ip", "scan", "assess", "the", "a", "an", "my",
+        "code", "folder", "path", "local", "repo", "project", "with", "for",
+        "this", "that", "using", "run", "check", "probe",
+    }
     for m in _HOST_HINT_RE.finditer(text or ""):
         host = m.group(1).strip(".,;:")
-        if host.lower() not in {"target", "host", "ip", "scan", "assess", "the", "a"}:
+        if host.lower() not in _HINT_STOP and not host.lower().endswith((".py", ".js", ".ts", ".go", ".java", ".json")):
             found.append(host)
     # de-dupe
     seen: set[str] = set()

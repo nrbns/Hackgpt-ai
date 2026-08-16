@@ -101,3 +101,13 @@ def test_tools_split_securaiq_vs_third_party():
     assert TOOL_CATALOG["openvas"].kind == "builtin"
     assert TOOL_CATALOG["securaiq_code"].origin == "securaiq"
     assert TOOL_CATALOG["securaiq_code"].kind == "builtin"
+
+
+def test_extract_targets_ignores_scan_code_phrase():
+    # Regression: "scan code <path>" must not treat the word "code" as a hostname
+    # (that caused code_scan / securaiq_code to fail with getaddrinfo).
+    from app.net_assess import extract_targets
+
+    assert "code" not in {t.lower() for t in extract_targets("scan code C:\\lab\\app", None)}
+    assert "code" not in {t.lower() for t in extract_targets("scan code /home/lab/app", None)}
+    assert extract_targets("scan 10.10.10.5", None) == ["10.10.10.5"]

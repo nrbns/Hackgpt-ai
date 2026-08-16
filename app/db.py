@@ -1,8 +1,9 @@
-"""SQLite persistence for users, engagements, chats, audit, memory, files."""
+"""SQLite / Postgres persistence for users, engagements, chats, audit, memory, files."""
 
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -13,7 +14,8 @@ from typing import Any
 from app.config import settings
 
 _lock = threading.Lock()
-_conn: sqlite3.Connection | None = None
+_conn: Any = None
+_backend: str = "sqlite"  # sqlite | postgres
 
 
 def _db_path() -> Path:
@@ -22,19 +24,169 @@ def _db_path() -> Path:
     return path
 
 
-def get_conn() -> sqlite3.Connection:
-    global _conn
+def using_postgres() -> bool:
+    url = (settings.database_url or "").strip().lower()
+    return url.startswith("postgres://") or url.startswith("postgresql://")
+
+
+def current_backend() -> str:
+    return "postgres" if using_postgres() else "sqlite"
+
+
+class _PgCursor:
+    """psycopg cursor that accepts SQLite-style `?` placeholders."""
+
+    def __init__(self, cur: Any):
+        self._cur = cur
+
+    @staticmethod
+    def _rewrite(sql: str) -> str:
+        # Rewrite unbound `?` placeholders only (not inside simple quotes).
+        out: list[str] = []
+        in_str = False
+        i = 0
+        while i < len(sql):
+            ch = sql[i]
+            if ch == "'":
+                out.append(ch)
+                if in_str and i + 1 < len(sql) and sql[i + 1] == "'":
+                    out.append("'")
+                    i += 2
+                    continue
+                in_str = not in_str
+                i += 1
+                continue
+            if ch == "?" and not in_str:
+                out.append("%s")
+                i += 1
+                continue
+            out.append(ch)
+            i += 1
+        return "".join(out)
+
+    def execute(self, sql: str, params: Any = None):
+        q = self._rewrite(sql)
+        if params is None:
+            self._cur.execute(q)
+        else:
+            self._cur.execute(q, params)
+        return self
+
+    def executemany(self, sql: str, seq_of_params: Any):
+        self._cur.executemany(self._rewrite(sql), seq_of_params)
+        return self
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+    def __getattr__(self, name: str):
+        return getattr(self._cur, name)
+
+
+class _PgConn:
+    """Thin adapter so call sites keep using sqlite3-style APIs."""
+
+    def __init__(self, conn: Any):
+        self._conn = conn
+
+    def execute(self, sql: str, params: Any = None):
+        cur = _PgCursor(self._conn.cursor())
+        cur.execute(sql, params)
+        return cur
+
+    def executemany(self, sql: str, seq_of_params: Any):
+        cur = _PgCursor(self._conn.cursor())
+        cur.executemany(sql, seq_of_params)
+        return cur
+
+    def executescript(self, script: str):
+        # Strip SQLite-only PRAGMAs; run statement-by-statement.
+        cleaned = re.sub(r"(?im)^\s*PRAGMA\b.*?;\s*$", "", script)
+        cur = self._conn.cursor()
+        for stmt in cleaned.split(";"):
+            s = stmt.strip()
+            if s:
+                cur.execute(s)
+        return self
+
+    def commit(self):
+        self._conn.commit()
+
+    def close(self):
+        self._conn.close()
+
+    def cursor(self):
+        return _PgCursor(self._conn.cursor())
+
+    def __getattr__(self, name: str):
+        return getattr(self._conn, name)
+
+
+def table_columns(conn: Any, table: str) -> set[str]:
+    """Portable column listing (PRAGMA on SQLite, information_schema on Postgres)."""
+    if current_backend() == "postgres" or isinstance(conn, _PgConn):
+        rows = conn.execute(
+            """
+            SELECT column_name AS name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = ?
+            """,
+            (table,),
+        ).fetchall()
+        out: set[str] = set()
+        for r in rows:
+            if isinstance(r, dict):
+                out.add(str(r.get("name") or r.get("column_name")))
+            else:
+                out.add(str(r[0]))
+        return out
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def get_conn() -> Any:
+    global _conn, _backend
     with _lock:
         if _conn is None:
-            _conn = sqlite3.connect(str(_db_path()), check_same_thread=False)
-            _conn.row_factory = sqlite3.Row
-            _conn.execute("PRAGMA journal_mode=WAL;")
-            _conn.execute("PRAGMA foreign_keys=ON;")
-            init_schema(_conn)
+            if using_postgres():
+                try:
+                    import psycopg
+                    from psycopg.rows import dict_row
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "DATABASE_URL is set to Postgres but psycopg is not installed. "
+                        "Run: pip install 'psycopg[binary]'"
+                    ) from exc
+                raw = psycopg.connect(settings.database_url.strip(), row_factory=dict_row)
+                _conn = _PgConn(raw)
+                _backend = "postgres"
+                init_schema(_conn)
+            else:
+                _conn = sqlite3.connect(str(_db_path()), check_same_thread=False)
+                _conn.row_factory = sqlite3.Row
+                _conn.execute("PRAGMA journal_mode=WAL;")
+                _conn.execute("PRAGMA foreign_keys=ON;")
+                _backend = "sqlite"
+                init_schema(_conn)
         return _conn
 
 
-def init_schema(conn: sqlite3.Connection | None = None) -> None:
+def reset_conn_for_tests() -> None:
+    """Drop cached connection (tests that change DATA_DIR / DATABASE_URL)."""
+    global _conn, _backend
+    with _lock:
+        if _conn is not None:
+            try:
+                _conn.close()
+            except Exception:
+                pass
+        _conn = None
+        _backend = "sqlite"
+
+
+def init_schema(conn: Any | None = None) -> None:
     c = conn or get_conn()
     c.executescript(
         """
@@ -64,6 +216,8 @@ def init_schema(conn: sqlite3.Connection | None = None) -> None:
             user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
             scope_notes TEXT NOT NULL DEFAULT '',
+            scope_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'active',
             created_at REAL NOT NULL,
             updated_at REAL NOT NULL
         );
@@ -293,9 +447,9 @@ def init_schema(conn: sqlite3.Connection | None = None) -> None:
     _migrate_engagements(c)
 
 
-def _migrate_users(c: sqlite3.Connection) -> None:
+def _migrate_users(c: Any) -> None:
     """Lightweight schema migrations for auth/MFA/OIDC."""
-    cols = {row[1] for row in c.execute("PRAGMA table_info(users)").fetchall()}
+    cols = table_columns(c, "users")
     additions = {
         "mfa_secret": "TEXT NOT NULL DEFAULT ''",
         "mfa_enabled": "INTEGER NOT NULL DEFAULT 0",
@@ -329,12 +483,14 @@ def _migrate_users(c: sqlite3.Connection) -> None:
     c.commit()
 
 
-def _migrate_engagements(c: sqlite3.Connection) -> None:
-    """Lifecycle status for engagements (draft/active/on_hold/completed/archived) —
-    supports multi-project / partial-engagement tracking."""
-    cols = {row[1] for row in c.execute("PRAGMA table_info(engagements)").fetchall()}
+def _migrate_engagements(c: Any) -> None:
+    """Lifecycle status + structured scope_json for tool policy."""
+    cols = table_columns(c, "engagements")
     if "status" not in cols:
         c.execute("ALTER TABLE engagements ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+    cols = table_columns(c, "engagements")
+    if "scope_json" not in cols:
+        c.execute("ALTER TABLE engagements ADD COLUMN scope_json TEXT NOT NULL DEFAULT '[]'")
     c.commit()
 
 
@@ -346,9 +502,11 @@ def now() -> float:
     return time.time()
 
 
-def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
+def row_to_dict(row: Any) -> dict[str, Any] | None:
     if row is None:
         return None
+    if isinstance(row, dict):
+        return dict(row)
     return dict(row)
 
 

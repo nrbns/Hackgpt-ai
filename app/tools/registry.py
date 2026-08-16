@@ -162,6 +162,37 @@ TOOL_CATALOG: dict[str, ToolSpec] = {
         origin="securaiq",
         provider="SecuraIQ",
     ),
+    "codeql": ToolSpec(
+        "codeql", "CodeQL", "external",
+        "GitHub CodeQL SAST. A single generic CLI invocation can't safely "
+        "analyze an arbitrary repo — CodeQL needs a per-language database "
+        "build step, so this tool reports whether the CLI is present and "
+        "gives the exact commands to run it, rather than faking a scan. Real, "
+        "automated CodeQL coverage of SecuraIQ's own codebase runs on every "
+        "push via the `codeql` job in .github/workflows/security-scan.yml "
+        "(github/codeql-action) — check the repo's Security tab for results.",
+        binaries=("codeql",),
+        needs_target=False,
+        heavy=True,
+        category="sast",
+        origin="third_party",
+        provider="GitHub CodeQL",
+    ),
+    "semgrep": ToolSpec(
+        "semgrep", "Semgrep (SAST)", "external",
+        "Real Semgrep static analysis (`semgrep --config=auto`) against a local "
+        "codebase folder — pip-installable, so this runs the genuine scanner "
+        "when present on PATH rather than approximating it. Set Target to a "
+        "local folder path and check Auth. If semgrep isn't installed, install "
+        "with `pip install semgrep`; `code_scan` covers the same path with no "
+        "install required in the meantime.",
+        binaries=("semgrep",),
+        needs_target=False,  # path comes from `target`, same as code_scan
+        heavy=True,
+        category="sast",
+        origin="third_party",
+        provider="Semgrep",
+    ),
     # --- Third-party APIs / vendor modules ---
     "cve_lookup": ToolSpec(
         "cve_lookup", "CVE lookup (NVD)", "builtin",

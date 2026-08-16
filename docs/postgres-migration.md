@@ -1,6 +1,6 @@
-# SecuraIQ — Postgres Migration (planned)
+# SecuraIQ — Postgres Migration
 
-**Status:** Compose profiles + `DATABASE_URL` config shipped; **SQLite remains the default runtime** for alpha. SQLAlchemy migration is the next engineering milestone.
+**Status:** Dual-backend `get_conn()` shipped (Phase 2 MVP). **SQLite remains the default.** Full Alembic/SQLAlchemy (Phase 1) is still optional.
 
 ## Why migrate
 
@@ -8,45 +8,52 @@
 - Connection pooling for background jobs
 - Enterprise backup/restore expectations
 
+## Runtime selection
+
+| `DATABASE_URL` | Backend |
+|----------------|---------|
+| empty / unset | SQLite at `DATA_DIR/securaiq.db` |
+| `postgresql://…` or `postgres://…` | Postgres via `psycopg` |
+
+```bash
+pip install 'psycopg[binary]'
+# docker compose --profile postgres up -d postgres
+export DATABASE_URL=postgresql://securaiq:securaiq@127.0.0.1:5432/securaiq
+```
+
+Call sites keep SQLite-style `?` placeholders; the Postgres adapter rewrites to `%s`.
+
 ## Compose profiles
 
 ```bash
-# Postgres only
 docker compose --profile postgres up -d postgres
-
-# Postgres + Redis (SaaS staging)
 docker compose --profile saas up -d
 ```
 
-Environment:
+## Migration plan
 
-```env
-DATABASE_URL=postgresql://securaiq:securaiq@127.0.0.1:5432/securaiq
-REDIS_URL=redis://127.0.0.1:6379/0
-```
+| Phase | Work | Status |
+|-------|------|--------|
+| 1 | Alembic + SQLAlchemy models | Planned |
+| 2 | Dual-backend `get_conn()` | **Done (MVP)** |
+| 3 | Data export/import SQLite → Postgres | Planned |
+| 4 | CI matrix against Postgres | Planned |
+| 5 | Default Compose SaaS profile to Postgres | Planned |
 
-## Migration plan (engineering)
+## MVP limits
 
-| Phase | Work |
-|-------|------|
-| 1 | Alembic + SQLAlchemy models mirroring `app/db.py` schema |
-| 2 | Dual-backend `get_conn()` — SQLite if `DATABASE_URL` empty |
-| 3 | Data export/import script SQLite → Postgres |
-| 4 | CI matrix against Postgres |
-| 5 | Default Compose SaaS profile to Postgres |
+- Prefer a **fresh** Postgres database (`init_schema` CREATE TABLE IF NOT EXISTS).
+- Some older modules may still use SQLite-only `PRAGMA`; core tenancy/engagements use portable `table_columns()`.
+- Do not flip production to Postgres until Phase 3–4 are green.
 
-## Tables to migrate
+## Service layer (related)
 
-All tables in `app/db.py` `init_schema` plus commercial_ext org tables, webhooks, entity_links, intel cache.
+Domain facades live under `app/services/` (`assets`, `findings`, `risk`, `engagements`, `tenancy`, `tool_policy`). SQL owners remain `enterprise.py` / `workspace.py`.
 
-## Redis usage (when enabled)
+## Engagement scope (tool policy)
 
-- Rate limit buckets (replace in-memory middleware)
-- Session store (optional)
-- Job queue for report scheduling (future)
-
-Until Redis adapter lands, `REDIS_URL` is reserved and reported in `/api/settings`.
+`engagements.scope_json` stores an allowlist (`["10.0.0.0/8","*.lab.local"]`). When non-empty, tool runs with that `engagement_id` are blocked if the target is out of scope.
 
 ## Rollback
 
-Keep SQLite backup of `data/securaiq.db` before any cutover. Beta partners should stay on SQLite until PG path is CI-green.
+Keep a SQLite backup of `data/securaiq.db` before cutover. Lab/alpha partners should stay on SQLite until the PG path is CI-green.

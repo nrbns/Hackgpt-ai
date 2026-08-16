@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     unsloth_load_in_4bit: bool = True
     host: str = "127.0.0.1"  # localhost-only by default; use HOST=0.0.0.0 or start -Lan for LAN
     port: int = 8080
+    # lab = open local OK; production = AUTH_ENABLED required, no open bind without auth
+    deployment_mode: str = "lab"
+    allow_open_lan: bool = False  # if true, allow AUTH_ENABLED=false on 0.0.0.0 (never for public internet)
+    session_days: int = 14
+    password_reset_ttl_hours: int = 2
     chroma_persist_dir: str = "./data/chroma"
     data_dir: str = "./data"
     embedding_model: str = "all-MiniLM-L6-v2"

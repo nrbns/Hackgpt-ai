@@ -11,7 +11,14 @@ from typing import Any
 from app.config import settings
 from app.db import audit, get_conn, new_id, now, row_to_dict
 
-SESSION_DAYS = 14
+SESSION_DAYS = 14  # fallback; prefer settings.session_days
+
+
+def _session_ttl_days() -> int:
+    try:
+        return max(1, int(getattr(settings, "session_days", SESSION_DAYS) or SESSION_DAYS))
+    except Exception:
+        return SESSION_DAYS
 
 
 @dataclass
@@ -19,6 +26,23 @@ class AuthUser:
     id: str
     username: str
     role: str
+
+
+def assert_safe_deployment_auth() -> None:
+    """Refuse unsafe auth/bind combinations for commercial / internet exposure."""
+    mode = (getattr(settings, "deployment_mode", "lab") or "lab").lower()
+    host = (settings.host or "").strip()
+    open_bind = host in {"0.0.0.0", "::", "[::]"}
+    if mode in {"production", "prod", "commercial"} and not settings.auth_enabled:
+        raise RuntimeError(
+            "DEPLOYMENT_MODE=production requires AUTH_ENABLED=true. "
+            "Never expose SecuraIQ without authentication."
+        )
+    if open_bind and not settings.auth_enabled and not getattr(settings, "allow_open_lan", False):
+        raise RuntimeError(
+            f"HOST={host} with AUTH_ENABLED=false is blocked. "
+            "Enable AUTH_ENABLED, bind to 127.0.0.1, or set ALLOW_OPEN_LAN=true only on trusted private LANs."
+        )
 
 
 def hash_password(password: str) -> str:
@@ -66,21 +90,29 @@ def ensure_bootstrap_admin() -> str | None:
     return None
 
 
-def register_user(username: str, password: str, role: str = "user") -> AuthUser:
+def register_user(
+    username: str, password: str, role: str = "user", *, email: str | None = None
+) -> AuthUser:
+    from app.tenancy import ensure_tenant_schema
+
+    ensure_tenant_schema()  # no-op here — users.email is already added by app.db._migrate_users
     username = (username or "").strip().lower()
     if len(username) < 3 or len(password) < 8:
         raise ValueError("Username ≥3 chars and password ≥8 chars required")
+    # users.email is NOT NULL DEFAULT '' (see app.db._migrate_users) — use '' as the
+    # "no email" sentinel, not NULL, or this insert violates that constraint.
+    email = (email or "").strip().lower()
     c = get_conn()
     uid = new_id()
     try:
         c.execute(
-            "INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)",
-            (uid, username, hash_password(password), role, now()),
+            "INSERT INTO users (id, username, password_hash, role, created_at, email) VALUES (?, ?, ?, ?, ?, ?)",
+            (uid, username, hash_password(password), role, now(), email),
         )
         c.commit()
     except Exception as exc:
         raise ValueError("Username already taken") from exc
-    audit("register", uid, {"username": username})
+    audit("register", uid, {"username": username, "email_set": bool(email)})
     return AuthUser(id=uid, username=username, role=role)
 
 
@@ -105,7 +137,7 @@ def login(username: str, password: str, *, totp: str | None = None) -> tuple[Aut
             raise ValueError("Invalid authenticator code")
 
     token = secrets.token_urlsafe(32)
-    expires = now() + SESSION_DAYS * 86400
+    expires = now() + _session_ttl_days() * 86400
     c.execute(
         "INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
         (hash_token(token), row["id"], expires, now()),
@@ -127,7 +159,7 @@ def complete_mfa_login(mfa_token: str, totp: str) -> tuple[AuthUser, str]:
     if not verify_totp(row["mfa_secret"] or "", totp):
         raise ValueError("Invalid authenticator code")
     token = secrets.token_urlsafe(32)
-    expires = now() + SESSION_DAYS * 86400
+    expires = now() + _session_ttl_days() * 86400
     c = get_conn()
     c.execute(
         "INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
@@ -136,6 +168,107 @@ def complete_mfa_login(mfa_token: str, totp: str) -> tuple[AuthUser, str]:
     c.commit()
     audit("login", row["id"], {"username": row["username"], "mfa": True})
     return AuthUser(id=row["id"], username=row["username"], role=row["role"]), token
+
+
+def request_password_reset(username: str) -> dict[str, Any]:
+    """Create a one-time reset token. Always returns ok (no user enumeration).
+
+    Security-sensitive: if the account has an email on file and SMTP is
+    configured, the token is emailed and NEVER included in the API response —
+    proving mailbox ownership is the whole point of a reset flow. Only when
+    delivery isn't possible (no email on file, or SMTP unconfigured — the
+    zero-config local/lab default) does it fall back to returning the token
+    directly, and that fallback is called out explicitly in the response so
+    an operator standing this up for real users notices and fixes it.
+    """
+    from app.tenancy import ensure_tenant_schema
+
+    ensure_tenant_schema()
+    username = (username or "").strip().lower()
+    c = get_conn()
+    row = c.execute("SELECT id, email FROM users WHERE username = ?", (username,)).fetchone()
+    out: dict[str, Any] = {
+        "ok": True,
+        "message": "If that account exists, a reset link was sent.",
+    }
+    if not row:
+        audit("password_reset_request", None, {"username": username, "found": False})
+        return out
+    raw = secrets.token_urlsafe(32)
+    ttl_h = max(1, int(getattr(settings, "password_reset_ttl_hours", 2) or 2))
+    expires = now() + ttl_h * 3600
+    c.execute(
+        "INSERT INTO password_reset_tokens (token_hash, user_id, expires_at, created_at, used_at) VALUES (?, ?, ?, ?, NULL)",
+        (hash_token(raw), row["id"], expires, now()),
+    )
+    c.commit()
+
+    email = (row["email"] or "").strip() if row["email"] else ""
+    emailed = False
+    if email:
+        try:
+            from app.notifications import _smtp_configured, send_email
+
+            if _smtp_configured():
+                base = (getattr(settings, "public_base_url", "") or "").rstrip("/")
+                link = f"{base}/reset-password?token={raw}" if base else None
+                body = (
+                    f"A password reset was requested for your SecuraIQ account.\n\n"
+                    f"{'Reset link: ' + link if link else 'Reset token: ' + raw}\n\n"
+                    f"This expires in {ttl_h} hour(s). If you didn't request this, ignore this email."
+                )
+                emailed = send_email(email, "SecuraIQ password reset", body)
+        except Exception:
+            emailed = False
+
+    audit(
+        "password_reset_request",
+        row["id"],
+        {"username": username, "found": True, "emailed": emailed},
+    )
+    if emailed:
+        out["expires_in_hours"] = ttl_h
+        return out
+
+    # Fallback path — no email on file, or SMTP isn't configured. Flag this
+    # loudly rather than silently handing out a working credential-reset
+    # token to anyone who can call this endpoint.
+    out["message"] = (
+        "No email on file or SMTP not configured — reset token returned directly "
+        "(local/lab fallback). Set a user email and configure SMTP before exposing "
+        "this to untrusted users."
+    )
+    out["reset_token"] = raw
+    out["expires_in_hours"] = ttl_h
+    return out
+
+
+def reset_password_with_token(token: str, new_password: str) -> None:
+    from app.tenancy import ensure_tenant_schema
+
+    ensure_tenant_schema()
+    if len(new_password or "") < 8:
+        raise ValueError("Password must be at least 8 characters")
+    th = hash_token((token or "").strip())
+    c = get_conn()
+    row = c.execute(
+        "SELECT * FROM password_reset_tokens WHERE token_hash = ?",
+        (th,),
+    ).fetchone()
+    if not row or row["used_at"] is not None or float(row["expires_at"]) < now():
+        raise ValueError("Invalid or expired reset token")
+    c.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        (hash_password(new_password), row["user_id"]),
+    )
+    c.execute(
+        "UPDATE password_reset_tokens SET used_at = ? WHERE token_hash = ?",
+        (now(), th),
+    )
+    # Invalidate all sessions for that user
+    c.execute("DELETE FROM sessions WHERE user_id = ?", (row["user_id"],))
+    c.commit()
+    audit("password_reset_complete", row["user_id"], {})
 
 
 def logout(token: str | None) -> None:

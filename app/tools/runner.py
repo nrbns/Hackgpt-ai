@@ -38,7 +38,7 @@ _TOOL_WORD_RE = re.compile(
     r"cve_lookup|headers?(?:\s+security)?|zap|zaproxy|sqlmap|wpscan|masscan|"
     r"rustscan|openvas|greenbone|gvm|securaiq_code|sonarqube|sonar|burp|acunetix|email_auth|phishing_url|suite_guide|"
     r"spf|dmarc|dkim|phish(?:ing)?|awareness|hardening(?:_baseline)?|patch(?:es|ing|"
-    r"\s+compliance)?|xdr|edr|defender(?:_hunt)?|advanced\s*hunting|kql)\b",
+    r"\s+compliance)?|xdr|edr|defender(?:_hunt)?|advanced\s*hunting|kql|semgrep|codeql|code_scan)\b",
     re.IGNORECASE,
 )
 _RUN_HINT_RE = re.compile(
@@ -673,6 +673,86 @@ _RISKY_PORTS: dict[int, str] = {
     5432: "PostgreSQL (should not face untrusted networks)",
 }
 
+_HIGH_RISK_PORTS = frozenset({445, 3389, 23, 21})
+
+
+def _host_token(target: str) -> str:
+    """First host-like token from asset/target labels like '127.0.0.1 (localhost)'."""
+    raw = (target or "").strip().lower()
+    if not raw:
+        return ""
+    token = raw.split()[0].strip("()[],")
+    if token.endswith(":") and token.count(":") == 1:
+        token = token[:-1]
+    return token
+
+
+def _target_network_scope(target: str, ip: str | None = None) -> str:
+    """Classify exposure: loopback | private | public | unknown."""
+    import ipaddress
+
+    for candidate in (_host_token(ip or ""), _host_token(target)):
+        if not candidate:
+            continue
+        if candidate in {"localhost", "::1"} or candidate.startswith("127."):
+            return "loopback"
+        try:
+            obj = ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        if obj.is_loopback:
+            return "loopback"
+        if obj.is_private or obj.is_link_local:
+            return "private"
+        if obj.is_global:
+            return "public"
+    host = _host_token(target)
+    if host in {"localhost"} or host.endswith(".local") or host.endswith(".lan"):
+        return "private"
+    return "unknown"
+
+
+def _risky_port_finding(port: int, *, target: str, source: str, ip: str | None = None) -> dict[str, Any]:
+    """Build a port finding with severity that matches real exposure (not loopback=RCE)."""
+    note = _RISKY_PORTS.get(port, "Potentially sensitive service")
+    scope = _target_network_scope(target, ip)
+    if scope == "loopback":
+        title = f"Local listener on port {port}/tcp (loopback only)"
+        severity = "info"
+        guidance = (
+            f"Port {port}/tcp is open on loopback ({target}). This is not remotely reachable "
+            f"from other hosts or the internet. Treat as local hardening: confirm the service "
+            f"is needed, bind only to 127.0.0.1 if required, or disable it. Note: {note}"
+        )
+    elif scope == "private":
+        title = f"LAN-reachable service on port {port}/tcp"
+        severity = "medium" if port in _HIGH_RISK_PORTS else "low"
+        guidance = (
+            f"Port {port}/tcp is open on a private/lab host ({target}). Risk is lateral movement "
+            f"inside the network, not direct internet exposure unless NAT/port-forward exists. "
+            f"Restrict with host firewall / VLAN segmentation. Note: {note}"
+        )
+    else:
+        title = f"Exposed risky service on port {port}/tcp"
+        severity = "high" if port in _HIGH_RISK_PORTS else "medium"
+        guidance = (
+            f"Port {port}/tcp appears reachable on {target}. Confirm it is not internet-facing; "
+            f"if it is, disable, put behind VPN, or harden immediately. Note: {note}"
+        )
+    return {
+        "title": title,
+        "severity": severity,
+        "asset_name": str(target)[:200],
+        "source": source,
+        "raw": {
+            "port": port,
+            "note": note,
+            "scope": scope,
+            "guidance": guidance,
+            "ip": ip,
+        },
+    }
+
 _HEADER_CHECKS = (
     "strict-transport-security",
     "content-security-policy",
@@ -754,12 +834,22 @@ async def _tool_hardening_baseline(host: str, ip: str, open_ports: list[int] | N
         findings.append(f"[INFO] Auto port probe: {probe.get('output') or 'none'}")
     exposed_risky = [p for p in ports if p in _RISKY_PORTS]
     checked += 1
+    scope = _target_network_scope(host, ip)
     if not exposed_risky:
         passed += 1
         findings.append("[PASS] No high-risk services in the scanned port set")
     else:
         for p in exposed_risky:
-            findings.append(f"[FAIL] Exposed risky port {p}/tcp — {_RISKY_PORTS[p]}")
+            if scope == "loopback":
+                findings.append(
+                    f"[FAIL] Local listener port {p}/tcp (loopback — not network-exposed) — {_RISKY_PORTS[p]}"
+                )
+            elif scope == "private":
+                findings.append(
+                    f"[FAIL] LAN-reachable port {p}/tcp — {_RISKY_PORTS[p]}"
+                )
+            else:
+                findings.append(f"[FAIL] Exposed risky port {p}/tcp — {_RISKY_PORTS[p]}")
 
     # 5) Patch compliance — pulled from whatever XDR/EDR vendors are connected
     try:
@@ -874,9 +964,19 @@ async def _tool_netvuln_scan(host: str, ip: str, open_ports: list[int] | None) -
             findings.append(f"[FAIL] Missing HTTP security headers: {m.group(1)}")
 
     # 5) Risky exposed services (same table hardening_baseline uses)
+    scope = _target_network_scope(host, ip)
     for p in ports:
         if p in _RISKY_PORTS:
-            findings.append(f"[FAIL] Exposed risky service on port {p}/tcp — {_RISKY_PORTS[p]}")
+            if scope == "loopback":
+                findings.append(
+                    f"[FAIL] Local listener on port {p}/tcp (loopback — not network-exposed) — {_RISKY_PORTS[p]}"
+                )
+            elif scope == "private":
+                findings.append(
+                    f"[FAIL] LAN-reachable service on port {p}/tcp — {_RISKY_PORTS[p]}"
+                )
+            else:
+                findings.append(f"[FAIL] Exposed risky service on port {p}/tcp — {_RISKY_PORTS[p]}")
 
     fail_count = sum(1 for f in findings if f.startswith("[FAIL]"))
     header = (
@@ -912,6 +1012,7 @@ async def _tool_securaiq_code(
     message: str,
     authorized: bool,
     user_id: str,
+    on_progress=None,
 ) -> dict[str, Any]:
     """SecuraIQ Code: local folder SAST and/or sync connected code-quality engine."""
     path_candidate = (target or "").strip()
@@ -937,7 +1038,9 @@ async def _tool_securaiq_code(
         lines.append(f"Engine connector unavailable: {exc}")
 
     if looks_like_path:
-        local = await _tool_code_scan(path_candidate, authorized=authorized)
+        local = await _tool_code_scan(
+            path_candidate, authorized=authorized, on_progress=on_progress
+        )
         local_ok = bool(local.get("ok"))
         lines.append(local.get("output") or local.get("error") or "local scan finished")
         payload: dict[str, Any] = {
@@ -949,6 +1052,7 @@ async def _tool_securaiq_code(
             "pattern_findings": local.get("pattern_findings") or [],
             "dependency_findings": local.get("dependency_findings") or [],
             "target_path": local.get("target_path") or path_candidate,
+            "files_scanned": local.get("files_scanned"),
         }
         if local.get("error"):
             payload["error"] = local["error"]
@@ -1008,7 +1112,10 @@ async def _run_external(tool_id: str, target: str, ip: str, open_ports: list[int
     if not binary:
         return {"ok": False, "error": f"{tool_id} not installed (PATH)", "output": ""}
 
-    base_http = _guess_base_urls(ip, open_ports)[0] if _guess_base_urls(ip, open_ports) else f"http://{ip}/"
+    # Prefer hostname for HTTP(S) so TLS SNI / virtual hosts work (Cloudflare etc.).
+    http_peer = target.strip() if target and not re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", target.strip()) else ip
+    urls = _guess_base_urls(http_peer, open_ports) or [f"http://{http_peer}/"]
+    base_http = urls[0]
 
     if tool_id == "nmap":
         return await _run_cmd(
@@ -1161,16 +1268,29 @@ _DANGEROUS_RULES: list[tuple[str, re.Pattern, frozenset[str], str, str]] = [
      "eval()/exec() — arbitrary code execution if input is not fully trusted"),
     ("py_subprocess_shell_true", re.compile(r"subprocess\.\w+\([^)]*shell\s*=\s*True"), frozenset({".py"}), "high",
      "subprocess(..., shell=True) — command injection risk if any argument is user-influenced"),
+    ("py_os_system", re.compile(r"\bos\.system\s*\("), frozenset({".py"}), "high",
+     "os.system() — command injection risk; prefer subprocess with a list and shell=False"),
     ("py_pickle_load", re.compile(r"pickle\.loads?\("), frozenset({".py"}), "high",
      "pickle.load/loads — insecure deserialization; never unpickle untrusted data"),
     ("py_yaml_unsafe_load", re.compile(r"yaml\.load\((?![^)]*Loader\s*=\s*yaml\.SafeLoader)"), frozenset({".py"}), "medium",
      "yaml.load() without SafeLoader — insecure deserialization risk"),
     ("py_sql_fstring_execute", re.compile(r"(?i)\.execute\s*\(\s*f['\"]"), frozenset({".py"}), "high",
      "SQL query built with an f-string — likely SQL injection; use parameterized queries"),
+    ("py_sql_percent_format", re.compile(r"(?i)\.execute\s*\(\s*['\"][^'\"]*%[sd]"), frozenset({".py"}), "high",
+     "SQL query with % formatting — likely SQL injection; use parameterized queries"),
+    ("py_path_traversal_join", re.compile(r"open\s*\(\s*os\.path\.join\([^)]*request"), frozenset({".py"}), "medium",
+     "Path built from request input — path traversal risk; validate and resolve under a root"),
     ("js_eval", re.compile(r"\beval\s*\("), frozenset({".js", ".jsx", ".ts", ".tsx"}), "high",
      "eval() — arbitrary code execution if input is not fully trusted"),
+    ("js_new_function", re.compile(r"\bnew\s+Function\s*\("), frozenset({".js", ".jsx", ".ts", ".tsx"}), "high",
+     "new Function() — dynamic code execution risk if input is not fully trusted"),
     ("js_inner_html", re.compile(r"\.innerHTML\s*="), frozenset({".js", ".jsx", ".ts", ".tsx"}), "medium",
      "Direct innerHTML assignment — XSS risk if the value is not sanitized"),
+    ("js_document_write", re.compile(r"document\.write\s*\("), frozenset({".js", ".jsx", ".ts", ".tsx"}), "medium",
+     "document.write() — XSS risk if the argument includes untrusted data"),
+    ("js_sql_string_concat", re.compile(r"(?i)(SELECT|INSERT|UPDATE|DELETE).{0,40}(\+|`\$\{)"),
+     frozenset({".js", ".jsx", ".ts", ".tsx"}), "high",
+     "SQL string concatenation / template — likely SQL injection; use parameterized queries"),
     ("react_dangerously_set_inner_html", re.compile(r"dangerouslySetInnerHTML"), frozenset({".jsx", ".tsx"}), "medium",
      "dangerouslySetInnerHTML — XSS risk if content is not sanitized"),
     ("hardcoded_http_url", re.compile(r"http://(?!localhost|127\.0\.0\.1|0\.0\.0\.0)[A-Za-z0-9]"),
@@ -1256,7 +1376,12 @@ async def _osv_dependency_check(root: Path, files: list[Path]) -> list[dict[str,
     return out[:40]
 
 
-async def _tool_code_scan(target_path: str, *, authorized: bool) -> dict[str, Any]:
+async def _tool_code_scan(
+    target_path: str,
+    *,
+    authorized: bool,
+    on_progress=None,
+) -> dict[str, Any]:
     """Static scan of a local codebase path: hardcoded secrets, dangerous
     code patterns, and known-vulnerable dependency versions. Pure Python —
     no semgrep/bandit/trivy install required."""
@@ -1316,6 +1441,33 @@ async def _tool_code_scan(target_path: str, *, authorized: bool) -> dict[str, An
     pattern_findings: list[dict[str, Any]] = []
     scanned = 0
     budget_hit = False
+    total_files = len(files)
+
+    async def _emit_progress(rel: str = "") -> None:
+        if not on_progress:
+            return
+        info = {
+            "scanned": scanned,
+            "total": total_files,
+            "findings": len(secret_findings) + len(pattern_findings),
+            "file": rel,
+            "target_path": str(root),
+        }
+        try:
+            maybe = on_progress(info)
+            if asyncio.iscoroutine(maybe):
+                await maybe
+        except Exception:
+            pass
+        try:
+            from app.realtime_bus import publish
+
+            publish(type="tool_progress", tool="code_scan", **info)
+        except Exception:
+            pass
+        await asyncio.sleep(0)
+
+    await _emit_progress()
     for f in files:
         if budget_hit:
             break
@@ -1346,6 +1498,8 @@ async def _tool_code_scan(target_path: str, *, authorized: bool) -> dict[str, An
             if len(secret_findings) + len(pattern_findings) >= 300:
                 budget_hit = True
                 break
+        if scanned == 1 or scanned % 40 == 0 or scanned == total_files or budget_hit:
+            await _emit_progress(rel)
 
     dep_findings = await _osv_dependency_check(root, files)
 
@@ -1374,6 +1528,203 @@ async def _tool_code_scan(target_path: str, *, authorized: bool) -> dict[str, An
         "pattern_findings": pattern_findings,
         "dependency_findings": dep_findings,
         "target_path": str(root),
+        "files_scanned": scanned,
+    }
+
+
+async def _tool_semgrep(
+    target_path: str,
+    *,
+    authorized: bool,
+    on_progress=None,
+) -> dict[str, Any]:
+    """Real Semgrep SAST run against a local codebase path. Semgrep is
+    pip-installable (unlike nmap/nuclei/etc.), so this genuinely invokes the
+    `semgrep` binary via subprocess when present on PATH — it does not fake
+    or approximate results. When semgrep isn't installed, this returns clear
+    install guidance instead of a stub result; `code_scan` covers the same
+    codebase with zero-install checks (secrets, dangerous patterns,
+    vulnerable dependencies) in the meantime."""
+    if not target_path or not target_path.strip():
+        return {
+            "ok": False,
+            "error": "No codebase path given",
+            "output": (
+                "Set Target to a local folder path (e.g. C:\\path\\to\\project or "
+                "/home/user/project) and check Auth to confirm you own or are "
+                "authorized to scan it, then run semgrep again."
+            ),
+        }
+    if not authorized:
+        return {
+            "ok": False,
+            "error": "Not authorized",
+            "output": (
+                "semgrep reads source files on disk — check **Auth** "
+                "(authorized_target) to confirm you own or are authorized to "
+                "scan this path before it runs."
+            ),
+        }
+
+    root = Path(target_path.strip()).expanduser()
+    try:
+        root = root.resolve(strict=False)
+    except Exception:
+        return {"ok": False, "error": "Invalid path", "output": f"Could not resolve path: {target_path}"}
+    if not root.exists():
+        return {"ok": False, "error": "Path not found", "output": f"No such file or directory: {root}"}
+
+    binary = shutil.which("semgrep")
+    if not binary:
+        return {
+            "ok": False,
+            "error": "semgrep not installed (PATH)",
+            "output": (
+                "Semgrep isn't on PATH. Install it with `pip install semgrep` "
+                "(or `pipx install semgrep`) then run this tool again — SecuraIQ "
+                "will invoke the real `semgrep --config=auto` scanner. In the "
+                "meantime, `code_scan` covers hardcoded secrets, dangerous "
+                "patterns, and known-vulnerable dependencies for this same "
+                "path with no install required."
+            ),
+        }
+
+    async def _emit(scanned: int, total: int, findings: int) -> None:
+        if not on_progress:
+            return
+        try:
+            maybe = on_progress(
+                {"scanned": scanned, "total": total, "findings": findings, "target_path": str(root)}
+            )
+            if asyncio.iscoroutine(maybe):
+                await maybe
+        except Exception:
+            pass
+
+    await _emit(0, 0, 0)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            binary,
+            "--config=auto",
+            "--json",
+            "--timeout",
+            "60",
+            "--max-target-bytes",
+            "2000000",
+            str(root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=150)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            return {"ok": False, "error": "semgrep timed out", "output": ""}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "output": ""}
+
+    raw_text = (stdout or b"").decode("utf-8", errors="replace")
+    # Found via live testing: semgrep can exit non-zero with EMPTY stdout (e.g.
+    # its rule-registry fetch is blocked by a proxy/firewall) while still
+    # writing a real error to stderr. Treating empty stdout as "{}" silently
+    # reported that as a clean 0-finding scan — a false "it worked" instead
+    # of the real failure. Empty/malformed output is always an error now,
+    # never a default-to-clean result.
+    if not raw_text.strip():
+        err_tail = (stderr or b"").decode("utf-8", errors="replace").strip()
+        return {
+            "ok": False,
+            "error": f"semgrep produced no output (exit code {proc.returncode})",
+            "output": err_tail[-1500:] if err_tail else "semgrep exited with no output and no error detail.",
+        }
+    try:
+        data = json.loads(raw_text)
+    except Exception:
+        err_tail = (stderr or b"").decode("utf-8", errors="replace")[-800:]
+        return {
+            "ok": False,
+            "error": "Could not parse semgrep output",
+            "output": err_tail or raw_text[-800:] or "semgrep produced no output",
+        }
+    if not isinstance(data, dict) or "results" not in data:
+        return {
+            "ok": False,
+            "error": "Unexpected semgrep output shape",
+            "output": raw_text[:800],
+        }
+
+    results = data.get("results") or []
+    scan_errors = data.get("errors") or []
+    scanned_paths = (data.get("paths") or {}).get("scanned") or []
+
+    findings_lines: list[str] = []
+    for r in results[:80]:
+        extra = r.get("extra") or {}
+        sev = extra.get("severity") or "WARNING"
+        msg = extra.get("message") or r.get("check_id") or "finding"
+        line_no = (r.get("start") or {}).get("line")
+        findings_lines.append(
+            f"[{sev}] {r.get('check_id')} in {r.get('path')}:{line_no} — {msg}"[:300]
+        )
+
+    header = (
+        f"Semgrep scan of {root}: {len(scanned_paths)} file(s) scanned, "
+        f"{len(results)} finding(s)"
+    )
+    if scan_errors:
+        header += f", {len(scan_errors)} rule error(s)"
+    body = "\n".join(findings_lines) if findings_lines else "(clean — no issues found by the ruleset run)"
+
+    await _emit(len(scanned_paths), len(scanned_paths), len(results))
+
+    return {
+        "ok": True,
+        "output": header + "\n" + body,
+        "target_path": str(root),
+        "files_scanned": len(scanned_paths),
+        "semgrep_results": results,
+        "scanner": "semgrep",
+    }
+
+
+async def _tool_codeql() -> dict[str, Any]:
+    """Report real CodeQL CLI presence and next-step commands. CodeQL needs a
+    per-language database build before it can analyze anything, so there's no
+    single safe generic invocation for an arbitrary repo/target — this tool
+    is honest about that instead of faking a scan result. Actual automated
+    CodeQL coverage of SecuraIQ's own repo runs via the `codeql` job in
+    .github/workflows/security-scan.yml (github/codeql-action) on every push."""
+    codeql_bin = shutil.which("codeql")
+    if codeql_bin:
+        return {
+            "ok": True,
+            "output": (
+                f"CodeQL CLI found at {codeql_bin}. Build + analyze this repo:\n"
+                "  1) codeql database create <db-dir> --language=<python|javascript|...> "
+                "--source-root=<path>\n"
+                "  2) codeql database analyze <db-dir> <query-pack, e.g. codeql/python-queries> "
+                "--format=sarif-latest --output=results.sarif\n"
+                "  3) Import results.sarif under Vulnerabilities (Import scanner results).\n"
+                "SecuraIQ also runs real CodeQL automatically against its own repo on every "
+                "push via the `codeql` job in .github/workflows/security-scan.yml — see the "
+                "repo's GitHub Security tab for those results."
+            ),
+            "scanner": "codeql",
+            "mode": "cli_detected",
+        }
+    return {
+        "ok": False,
+        "error": "codeql CLI not installed (PATH)",
+        "output": (
+            "CodeQL CLI isn't on PATH. Install from "
+            "https://github.com/github/codeql-action/releases (bundle includes CLI + "
+            "query packs), or rely on the automated `codeql` GitHub Actions job already "
+            "wired into .github/workflows/security-scan.yml, which scans this repo on "
+            "every push with no local install needed. `semgrep` and `code_scan` also "
+            "cover this codebase locally right now."
+        ),
+        "scanner": "codeql",
     }
 
 
@@ -1388,6 +1739,7 @@ async def iter_security_tools(
     include_heavy: bool = False,
     mode: str | None = None,
     user_id: str = "local",
+    engagement_id: str | None = None,
 ):
     """Yield realtime progress events; light builtins run in parallel."""
     if not settings.local_tools_enabled:
@@ -1405,6 +1757,35 @@ async def iter_security_tools(
         yield {"event": "done", "payload": {"ok": False, "error": "No tools selected", "runs": []}}
         return
 
+    # Early engagement existence / lifecycle check (full scope gate after resolve)
+    if engagement_id:
+        from app.workspace import get_engagement
+
+        eng = get_engagement(user_id, engagement_id)
+        if not eng:
+            yield {
+                "event": "done",
+                "payload": {
+                    "ok": False,
+                    "error": "Engagement not found or not visible to this user",
+                    "runs": [],
+                    "requested": tool_ids,
+                },
+            }
+            return
+        st = (eng.get("status") or "active").lower()
+        if st in {"archived", "completed"}:
+            yield {
+                "event": "done",
+                "payload": {
+                    "ok": False,
+                    "error": f"Engagement is '{st}' — reopen or choose an active engagement before scanning",
+                    "runs": [],
+                    "requested": tool_ids,
+                },
+            }
+            return
+
     awareness_only = all(
         tid in {
             "phishing_url",
@@ -1414,19 +1795,37 @@ async def iter_security_tools(
             "defender_hunt",
             "code_scan",
             "securaiq_code",
+            "semgrep",
+            "codeql",
         }
         for tid in tool_ids
     )
     # Path-based SAST tools must not be DNS-resolved as hostnames.
-    path_tools = {"code_scan", "securaiq_code"}
-    code_scan_path = (target or "").strip() if path_tools.intersection(tool_ids) else ""
-    skip_net_target = bool(path_tools.intersection(tool_ids)) and (
+    path_tools = {"code_scan", "securaiq_code", "semgrep", "codeql"}
+    using_path_tools = bool(path_tools.intersection(tool_ids))
+    code_scan_path = (target or "").strip() if using_path_tools else ""
+    skip_net_target = using_path_tools and (
         not target
         or "/" in (target or "")
         or "\\" in (target or "")
-        or Path((target or "").strip()).exists()
+        or (bool((target or "").strip()) and Path((target or "").strip()).exists())
     )
-    targets = extract_targets(message, None if skip_net_target else target)
+    # When only path/SAST tools run, never treat words from the prompt (e.g. "scan code …")
+    # as network hosts — extract_targets() matches `scan <token>` and would DNS-fail.
+    if skip_net_target and set(tool_ids).issubset(path_tools | {"suite_guide", "cve_lookup", "phishing_url"}):
+        targets = []
+    else:
+        targets = extract_targets(message, None if skip_net_target else target)
+        if skip_net_target:
+            # Drop non-path junk extracted from the message (e.g. host hint "code")
+            targets = [
+                t
+                for t in targets
+                if t == (target or "").strip()
+                or "/" in t
+                or "\\" in t
+                or Path(t).exists()
+            ]
     if "email_auth" in tool_ids and not targets:
         for m in _DOMAIN_RE.finditer(message or ""):
             d = m.group(0).lower()
@@ -1491,14 +1890,53 @@ async def iter_security_tools(
             else:
                 ip = meta.get("ip") or ""
 
+    # Engagement structured scope gate (deterministic — AI cannot bypass)
+    policy_meta: dict[str, Any] | None = None
+    if engagement_id and (host or code_scan_path or target):
+        from app.services.tool_policy import assert_tool_target_allowed
+
+        try:
+            policy_meta = assert_tool_target_allowed(
+                user_id=user_id,
+                engagement_id=engagement_id,
+                target=code_scan_path or target or host,
+                ip=ip or None,
+                authorized=authorized,
+            )
+        except ValueError as exc:
+            yield {
+                "event": "done",
+                "payload": {
+                    "ok": False,
+                    "error": str(exc),
+                    "runs": [],
+                    "requested": tool_ids,
+                    "target": host or target,
+                    "engagement_id": engagement_id,
+                },
+            }
+            return
+
     ordered = sorted(tool_ids, key=lambda t: 0 if t == "ports" else 1)
     light_mode = not include_heavy
+    progress_q: asyncio.Queue = asyncio.Queue()
+
+    async def _progress_cb(tid: str, info: dict[str, Any]) -> None:
+        evt = {"event": "tool_progress", "tool": tid, **info}
+        try:
+            await progress_q.put(evt)
+        except Exception:
+            pass
 
     async def _execute(tid: str, ports_hint: list[int]) -> dict[str, Any]:
         spec = TOOL_CATALOG.get(tid)
         if not spec:
             return {"tool": tid, "name": tid, "ok": False, "error": "unknown tool", "output": ""}
         entry: dict[str, Any] = {"tool": tid, "name": spec.name, "kind": spec.kind, "heavy": spec.heavy}
+
+        async def on_progress(info: dict[str, Any]) -> None:
+            await _progress_cb(tid, info)
+
         try:
             if tid == "cve_lookup":
                 result = await _tool_cve_lookup(message)
@@ -1516,14 +1954,28 @@ async def iter_security_tools(
                 result = await _tool_email_auth(domain or host or "")
             elif tid == "code_scan":
                 # Path-based, not IP-based — bypasses the network target gate below.
-                result = await _tool_code_scan(code_scan_path or target or "", authorized=authorized)
+                result = await _tool_code_scan(
+                    code_scan_path or target or "",
+                    authorized=authorized,
+                    on_progress=on_progress,
+                )
             elif tid == "securaiq_code":
                 result = await _tool_securaiq_code(
                     target=code_scan_path or target or host or "",
                     message=message or "",
                     authorized=bool(authorized),
                     user_id=user_id or "local",
+                    on_progress=on_progress,
                 )
+            elif tid == "semgrep":
+                # Path-based, like code_scan — bypasses the network target gate below.
+                result = await _tool_semgrep(
+                    code_scan_path or target or "",
+                    authorized=authorized,
+                    on_progress=on_progress,
+                )
+            elif tid == "codeql":
+                result = await _tool_codeql()
             elif not ip and spec.needs_target:
                 result = {"ok": False, "error": "no target", "output": ""}
             elif tid == "ports":
@@ -1595,29 +2047,47 @@ async def iter_security_tools(
         entry.update(result)
         return entry
 
+    display_target = host or code_scan_path or (target or "").strip() or None
     yield {
         "event": "start",
-        "target": host or None,
+        "target": display_target,
         "ip": ip or None,
         "tools": ordered,
         "light": light_mode,
     }
 
     rest = list(ordered)
-    needs_ports = ip and any(
-        t in {
-            "ports",
-            "hardening_baseline",
-            "netvuln_scan",
-            "openvas",
-            "http",
-            "headers_security",
-            "tls",
-            "robots",
-            "tech",
-        }
-        for t in rest
-    )
+    # Found via live end-to-end testing: any tool whose _run_external branch
+    # calls _guess_base_urls() picks its target port from `open_ports`. Only
+    # the builtin HTTP-family tools were in this set, so running e.g. curl or
+    # nikto *by themselves* (without also requesting `ports` or one of the
+    # builtins) left open_ports == [] and _guess_base_urls() silently guessed
+    # https://ip/ or http://ip/ (80/443) — wrong for any service on a
+    # non-standard port (8080, 8443, 3000, ...), even though a port probe
+    # would have found it. Every external tool that depends on the guessed
+    # base URL now triggers the same implicit port pre-scan.
+    _NEEDS_PORT_DISCOVERY = {
+        "ports",
+        "hardening_baseline",
+        "netvuln_scan",
+        "openvas",
+        "http",
+        "headers_security",
+        "tls",
+        "robots",
+        "tech",
+        "curl",
+        "nikto",
+        "nuclei",
+        "whatweb",
+        "gobuster",
+        "ffuf",
+        "zap",
+        "sqlmap",
+        "wpscan",
+        "wafw00f",
+    }
+    needs_ports = ip and any(t in _NEEDS_PORT_DISCOVERY for t in rest)
     if needs_ports:
         rest = [t for t in rest if t != "ports"]
         yield {"event": "tool_start", "tool": "ports", "name": "Port probe"}
@@ -1647,6 +2117,12 @@ async def iter_security_tools(
             }
         tasks = [asyncio.create_task(_guarded(tid)) for tid in light_ids]
         for fut in asyncio.as_completed(tasks):
+            while True:
+                try:
+                    evt = progress_q.get_nowait()
+                    yield evt
+                except asyncio.QueueEmpty:
+                    break
             entry = await fut
             runs.append(entry)
             yield {"event": "tool_done", "run": entry}
@@ -1657,17 +2133,36 @@ async def iter_security_tools(
             "tool": tid,
             "name": TOOL_CATALOG[tid].name if tid in TOOL_CATALOG else tid,
         }
-        entry = await _execute(tid, open_ports)
+        task = asyncio.create_task(_execute(tid, open_ports))
+        while not task.done():
+            try:
+                evt = await asyncio.wait_for(progress_q.get(), timeout=0.25)
+                yield evt
+            except asyncio.TimeoutError:
+                continue
+        while True:
+            try:
+                evt = progress_q.get_nowait()
+                yield evt
+            except asyncio.QueueEmpty:
+                break
+        entry = await task
         if tid == "ports":
             open_ports = entry.get("open_ports") or open_ports
         runs.append(entry)
         yield {"event": "tool_done", "run": entry}
 
     ok_any = any(r.get("ok") for r in runs)
-    fp = hashlib.sha1(f"{host}:{ip}:{','.join(tool_ids)}".encode()).hexdigest()[:10]
+    resolved_path = ""
+    for r in runs:
+        if r.get("target_path"):
+            resolved_path = str(r["target_path"])
+            break
+    effective_target = host or resolved_path or code_scan_path or (target or "").strip() or None
+    fp = hashlib.sha1(f"{effective_target or ''}:{ip}:{','.join(tool_ids)}".encode()).hexdigest()[:10]
     payload: dict[str, Any] = {
         "ok": ok_any,
-        "target": host or None,
+        "target": effective_target,
         "ip": ip or None,
         "private": (meta or {}).get("private"),
         "requested": tool_ids,
@@ -1676,6 +2171,8 @@ async def iter_security_tools(
         "light": light_mode,
         "fingerprint": fp,
         "authorized": bool(authorized or (meta or {}).get("private")),
+        "engagement_id": engagement_id,
+        "scope_policy": policy_meta,
     }
     # Persist real findings into vulnerabilities when the scan was authorized / private-lab
     if payload.get("authorized") and ok_any:
@@ -1687,6 +2184,27 @@ async def iter_security_tools(
             payload["vulnerabilities_persisted"] = persisted
         except Exception as exc:  # noqa: BLE001
             payload["vulnerabilities_persisted"] = {"ok": False, "error": str(exc)[:200]}
+    # Audit trail — every completed tool run (including code_scan reading local
+    # files, and any authorized-target network probe) gets a record: who ran
+    # what, against what target, with what outcome. Previously only account/
+    # data-mutation actions were audited; tool execution had no trail at all.
+    try:
+        from app.db import audit as _audit_log
+
+        _audit_log(
+            "tool_run",
+            user_id or "local",
+            {
+                "tools": tool_ids,
+                "target": effective_target,
+                "ip": ip or None,
+                "authorized": payload.get("authorized"),
+                "ok": ok_any,
+                "fingerprint": fp,
+            },
+        )
+    except Exception:
+        pass
     yield {"event": "done", "payload": payload}
 
 
@@ -1794,20 +2312,17 @@ def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dic
             for p in ports or []:
                 if p not in _RISKY_PORTS:
                     continue
-                title = f"Exposed risky service on port {p}/tcp"
-                key = (title.lower(), str(target).lower())
+                item = _risky_port_finding(
+                    int(p),
+                    target=str(target),
+                    source=f"{tid}:port-{p}",
+                    ip=str(payload.get("ip") or "") or None,
+                )
+                key = (item["title"].lower(), str(target).lower())
                 if key in existing:
                     continue
                 existing.add(key)
-                to_create.append(
-                    {
-                        "title": title,
-                        "severity": "high" if p in {445, 3389, 23, 21} else "medium",
-                        "asset_name": str(target)[:200],
-                        "source": f"{tid}:port-{p}",
-                        "raw": {"port": p, "note": _RISKY_PORTS[p]},
-                    }
-                )
+                to_create.append(item)
 
         elif tid == "hardening_baseline":
             for line in out.splitlines():
@@ -1819,14 +2334,31 @@ def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dic
                 if key in existing:
                     continue
                 existing.add(key)
-                sev = "high" if any(x in msg.lower() for x in ("tls", "rdp", "smb", "patch")) else "medium"
+                scope = _target_network_scope(str(target), str(payload.get("ip") or "") or None)
+                port_m = re.search(r"port\s+(\d+)/tcp", msg, re.I)
+                if port_m and int(port_m.group(1)) in _RISKY_PORTS:
+                    item = _risky_port_finding(
+                        int(port_m.group(1)),
+                        target=str(target),
+                        source="hardening_baseline",
+                        ip=str(payload.get("ip") or "") or None,
+                    )
+                    item["title"] = title
+                    to_create.append(item)
+                    continue
+                if scope == "loopback" and any(x in msg.lower() for x in ("smb", "rdp", "port")):
+                    sev = "info"
+                elif any(x in msg.lower() for x in ("tls", "rdp", "smb", "patch")):
+                    sev = "high" if scope != "private" else "medium"
+                else:
+                    sev = "medium"
                 to_create.append(
                     {
                         "title": title,
                         "severity": sev,
                         "asset_name": str(target)[:200],
                         "source": "hardening_baseline",
-                        "raw": {"line": line},
+                        "raw": {"line": line, "scope": scope},
                     }
                 )
 
@@ -1855,24 +2387,48 @@ def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dic
                 msg = line.strip()[6:].strip()
                 if any(msg.startswith(prod) for prod in matched_products):
                     continue  # already captured above with CVE detail
+                port_m = re.search(r"port\s+(\d+)/tcp", msg, re.I)
+                if port_m and int(port_m.group(1)) in _RISKY_PORTS:
+                    item = _risky_port_finding(
+                        int(port_m.group(1)),
+                        target=str(target),
+                        source="securaiq_network" if tid == "openvas" else "netvuln_scan",
+                        ip=str(payload.get("ip") or "") or None,
+                    )
+                    # Keep scanner wording in title when not loopback; loopback title is clearer
+                    if item.get("raw", {}).get("scope") != "loopback":
+                        item["title"] = f"Network finding: {msg}"[:300]
+                    key = (item["title"].lower(), str(target).lower())
+                    if key in existing:
+                        continue
+                    existing.add(key)
+                    to_create.append(item)
+                    continue
                 title = f"Network finding: {msg}"[:300]
                 key = (title.lower(), str(target).lower())
                 if key in existing:
                     continue
                 existing.add(key)
-                sev = "high" if any(x in msg.lower() for x in ("tls", "rdp", "smb", "risky", "backdoor")) else "medium"
+                scope = _target_network_scope(str(target), str(payload.get("ip") or "") or None)
+                if scope == "loopback" and any(x in msg.lower() for x in ("smb", "rdp", "risky", "port")):
+                    sev = "info"
+                elif any(x in msg.lower() for x in ("tls", "rdp", "smb", "risky", "backdoor")):
+                    sev = "high" if scope == "public" else "medium"
+                else:
+                    sev = "medium"
                 to_create.append(
                     {
                         "title": title,
                         "severity": sev,
                         "asset_name": str(target)[:200],
                         "source": "securaiq_network" if tid == "openvas" else "netvuln_scan",
-                        "raw": {"line": line},
+                        "raw": {"line": line, "scope": scope},
                     }
                 )
 
         elif tid in {"code_scan", "securaiq_code"}:
             code_target = run.get("target_path") or str(target)
+            code_source = "securaiq_code" if tid == "securaiq_code" else "code_scan"
             for s in run.get("secret_findings") or []:
                 title = f"Possible hardcoded secret ({s.get('rule')}) in {s.get('file')}"[:300]
                 key = (title.lower(), str(code_target).lower())
@@ -1883,9 +2439,14 @@ def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dic
                     {
                         "title": title,
                         "severity": "high",
-                        "asset_name": f"{code_target}:{s.get('file')}"[:200],
-                        "source": "code_scan",
-                        "raw": {"file": s.get("file"), "line": s.get("line"), "rule": s.get("rule")},
+                        "asset_name": str(code_target)[:200],
+                        "source": code_source,
+                        "raw": {
+                            "file": s.get("file"),
+                            "line": s.get("line"),
+                            "rule": s.get("rule"),
+                            "context": s.get("context"),
+                        },
                     }
                 )
             for p in run.get("pattern_findings") or []:
@@ -1898,8 +2459,8 @@ def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dic
                     {
                         "title": title,
                         "severity": p.get("severity") or "medium",
-                        "asset_name": f"{code_target}:{p.get('file')}"[:200],
-                        "source": "code_scan",
+                        "asset_name": str(code_target)[:200],
+                        "source": code_source,
                         "raw": p,
                     }
                 )
@@ -1914,10 +2475,24 @@ def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dic
                         "title": title,
                         "severity": "high" if (d.get("count") or 0) >= 3 else "medium",
                         "asset_name": str(code_target)[:200],
-                        "source": "code_scan",
+                        "source": code_source,
                         "raw": d,
                     }
                 )
+
+        elif tid == "semgrep":
+            code_target = run.get("target_path") or str(target)
+            from app.scanner_adapters import parse_semgrep
+
+            semgrep_results = run.get("semgrep_results") or []
+            for item in parse_semgrep(semgrep_results, engagement_id=None, filename=str(code_target)):
+                title = str(item.get("title") or "Semgrep finding")[:300]
+                key = (title.lower(), str(code_target).lower())
+                if key in existing:
+                    continue
+                existing.add(key)
+                item["asset_name"] = str(code_target)[:200]
+                to_create.append(item)
 
         elif tid == "nikto":
             # Nikto text: "+ OSVDB-…" / "+ CVE-…" style lines — capture CVE hits
@@ -1952,7 +2527,11 @@ def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dic
 
             publish(
                 type="vuln_batch",
-                source="local_tools",
+                source=(
+                    "securaiq_code"
+                    if any(r.get("tool") in {"code_scan", "securaiq_code", "semgrep"} for r in (payload.get("runs") or []))
+                    else "local_tools"
+                ),
                 count=len(created),
                 target=str(target)[:120],
                 user_id=user_id,
@@ -1979,6 +2558,7 @@ async def run_security_tools(
     include_heavy: bool = False,
     mode: str | None = None,
     user_id: str = "local",
+    engagement_id: str | None = None,
 ) -> dict[str, Any]:
     final: dict[str, Any] | None = None
     async for ev in iter_security_tools(
@@ -1991,6 +2571,7 @@ async def run_security_tools(
         include_heavy=include_heavy,
         mode=mode,
         user_id=user_id,
+        engagement_id=engagement_id,
     ):
         if ev.get("event") == "done":
             final = ev.get("payload")
