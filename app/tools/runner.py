@@ -36,7 +36,7 @@ _TOOL_WORD_RE = re.compile(
     r"\b(nmap|nikto|nuclei|whatweb|gobuster|ffuf|sslscan|sslyze|dig|whois|curl|"
     r"traceroute|tracert|ping|openssl|wafw00f|ports?|dns|tls|http|robots|tech|"
     r"cve_lookup|headers?(?:\s+security)?|zap|zaproxy|sqlmap|wpscan|masscan|"
-    r"rustscan|openvas|greenbone|gvm|burp|acunetix|email_auth|phishing_url|suite_guide|"
+    r"rustscan|openvas|greenbone|gvm|securaiq_code|sonarqube|sonar|burp|acunetix|email_auth|phishing_url|suite_guide|"
     r"spf|dmarc|dkim|phish(?:ing)?|awareness|hardening(?:_baseline)?|patch(?:es|ing|"
     r"\s+compliance)?|xdr|edr|defender(?:_hunt)?|advanced\s*hunting|kql)\b",
     re.IGNORECASE,
@@ -105,6 +105,14 @@ def parse_tool_request(
             "zaproxy": "zap",
             "greenbone": "openvas",
             "gvm": "openvas",
+            "openvas": "openvas",
+            "network_scanner": "openvas",
+            "securaiq_network": "openvas",
+            "sonarqube": "securaiq_code",
+            "sonar": "securaiq_code",
+            "sonarcloud": "securaiq_code",
+            "code_quality": "securaiq_code",
+            "securaiq_code": "securaiq_code",
             "burp": "suite_guide",
             "acunetix": "suite_guide",
             "spf": "email_auth",
@@ -215,6 +223,32 @@ async def _probe_port(ip: str, port: int, timeout: float = 0.22) -> bool:
         return True
     except Exception:
         return False
+
+
+_BANNER_GRAB_PORTS = (21, 22, 23, 25)
+
+
+async def _grab_banner(ip: str, port: int, timeout: float = 1.3) -> str:
+    """Read whatever the service says first on connect (FTP/SSH/Telnet/SMTP
+    all greet in cleartext) — no install, just a raw socket read."""
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=timeout)
+    except Exception:
+        return ""
+    try:
+        data = await asyncio.wait_for(reader.read(256), timeout=timeout)
+        try:
+            return data.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            return data.decode("latin-1", errors="replace").strip()
+    except Exception:
+        return ""
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
 
 
 async def _tool_ports(ip: str, *, light: bool = True) -> dict[str, Any]:
@@ -582,7 +616,6 @@ async def _tool_phishing_url(message: str) -> dict[str, Any]:
 
 async def _tool_suite_guide() -> dict[str, Any]:
     zap = resolve_binary(TOOL_CATALOG["zap"]) if "zap" in TOOL_CATALOG else None
-    gvm = resolve_binary(TOOL_CATALOG["openvas"]) if "openvas" in TOOL_CATALOG else None
     nuclei = resolve_binary(TOOL_CATALOG["nuclei"]) if "nuclei" in TOOL_CATALOG else None
     text = f"""Authorized lab / engagement tool playbooks
 
@@ -591,7 +624,8 @@ async def _tool_suite_guide() -> dict[str, Any]:
 - Scope only in-scope hosts. Export sitemap → report.
 - Equivalent FOSS: OWASP ZAP {'READY: ' + zap if zap else '(install zaproxy / zap.sh)'}.
 - **Results import is real, not just a guide**: Scanner tab → right-click → "Report selected issues" →
-  XML → upload via Import scan (`POST /api/vulnerabilities/import`). Findings land as real, severity-scored
+  XML → upload via Import (`POST /api/vulnerabilities/import`) if you prefer file import over Live scan.
+  Findings land as real, severity-scored
   vulnerability rows (High/Medium/Low/Information mapped correctly), same pipeline as Trivy/Semgrep/ZAP.
 
 ## Acunetix (licensed DAST)
@@ -599,16 +633,20 @@ async def _tool_suite_guide() -> dict[str, Any]:
 - API: set ACUNETIX_URL + API key in env if you automate; otherwise use UI scans.
 - FOSS stand-ins: ZAP baseline + Nuclei {'READY' if nuclei else '(install nuclei)'}.
 
-## Greenbone / OpenVAS (GVM)
-- Install Greenbone Community Edition; scan RFC1918 / VPN lab ranges only.
-- CLI: gvm-cli / gvm-script {'READY: ' + gvm if gvm else '(not on PATH — install GVM)'}.
-- Feed sync required before useful NVTs.
+## SecuraIQ Network Scanner (built-in OpenVAS-class)
+- Run tool `openvas` from Live scan — install-free network vuln assessment.
+- Ports, banners, TLS, headers, risky services, version→CVE matching. Auth + owned targets only.
+- Findings persist into Assets / Vulnerabilities automatically.
+
+## SecuraIQ Code (built-in SAST)
+- Tool `securaiq_code`: sync connected code engine issues, or set Target to a local folder for code_scan.
+- Configure engine URL/token under Settings → SecuraIQ Code.
 
 ## Quick authorized commands
 ```bash
+# SecuraIQ Live scan: Auth + openvas on owned host
 # ZAP baseline
 zap-baseline.py -t http://192.168.56.101/
-# Greenbone: create target + task in UI, or gvm-cli TLS
 # Nuclei
 nuclei -u http://192.168.56.101/ -severity critical,high
 # Nmap service
@@ -755,6 +793,215 @@ async def _tool_hardening_baseline(host: str, ip: str, open_ports: list[int] | N
     return {"ok": True, "output": header + "\n" + "\n".join(findings), "score": score, "grade": grade}
 
 
+# Real, published CVEs matched heuristically against service banners / server
+# headers — a lightweight stand-in for nmap --script vuln / nuclei when those
+# aren't installed. Conservative on purpose: only clear-text version strings,
+# never a guess.
+_VERSION_VULN_RULES: list[tuple[re.Pattern, str, str, str]] = [
+    (re.compile(r"vsftpd 2\.3\.4", re.I), "vsftpd 2.3.4", "CVE-2011-2523",
+     "Known backdoored build — a ':)' in the USER field opens a root shell on port 6200. Upgrade immediately."),
+    (re.compile(r"ProFTPD 1\.3\.3", re.I), "ProFTPD 1.3.3", "CVE-2010-4221",
+     "mod_copy/telnet IAC buffer overflow — remote code execution. Upgrade."),
+    (re.compile(r"OpenSSH[_-]?(1\.|2\.|3\.|4\.|5\.|6\.|7\.[0-4])", re.I), "OpenSSH < 7.5", "see NVD for this build",
+     "End-of-support-window OpenSSH build with multiple published CVEs — upgrade to a current maintained release."),
+    (re.compile(r"Apache/2\.2\.", re.I), "Apache httpd 2.2.x", "EOL",
+     "Apache httpd 2.2.x reached end-of-life in 2017 — no security patches ship for it. Upgrade to 2.4.x current."),
+    (re.compile(r"Apache/2\.4\.(?:[0-9]|1[0-9]|2[0-5])\b", re.I), "Apache httpd 2.4.0-2.4.25", "CVE-2017-9798",
+     "Optionsbleed (memory disclosure via OPTIONS) affects this build range — upgrade to 2.4.27+."),
+    (re.compile(r"nginx/(0\.|1\.[0-9]\.|1\.1[0-2]\.)", re.I), "nginx < 1.13", "see NVD for this build",
+     "Old nginx build — multiple published CVEs since this release line. Upgrade to a current stable release."),
+    (re.compile(r"Microsoft-IIS/6\.0", re.I), "IIS 6.0", "CVE-2017-7269",
+     "IIS 6.0 WebDAV buffer overflow, actively exploited historically — decommission or upgrade."),
+    (re.compile(r"Microsoft-IIS/7\.", re.I), "IIS 7.x", "EOL",
+     "IIS 7.x ships with Windows Server 2008, out of extended support — upgrade the OS/IIS."),
+]
+
+
+async def _tool_netvuln_scan(host: str, ip: str, open_ports: list[int] | None) -> dict[str, Any]:
+    """Composite, install-free vulnerability scan: banner grab + version-CVE
+    matching + TLS weaknesses + missing security headers + risky exposed
+    services. Powers SecuraIQ Network Scanner (openvas) and netvuln_scan."""
+    findings: list[str] = []
+    matches: list[dict[str, str]] = []
+
+    ports = list(open_ports or [])
+    if not ports:
+        probe = await _tool_ports(ip, light=False)
+        ports = list(probe.get("open_ports") or [])
+        findings.append(f"[INFO] Port probe: {probe.get('output') or 'none'}")
+
+    # 1) Raw banners on classic cleartext ports (FTP/SSH/Telnet/SMTP)
+    for p in ports:
+        if p not in _BANNER_GRAB_PORTS:
+            continue
+        banner = await _grab_banner(ip, p)
+        if not banner:
+            continue
+        clean = banner.splitlines()[0][:200]
+        findings.append(f"[INFO] Banner {p}/tcp: {clean}")
+        for pattern, product, cve, note in _VERSION_VULN_RULES:
+            if pattern.search(banner):
+                findings.append(f"[FAIL] {product} on port {p}/tcp ({cve}) — {note}")
+                matches.append({"port": str(p), "product": product, "cve": cve, "note": note})
+
+    # 2) Web server header fingerprint (reuse the same HTTP fetch other tools use)
+    if any(p in ports for p in (80, 443, 8080, 8443)) or not ports:
+        http_result = await _tool_http(ip, ports)
+        for sh in re.findall(r"server=([^\s,}]+)", http_result.get("output") or ""):
+            for pattern, product, cve, note in _VERSION_VULN_RULES:
+                if pattern.search(sh):
+                    findings.append(f"[FAIL] {product} ({cve}) — {note}")
+                    matches.append({"port": "http", "product": product, "cve": cve, "note": note})
+
+        # 3) TLS weaknesses
+        if 443 in ports or 8443 in ports or not ports:
+            tls_result = await _tool_tls(ip, ports)
+            if tls_result.get("ok"):
+                try:
+                    tls_data = json.loads(tls_result.get("output") or "{}")
+                except Exception:
+                    tls_data = {}
+                ver = tls_data.get("tls", "")
+                if ver and ver not in ("TLSv1.2", "TLSv1.3"):
+                    findings.append(f"[FAIL] Outdated TLS version negotiated: {ver} — disable and require TLS 1.2+")
+                elif ver:
+                    findings.append(f"[PASS] TLS version {ver}")
+
+        # 4) Missing security headers
+        hdr_result = await _tool_headers_security(ip, ports)
+        m = re.search(r"missing=\[(.*?)\]", hdr_result.get("output") or "")
+        if m and m.group(1).strip():
+            findings.append(f"[FAIL] Missing HTTP security headers: {m.group(1)}")
+
+    # 5) Risky exposed services (same table hardening_baseline uses)
+    for p in ports:
+        if p in _RISKY_PORTS:
+            findings.append(f"[FAIL] Exposed risky service on port {p}/tcp — {_RISKY_PORTS[p]}")
+
+    fail_count = sum(1 for f in findings if f.startswith("[FAIL]"))
+    header = (
+        f"Network vulnerability scan for {host or ip}: {len(ports)} open port(s), "
+        f"{fail_count} finding(s) ({len(matches)} version-matched CVE-class issue(s))"
+    )
+    body = "\n".join(findings) if findings else "(no issues found in the checks run)"
+    return {
+        "ok": True,
+        "output": header + "\n" + body,
+        "open_ports": ports,
+        "cve_matches": matches,
+    }
+
+
+async def _tool_openvas(host: str, ip: str, open_ports: list[int] | None) -> dict[str, Any]:
+    """SecuraIQ Network Scanner — built-in OpenVAS-class assessment (no GVM install)."""
+    result = await _tool_netvuln_scan(host, ip, open_ports)
+    out = result.get("output") or ""
+    branded = (
+        f"SecuraIQ Network Scanner (OpenVAS-class · built-in) · target {host or ip}\n"
+        f"{out}"
+    )
+    result = dict(result)
+    result["output"] = branded
+    result["scanner"] = "securaiq_network"
+    return result
+
+
+async def _tool_securaiq_code(
+    *,
+    target: str,
+    message: str,
+    authorized: bool,
+    user_id: str,
+) -> dict[str, Any]:
+    """SecuraIQ Code: local folder SAST and/or sync connected code-quality engine."""
+    path_candidate = (target or "").strip()
+    looks_like_path = bool(
+        path_candidate
+        and (
+            "/" in path_candidate
+            or "\\" in path_candidate
+            or path_candidate.endswith((".py", ".js", ".ts", ".go", ".java"))
+            or Path(path_candidate).exists()
+        )
+    )
+    lines: list[str] = ["SecuraIQ Code"]
+
+    try:
+        from app.connectors import sonarqube as sonar_conn
+        from app.sonarqube import sync as sonar_sync
+        from app.sonarqube import status as sonar_status
+    except Exception as exc:
+        sonar_conn = None  # type: ignore[assignment]
+        sonar_sync = None  # type: ignore[assignment]
+        sonar_status = None  # type: ignore[assignment]
+        lines.append(f"Engine connector unavailable: {exc}")
+
+    if looks_like_path:
+        local = await _tool_code_scan(path_candidate, authorized=authorized)
+        local_ok = bool(local.get("ok"))
+        lines.append(local.get("output") or local.get("error") or "local scan finished")
+        payload: dict[str, Any] = {
+            "ok": local_ok,
+            "output": "\n".join(lines),
+            "scanner": "securaiq_code",
+            "mode": "local_sast",
+            "secret_findings": local.get("secret_findings") or [],
+            "pattern_findings": local.get("pattern_findings") or [],
+            "dependency_findings": local.get("dependency_findings") or [],
+            "target_path": local.get("target_path") or path_candidate,
+        }
+        if local.get("error"):
+            payload["error"] = local["error"]
+        if sonar_conn and sonar_sync and sonar_conn.is_configured() and authorized:
+            result = await sonar_sync(user_id or "local")
+            synced = int(result.get("imported") or 0)
+            lines.append(f"Engine sync: imported={synced}")
+            payload["output"] = "\n".join(lines)
+            payload["imported"] = synced
+            payload["mode"] = "local_sast+engine_sync"
+        return payload
+
+    if sonar_conn and sonar_sync and sonar_conn.is_configured():
+        if not authorized:
+            lines.append(
+                "Code engine is configured but Auth is off — check Auth to sync authorized projects."
+            )
+            return {
+                "ok": False,
+                "error": "auth_required",
+                "output": "\n".join(lines),
+                "scanner": "securaiq_code",
+            }
+        result = await sonar_sync(user_id or "local")
+        synced = int(result.get("imported") or 0)
+        st = sonar_status() if sonar_status else {}
+        lines.append(
+            f"Engine sync: imported={synced} · project={st.get('project_key') or 'all'} · "
+            f"url={st.get('base_url') or 'configured'}"
+        )
+        if result.get("error"):
+            lines.append(f"Sync note: {result['error']}")
+        return {
+            "ok": bool(result.get("ok", True)),
+            "output": "\n".join(lines),
+            "imported": synced,
+            "scanner": "securaiq_code",
+            "mode": "engine_sync",
+        }
+
+    lines.append(
+        "No local folder in Target and no code engine configured.\n"
+        "• Set Target to an owned local project path and Auth, or\n"
+        "• Settings → SecuraIQ Code: set engine base URL + token, then run this tool or Sync."
+    )
+    return {
+        "ok": False,
+        "error": "not_configured",
+        "output": "\n".join(lines),
+        "scanner": "securaiq_code",
+    }
+
+
 async def _run_external(tool_id: str, target: str, ip: str, open_ports: list[int] | None) -> dict[str, Any]:
     spec = TOOL_CATALOG[tool_id]
     binary = resolve_binary(spec)
@@ -868,11 +1115,6 @@ async def _run_external(tool_id: str, target: str, ip: str, open_ports: list[int
         )
     if tool_id == "rustscan":
         return await _run_cmd([binary, "-a", ip, "--ulimit", "5000", "-g"], timeout=25)
-    if tool_id == "openvas":
-        # gvm-cli / openvas — status oriented; full scans are async in GVM
-        if binary.endswith("gvm-cli") or binary.endswith("gvm-cli.exe"):
-            return await _run_cmd([binary, "--version"], timeout=10)
-        return await _run_cmd([binary, "--version"], timeout=10)
 
     return {"ok": False, "error": f"no runner for {tool_id}", "output": ""}
 
@@ -883,6 +1125,256 @@ def _ensure_mini_wordlist() -> Path:
     if not path.exists():
         path.write_text("\n".join(_DIR_WORDS) + "\n", encoding="utf-8")
     return path
+
+
+# --- Code security scan (SAST) — pure Python, no semgrep/bandit/trivy install ---
+
+_CODE_SCAN_MAX_FILES = 4000
+_CODE_SCAN_MAX_FILE_BYTES = 1_500_000
+_CODE_SCAN_SKIP_DIRS = {
+    "node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build",
+    ".next", ".pytest_cache", "site-packages", ".tox", "target", "bin", "obj",
+    ".idea", ".vscode", "coverage", ".mypy_cache",
+}
+_CODE_SCAN_EXTS = {
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rb", ".php", ".cs",
+    ".cpp", ".c", ".h", ".env", ".yml", ".yaml", ".json", ".sh", ".ps1", ".tf",
+}
+
+# Detect the presence of a likely secret — never surface the matched value
+# itself, only its location (matches the gitleaks adapter's own rule: strip
+# the secret material out of anything persisted or returned).
+_SECRET_RULES: list[tuple[str, re.Pattern]] = [
+    ("aws_access_key_id", re.compile(r"AKIA[0-9A-Z]{16}")),
+    ("aws_secret_access_key", re.compile(r"(?i)aws.{0,20}(secret|access).{0,20}[:=]\s*['\"][0-9a-zA-Z/+]{40}['\"]")),
+    ("private_key_block", re.compile(r"-----BEGIN (RSA|EC|DSA|OPENSSH|PGP) PRIVATE KEY-----")),
+    ("slack_token", re.compile(r"xox[baprs]-[0-9A-Za-z-]{10,}")),
+    ("github_token", re.compile(r"gh[pousr]_[0-9A-Za-z]{20,}")),
+    ("stripe_secret_key", re.compile(r"sk_(live|test)_[0-9A-Za-z]{16,}")),
+    ("generic_api_key", re.compile(r"(?i)\b(api[_-]?key|apikey)\b\s*[:=]\s*['\"][0-9a-zA-Z\-_]{16,}['\"]")),
+    ("generic_secret_or_password", re.compile(r"(?i)\b(secret|password|passwd|pwd)\b\s*[:=]\s*['\"][^'\"\s]{8,}['\"]")),
+    ("jwt_like_token", re.compile(r"eyJ[0-9A-Za-z_-]{10,}\.[0-9A-Za-z_-]{10,}\.[0-9A-Za-z_-]{10,}")),
+]
+
+_DANGEROUS_RULES: list[tuple[str, re.Pattern, frozenset[str], str, str]] = [
+    ("py_eval_exec", re.compile(r"\b(eval|exec)\s*\("), frozenset({".py"}), "high",
+     "eval()/exec() — arbitrary code execution if input is not fully trusted"),
+    ("py_subprocess_shell_true", re.compile(r"subprocess\.\w+\([^)]*shell\s*=\s*True"), frozenset({".py"}), "high",
+     "subprocess(..., shell=True) — command injection risk if any argument is user-influenced"),
+    ("py_pickle_load", re.compile(r"pickle\.loads?\("), frozenset({".py"}), "high",
+     "pickle.load/loads — insecure deserialization; never unpickle untrusted data"),
+    ("py_yaml_unsafe_load", re.compile(r"yaml\.load\((?![^)]*Loader\s*=\s*yaml\.SafeLoader)"), frozenset({".py"}), "medium",
+     "yaml.load() without SafeLoader — insecure deserialization risk"),
+    ("py_sql_fstring_execute", re.compile(r"(?i)\.execute\s*\(\s*f['\"]"), frozenset({".py"}), "high",
+     "SQL query built with an f-string — likely SQL injection; use parameterized queries"),
+    ("js_eval", re.compile(r"\beval\s*\("), frozenset({".js", ".jsx", ".ts", ".tsx"}), "high",
+     "eval() — arbitrary code execution if input is not fully trusted"),
+    ("js_inner_html", re.compile(r"\.innerHTML\s*="), frozenset({".js", ".jsx", ".ts", ".tsx"}), "medium",
+     "Direct innerHTML assignment — XSS risk if the value is not sanitized"),
+    ("react_dangerously_set_inner_html", re.compile(r"dangerouslySetInnerHTML"), frozenset({".jsx", ".tsx"}), "medium",
+     "dangerouslySetInnerHTML — XSS risk if content is not sanitized"),
+    ("hardcoded_http_url", re.compile(r"http://(?!localhost|127\.0\.0\.1|0\.0\.0\.0)[A-Za-z0-9]"),
+     frozenset({".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".go", ".rb", ".php", ".cs"}), "low",
+     "Hardcoded plaintext HTTP URL — prefer HTTPS"),
+]
+
+
+def _redact(line: str, span: tuple[int, int]) -> str:
+    """Never surface the actual secret value — only its location and shape."""
+    start, end = span
+    return (line[:start] + "\u00abredacted\u00bb" + line[end:]).strip()[:160]
+
+
+async def _osv_dependency_check(root: Path, files: list[Path]) -> list[dict[str, Any]]:
+    """Query OSV.dev (free, no API key) for known-vulnerable pinned dependency
+    versions in requirements.txt / package.json. Best-effort — a network
+    failure just skips this section, it does not fail the whole scan."""
+    queries: list[dict[str, Any]] = []
+    meta: list[tuple[str, str, str]] = []
+
+    req_re = re.compile(r"^\s*([A-Za-z0-9_.\-]+)\s*==\s*([A-Za-z0-9_.\-]+)\s*$")
+    for f in files:
+        if len(queries) >= 80:
+            break
+        if f.name == "requirements.txt":
+            try:
+                for line in f.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    line = line.split("#", 1)[0].strip()
+                    m = req_re.match(line)
+                    if m:
+                        name, ver = m.group(1), m.group(2)
+                        meta.append((name, ver, "PyPI"))
+                        queries.append({"package": {"name": name, "ecosystem": "PyPI"}, "version": ver})
+            except Exception:
+                continue
+        elif f.name == "package.json":
+            try:
+                data = json.loads(f.read_text(encoding="utf-8", errors="ignore"))
+            except Exception:
+                continue
+            deps: dict[str, Any] = {}
+            deps.update(data.get("dependencies") or {})
+            deps.update(data.get("devDependencies") or {})
+            for name, spec in deps.items():
+                ver = re.sub(r"^[\^~>=<\s]+", "", str(spec)).strip()
+                if not re.match(r"^\d+\.\d+\.\d+", ver):
+                    continue
+                meta.append((name, ver, "npm"))
+                queries.append({"package": {"name": name, "ecosystem": "npm"}, "version": ver})
+
+    if not queries:
+        return []
+    queries = queries[:80]
+    meta = meta[:80]
+
+    try:
+        timeout = httpx.Timeout(connect=3.0, read=10.0, write=3.0, pool=3.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(
+                "https://api.osv.dev/v1/querybatch",
+                json={"queries": queries},
+                headers={"User-Agent": "SecuraIQ-Tools/1.0"},
+            )
+            if r.status_code != 200:
+                return []
+            results = (r.json() or {}).get("results") or []
+    except Exception:
+        return []
+
+    out: list[dict[str, Any]] = []
+    for (name, ver, eco), res in zip(meta, results):
+        vulns = (res or {}).get("vulns") or []
+        if not vulns:
+            continue
+        out.append({
+            "name": name,
+            "version": ver,
+            "ecosystem": eco,
+            "count": len(vulns),
+            "sample_id": vulns[0].get("id", "?"),
+        })
+    return out[:40]
+
+
+async def _tool_code_scan(target_path: str, *, authorized: bool) -> dict[str, Any]:
+    """Static scan of a local codebase path: hardcoded secrets, dangerous
+    code patterns, and known-vulnerable dependency versions. Pure Python —
+    no semgrep/bandit/trivy install required."""
+    if not target_path or not target_path.strip():
+        return {
+            "ok": False,
+            "error": "No codebase path given",
+            "output": (
+                "Set Target to a local folder path (e.g. C:\\path\\to\\project or "
+                "/home/user/project) and check Auth to confirm you own or are "
+                "authorized to scan it, then run code_scan again."
+            ),
+        }
+    # Mirrors the network-tool consent model (authorized_target) — code_scan
+    # reads files off disk, so it needs the same explicit authorization,
+    # especially since LAN mode has no auth by default.
+    if not authorized:
+        return {
+            "ok": False,
+            "error": "Not authorized",
+            "output": (
+                "code_scan reads source files on disk — check **Auth** "
+                "(authorized_target) to confirm you own or are authorized to "
+                "scan this path before it runs."
+            ),
+        }
+
+    root = Path(target_path.strip()).expanduser()
+    try:
+        root = root.resolve(strict=False)
+    except Exception:
+        return {"ok": False, "error": "Invalid path", "output": f"Could not resolve path: {target_path}"}
+    if not root.exists():
+        return {"ok": False, "error": "Path not found", "output": f"No such file or directory: {root}"}
+
+    files: list[Path] = []
+    if root.is_file():
+        files = [root]
+    else:
+        for p in root.rglob("*"):
+            if len(files) >= _CODE_SCAN_MAX_FILES:
+                break
+            if not p.is_file():
+                continue
+            if any(part in _CODE_SCAN_SKIP_DIRS for part in p.parts):
+                continue
+            if p.suffix.lower() not in _CODE_SCAN_EXTS and p.name not in ("requirements.txt", "package.json"):
+                continue
+            try:
+                if p.stat().st_size > _CODE_SCAN_MAX_FILE_BYTES:
+                    continue
+            except OSError:
+                continue
+            files.append(p)
+
+    secret_findings: list[dict[str, Any]] = []
+    pattern_findings: list[dict[str, Any]] = []
+    scanned = 0
+    budget_hit = False
+    for f in files:
+        if budget_hit:
+            break
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        scanned += 1
+        rel = str(f.relative_to(root)) if root.is_dir() else f.name
+        ext = f.suffix.lower()
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            for rule_id, pattern in _SECRET_RULES:
+                m = pattern.search(line)
+                if m:
+                    secret_findings.append(
+                        {"rule": rule_id, "file": rel, "line": lineno, "context": _redact(line, m.span())}
+                    )
+            for rule_id, pattern, exts, sev, note in _DANGEROUS_RULES:
+                if ext not in exts:
+                    continue
+                if pattern.search(line):
+                    pattern_findings.append(
+                        {
+                            "rule": rule_id, "file": rel, "line": lineno, "severity": sev,
+                            "note": note, "context": line.strip()[:160],
+                        }
+                    )
+            if len(secret_findings) + len(pattern_findings) >= 300:
+                budget_hit = True
+                break
+
+    dep_findings = await _osv_dependency_check(root, files)
+
+    findings_lines: list[str] = []
+    for s in secret_findings[:60]:
+        findings_lines.append(f"[FAIL] Possible {s['rule']} in {s['file']}:{s['line']} — {s['context']}")
+    for p in pattern_findings[:80]:
+        findings_lines.append(f"[FAIL] {p['rule']} ({p['severity']}) in {p['file']}:{p['line']} — {p['note']}")
+    for d in dep_findings[:40]:
+        plural = "y" if d["count"] == 1 else "ies"
+        findings_lines.append(
+            f"[FAIL] Vulnerable dependency {d['name']}@{d['version']} ({d['ecosystem']}) — "
+            f"{d['count']} known advisor{plural}, e.g. {d['sample_id']}"
+        )
+
+    header = (
+        f"Code security scan of {root}: {scanned} file(s) scanned, "
+        f"{len(secret_findings)} possible secret(s), {len(pattern_findings)} risky pattern(s), "
+        f"{len(dep_findings)} vulnerable dependenc{'y' if len(dep_findings) == 1 else 'ies'}"
+    )
+    body = "\n".join(findings_lines) if findings_lines else "(clean — no issues found in the checks run)"
+    return {
+        "ok": True,
+        "output": header + "\n" + body,
+        "secret_findings": secret_findings,
+        "pattern_findings": pattern_findings,
+        "dependency_findings": dep_findings,
+        "target_path": str(root),
+    }
 
 
 async def iter_security_tools(
@@ -914,17 +1406,34 @@ async def iter_security_tools(
         return
 
     awareness_only = all(
-        tid in {"phishing_url", "email_auth", "suite_guide", "cve_lookup", "defender_hunt"}
+        tid in {
+            "phishing_url",
+            "email_auth",
+            "suite_guide",
+            "cve_lookup",
+            "defender_hunt",
+            "code_scan",
+            "securaiq_code",
+        }
         for tid in tool_ids
     )
-    targets = extract_targets(message, target)
+    # Path-based SAST tools must not be DNS-resolved as hostnames.
+    path_tools = {"code_scan", "securaiq_code"}
+    code_scan_path = (target or "").strip() if path_tools.intersection(tool_ids) else ""
+    skip_net_target = bool(path_tools.intersection(tool_ids)) and (
+        not target
+        or "/" in (target or "")
+        or "\\" in (target or "")
+        or Path((target or "").strip()).exists()
+    )
+    targets = extract_targets(message, None if skip_net_target else target)
     if "email_auth" in tool_ids and not targets:
         for m in _DOMAIN_RE.finditer(message or ""):
             d = m.group(0).lower()
             if d not in {"example.com", "localhost"} and not d.endswith(".local"):
                 targets = [d]
                 break
-    if target and not targets:
+    if target and not targets and not skip_net_target:
         targets = [target.strip()]
 
     needs_target = any(TOOL_CATALOG[t].needs_target for t in tool_ids if t in TOOL_CATALOG)
@@ -1005,6 +1514,16 @@ async def iter_security_tools(
                     m = _DOMAIN_RE.search(message or "")
                     domain = m.group(0) if m else (target or "")
                 result = await _tool_email_auth(domain or host or "")
+            elif tid == "code_scan":
+                # Path-based, not IP-based — bypasses the network target gate below.
+                result = await _tool_code_scan(code_scan_path or target or "", authorized=authorized)
+            elif tid == "securaiq_code":
+                result = await _tool_securaiq_code(
+                    target=code_scan_path or target or host or "",
+                    message=message or "",
+                    authorized=bool(authorized),
+                    user_id=user_id or "local",
+                )
             elif not ip and spec.needs_target:
                 result = {"ok": False, "error": "no target", "output": ""}
             elif tid == "ports":
@@ -1025,6 +1544,10 @@ async def iter_security_tools(
                 result = await _tool_whois(host, ip)
             elif tid == "hardening_baseline":
                 result = await _tool_hardening_baseline(host, ip, ports_hint)
+            elif tid == "netvuln_scan":
+                result = await _tool_netvuln_scan(host, ip, ports_hint)
+            elif tid == "openvas":
+                result = await _tool_openvas(host, ip, ports_hint)
             elif tid == "hardeningkitty":
                 # HardeningKitty has no PATH binary (binaries=()) — it runs via a
                 # dedicated Windows/PowerShell module, not a generic subprocess.
@@ -1082,7 +1605,17 @@ async def iter_security_tools(
 
     rest = list(ordered)
     needs_ports = ip and any(
-        t in {"ports", "hardening_baseline", "http", "headers_security", "tls", "robots", "tech"}
+        t in {
+            "ports",
+            "hardening_baseline",
+            "netvuln_scan",
+            "openvas",
+            "http",
+            "headers_security",
+            "tls",
+            "robots",
+            "tech",
+        }
         for t in rest
     )
     if needs_ports:
@@ -1210,9 +1743,20 @@ def _parse_nuclei_jsonl(output: str) -> list[dict[str, Any]]:
 
 def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Turn authorized tool output into real vulnerability rows (not chat-only)."""
-    from app.enterprise import create_vulnerability, list_vulnerabilities
+    from app.enterprise import create_vulnerability, ensure_asset_for_target, list_vulnerabilities
 
     target = payload.get("target") or payload.get("ip") or "unknown"
+    # Live inventory: every authorized scan registers the target as an asset
+    asset = None
+    try:
+        asset = ensure_asset_for_target(
+            user_id,
+            str(target)[:200],
+            notes=f"Live scan · tools={','.join(payload.get('requested') or [])}"[:2000],
+        )
+    except Exception:
+        asset = None
+
     existing = {
         ((v.get("title") or "").strip().lower(), (v.get("asset_name") or "").strip().lower())
         for v in list_vulnerabilities(user_id)
@@ -1286,6 +1830,95 @@ def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dic
                     }
                 )
 
+        elif tid in {"netvuln_scan", "openvas"}:
+            matched_products = {m.get("product") for m in (run.get("cve_matches") or []) if m.get("product")}
+            for cm in run.get("cve_matches") or []:
+                title = f"{cm.get('product')} — {cm.get('cve')}"[:300]
+                key = (title.lower(), str(target).lower())
+                if key in existing:
+                    continue
+                existing.add(key)
+                cve_val = str(cm.get("cve") or "")
+                to_create.append(
+                    {
+                        "title": title,
+                        "cve": cve_val if cve_val.upper().startswith("CVE-") else "",
+                        "severity": "critical" if "backdoor" in (cm.get("note") or "").lower() else "high",
+                        "asset_name": str(target)[:200],
+                        "source": "securaiq_network" if tid == "openvas" else "netvuln_scan",
+                        "raw": cm,
+                    }
+                )
+            for line in out.splitlines():
+                if not line.strip().startswith("[FAIL]"):
+                    continue
+                msg = line.strip()[6:].strip()
+                if any(msg.startswith(prod) for prod in matched_products):
+                    continue  # already captured above with CVE detail
+                title = f"Network finding: {msg}"[:300]
+                key = (title.lower(), str(target).lower())
+                if key in existing:
+                    continue
+                existing.add(key)
+                sev = "high" if any(x in msg.lower() for x in ("tls", "rdp", "smb", "risky", "backdoor")) else "medium"
+                to_create.append(
+                    {
+                        "title": title,
+                        "severity": sev,
+                        "asset_name": str(target)[:200],
+                        "source": "securaiq_network" if tid == "openvas" else "netvuln_scan",
+                        "raw": {"line": line},
+                    }
+                )
+
+        elif tid in {"code_scan", "securaiq_code"}:
+            code_target = run.get("target_path") or str(target)
+            for s in run.get("secret_findings") or []:
+                title = f"Possible hardcoded secret ({s.get('rule')}) in {s.get('file')}"[:300]
+                key = (title.lower(), str(code_target).lower())
+                if key in existing:
+                    continue
+                existing.add(key)
+                to_create.append(
+                    {
+                        "title": title,
+                        "severity": "high",
+                        "asset_name": f"{code_target}:{s.get('file')}"[:200],
+                        "source": "code_scan",
+                        "raw": {"file": s.get("file"), "line": s.get("line"), "rule": s.get("rule")},
+                    }
+                )
+            for p in run.get("pattern_findings") or []:
+                title = f"{p.get('rule')} in {p.get('file')}"[:300]
+                key = (title.lower(), str(code_target).lower())
+                if key in existing:
+                    continue
+                existing.add(key)
+                to_create.append(
+                    {
+                        "title": title,
+                        "severity": p.get("severity") or "medium",
+                        "asset_name": f"{code_target}:{p.get('file')}"[:200],
+                        "source": "code_scan",
+                        "raw": p,
+                    }
+                )
+            for d in run.get("dependency_findings") or []:
+                title = f"Vulnerable dependency: {d.get('name')}@{d.get('version')} ({d.get('ecosystem')})"[:300]
+                key = (title.lower(), str(code_target).lower())
+                if key in existing:
+                    continue
+                existing.add(key)
+                to_create.append(
+                    {
+                        "title": title,
+                        "severity": "high" if (d.get("count") or 0) >= 3 else "medium",
+                        "asset_name": str(code_target)[:200],
+                        "source": "code_scan",
+                        "raw": d,
+                    }
+                )
+
         elif tid == "nikto":
             # Nikto text: "+ OSVDB-…" / "+ CVE-…" style lines — capture CVE hits
             for m in _CVE_RE.finditer(out):
@@ -1308,6 +1941,10 @@ def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dic
 
     created = []
     for item in to_create[:100]:
+        if asset and asset.get("id") and not item.get("asset_id"):
+            item["asset_id"] = asset["id"]
+        if asset and asset.get("name") and not item.get("asset_name"):
+            item["asset_name"] = asset["name"]
         created.append(create_vulnerability(user_id, item, emit_realtime=False))
     if created:
         try:
@@ -1322,7 +1959,13 @@ def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dic
             )
         except Exception:
             pass
-    return {"ok": True, "created": len(created), "titles": [c.get("title") for c in created[:15]]}
+    return {
+        "ok": True,
+        "created": len(created),
+        "asset_id": (asset or {}).get("id"),
+        "asset_name": (asset or {}).get("name") or str(target)[:200],
+        "titles": [c.get("title") for c in created[:15]],
+    }
 
 
 async def run_security_tools(
@@ -1374,11 +2017,17 @@ def format_tools_context(payload: dict[str, Any]) -> str:
         "",
     ]
     vp = payload.get("vulnerabilities_persisted") or {}
-    if vp.get("created"):
-        lines.append(
-            f"**Persisted {vp['created']} finding(s)** into Vulnerabilities "
-            f"(source=local_tools) — open the Vulnerabilities workspace to triage."
-        )
+    if vp.get("created") or vp.get("asset_id"):
+        bits = []
+        if vp.get("asset_name") or vp.get("asset_id"):
+            bits.append(f"asset `{vp.get('asset_name') or vp.get('asset_id')}`")
+        if vp.get("created"):
+            bits.append(
+                f"**{vp['created']} finding(s)** into Vulnerabilities (source=local_tools)"
+            )
+        else:
+            bits.append("inventory asset registered (no new findings)")
+        lines.append("**Live inventory:** " + " · ".join(bits) + " — open Assets / Vulnerabilities / Mission Control.")
         lines.append("")
     for r in runs:
         status = "OK" if r.get("ok") else "FAIL"

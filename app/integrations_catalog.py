@@ -17,7 +17,7 @@ from typing import Any
 MVP_STACK: list[dict[str, str]] = [
     {"category": "AI", "tool": "Qwen + OpenRouter / Ollama", "status": "shipped"},
     {"category": "SAST", "tool": "Semgrep", "status": "import"},
-    {"category": "Code quality", "tool": "SonarQube Community", "status": "shipped"},
+    {"category": "Code quality", "tool": "SecuraIQ Code", "status": "shipped"},
     {"category": "Secrets", "tool": "Gitleaks", "status": "import"},
     {"category": "Containers / SCA", "tool": "Trivy + Grype", "status": "import"},
     {"category": "IaC", "tool": "Checkov", "status": "import"},
@@ -53,7 +53,8 @@ CATALOG: list[dict[str, Any]] = [
     {"id": "unsloth", "name": "Unsloth (local fine-tune / inference)", "category": "ai", "status": "shipped", "hint": "Optional local Unsloth backend + train script"},
     {"id": "huggingface", "name": "Hugging Face Transformers (local)", "category": "ai", "status": "shipped", "hint": "MODEL_BACKEND=huggingface — downloads HF_MODEL locally"},
     # SAST
-    {"id": "sonarqube", "name": "SonarQube / SonarCloud", "category": "sast", "status": "shipped", "hint": "Live issues sync (SONARQUBE_*) or Import scan JSON"},
+    {"id": "sonarqube", "name": "SecuraIQ Code", "category": "sast", "status": "shipped", "hint": "Settings → SecuraIQ Code — sync engine issues or run SecuraIQ Code / code_scan tools"},
+    {"id": "openvas", "name": "SecuraIQ Network Scanner", "category": "vuln_mgmt", "status": "shipped", "hint": "Built-in OpenVAS-class live scan — no GVM install"},
     {"id": "semgrep", "name": "Semgrep", "category": "sast", "status": "shipped", "hint": "Import JSON"},
     {"id": "codeql", "name": "CodeQL", "category": "sast", "status": "planned"},
     {"id": "bandit", "name": "Bandit", "category": "sast", "status": "shipped", "hint": "Python SAST JSON"},
@@ -87,7 +88,6 @@ CATALOG: list[dict[str, Any]] = [
     {"id": "nuclei", "name": "Nuclei", "category": "dast", "status": "path"},
     {"id": "nikto", "name": "Nikto", "category": "dast", "status": "path"},
     # Vuln mgmt
-    {"id": "openvas", "name": "Greenbone / OpenVAS", "category": "vuln_mgmt", "status": "path"},
     {"id": "nessus", "name": "Nessus", "category": "vuln_mgmt", "status": "commercial"},
     {"id": "qualys", "name": "Qualys", "category": "vuln_mgmt", "status": "commercial"},
     {"id": "rapid7", "name": "Rapid7 InsightVM", "category": "vuln_mgmt", "status": "commercial"},
@@ -244,7 +244,7 @@ IMPORT_SCANNER_IDS = frozenset(
     }
 )
 # PATH / runner tools — no JSON import adapter; open the Tools palette instead
-PATH_TOOL_IDS = frozenset({"nuclei", "nikto", "openvas"})
+PATH_TOOL_IDS = frozenset({"nuclei", "nikto"})
 SCANNER_IDS = IMPORT_SCANNER_IDS | PATH_TOOL_IDS
 AI_IDS = frozenset(
     {
@@ -281,7 +281,9 @@ def resolve_ui_action(item: dict[str, Any]) -> dict[str, str]:
     if iid in AI_IDS or cat == "ai":
         return {"kind": "settings", "label": "AI settings", "focus": "ai"}
     if iid == "sonarqube":
-        return {"kind": "settings", "label": "Configure SonarQube", "focus": "sonarqube"}
+        return {"kind": "settings", "label": "Configure SecuraIQ Code", "focus": "sonarqube"}
+    if iid == "openvas":
+        return {"kind": "tools", "label": "Open SecuraIQ Network Scanner"}
     if iid in PATH_TOOL_IDS or status == "path":
         return {"kind": "tools", "label": "Open tools"}
     if iid in IMPORT_SCANNER_IDS or (

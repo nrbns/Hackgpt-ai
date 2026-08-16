@@ -15,6 +15,8 @@ def status() -> dict[str, Any]:
     configured = sonar_conn.is_configured()
     return {
         "configured": configured,
+        "brand": "SecuraIQ Code",
+        "engine": "sonar_compatible",
         "base_url": (getattr(settings, "sonarqube_base_url", "") or "").rstrip("/") if configured else "",
         "project_key": (getattr(settings, "sonarqube_project_key", "") or "").strip(),
         "verify_ssl": bool(getattr(settings, "sonarqube_verify_ssl", True)),
@@ -30,7 +32,7 @@ def _existing_keys(user_id: str) -> set[str]:
     keys: set[str] = set()
     for v in list_vulnerabilities(user_id) or []:
         src = (v.get("source") or "").lower()
-        if "sonarqube" not in src and "sonar" not in src:
+        if "sonarqube" not in src and "sonar" not in src and "securaiq_code" not in src:
             continue
         raw = v.get("raw") or v.get("raw_json") or {}
         if isinstance(raw, str):
@@ -82,7 +84,7 @@ async def sync(user_id: str = "local", *, engagement_id: str | None = None) -> d
         if k in existing:
             skipped += 1
             continue
-        item["source"] = "sonarqube:api"
+        item["source"] = "securaiq_code:api"
         item["raw"] = issue
         create_vulnerability(user_id, item)
         existing.add(k)
@@ -91,12 +93,12 @@ async def sync(user_id: str = "local", *, engagement_id: str | None = None) -> d
     try:
         from app.realtime_bus import publish
 
-        publish(type="vuln_batch", source="sonarqube", count=imported, user_id=user_id)
+        publish(type="vuln_batch", source="securaiq_code", count=imported, user_id=user_id)
     except Exception:
         pass
 
     audit(
-        "sonarqube_sync",
+        "securaiq_code_sync",
         user_id,
         {"imported": imported, "skipped": skipped, "fetched": len(issues)},
     )
@@ -106,4 +108,7 @@ async def sync(user_id: str = "local", *, engagement_id: str | None = None) -> d
         "skipped": skipped,
         "fetched": len(issues),
         "configured": True,
+        "brand": "SecuraIQ Code",
+        "base_url": (getattr(settings, "sonarqube_base_url", "") or "").rstrip("/"),
+        "project_key": (getattr(settings, "sonarqube_project_key", "") or "").strip(),
     }

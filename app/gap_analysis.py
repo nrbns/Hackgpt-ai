@@ -319,21 +319,37 @@ def dashboard_scores(user_id: str) -> dict[str, Any]:
     overall = (
         round(sum(s["compliance_percent"] for s in scores) / max(len(scores), 1), 1) if scores else 0.0
     )
+
+    recommendations: list[str] = []
+    if scores:
+        # Build tips from real missing/partial controls in the newest assessment
+        try:
+            newest = rows[0]
+            detail = get_assessment(user_id, newest["id"])
+            gaps = (detail or {}).get("top_gaps") or []
+            for g in gaps[:5]:
+                cid = g.get("control_id") or g.get("id") or ""
+                title = g.get("title") or g.get("control_title") or "control"
+                status = g.get("status") or "missing"
+                recommendations.append(f"Close {status} control {cid}: {title}".strip()[:180])
+            if not recommendations:
+                recommendations.append(
+                    f"Continue remediating gaps for {(detail or {}).get('framework_name') or newest['framework_id']}"
+                )
+            recommendations.append("Export executive report for engagement delivery")
+        except Exception:
+            recommendations = [
+                "Review open remediations from your latest gap assessment",
+                "Export executive report for engagement delivery",
+            ]
+
     return {
         "security_score": overall,
         "compliance_score": overall,
         "frameworks": scores,
         "assessment_count": len(rows),
         "methodology": SCORING_METHODOLOGY,
-        "recommendations": (
-            [
-                "Run ISO 27001 gap analysis against current policies/evidence",
-                "Prioritize missing MFA, patching, logging, and IR plan controls",
-                "Export executive report for engagement delivery",
-            ]
-            if scores
-            else []
-        ),
+        "recommendations": recommendations,
     }
 
 

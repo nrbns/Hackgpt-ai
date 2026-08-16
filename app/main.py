@@ -258,7 +258,8 @@ app.include_router(openaudit_router)
 app.include_router(hardeningkitty_router)
 app.include_router(thehive_router)
 app.include_router(cloud_posture_router)
-app.include_router(sonarqube_router)
+app.include_router(sonarqube_router, prefix="/api/code")
+app.include_router(sonarqube_router, prefix="/api/sonarqube")  # compat alias
 app.include_router(scim_router)
 app.include_router(stix_router)
 

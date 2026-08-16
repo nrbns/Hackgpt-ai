@@ -58,6 +58,29 @@ const netAssessEl = document.getElementById("useNetAssess");
 const localToolsEl = document.getElementById("useLocalTools");
 const authorizedTargetEl = document.getElementById("authorizedTarget");
 const targetIpEl = document.getElementById("targetIp");
+const scanTargetIpEl = document.getElementById("scanTargetIp");
+const scanAuthorizedEl = document.getElementById("scanAuthorized");
+
+function syncScanTargetFields(fromScanBar) {
+  if (fromScanBar) {
+    if (scanTargetIpEl && targetIpEl) targetIpEl.value = scanTargetIpEl.value;
+    if (scanAuthorizedEl && authorizedTargetEl) authorizedTargetEl.checked = scanAuthorizedEl.checked;
+  } else {
+    if (scanTargetIpEl && targetIpEl) scanTargetIpEl.value = targetIpEl.value || "";
+    if (scanAuthorizedEl && authorizedTargetEl) scanAuthorizedEl.checked = !!authorizedTargetEl.checked;
+  }
+}
+
+function getScanTarget() {
+  syncScanTargetFields(true);
+  return (scanTargetIpEl?.value || targetIpEl?.value || "").trim();
+}
+
+function getScanAuthorized() {
+  syncScanTargetFields(true);
+  if (scanAuthorizedEl) return !!scanAuthorizedEl.checked;
+  return !!(authorizedTargetEl && authorizedTargetEl.checked);
+}
 const toolsStatusEl = document.getElementById("toolsStatus");
 const statusEl = document.getElementById("status");
 const liveBarEl = document.getElementById("liveBar");
@@ -86,6 +109,47 @@ window.setSelectedTools = (ids) => {
   syncToolsPaletteSelection();
   updateToolsChipState();
 };
+
+/** Builtin live-scan pack — works without PATH binaries; persists assets + vulns when Auth is on. */
+const LIVE_SCAN_DEFAULT_TOOLS = [
+  "ports",
+  "http",
+  "tls",
+  "hardening_baseline",
+  "openvas",
+];
+
+async function startLiveScan() {
+  showView("chat");
+  if (typeof openAiTab === "function") openAiTab("chat");
+  if (authorizedTargetEl) authorizedTargetEl.checked = true;
+  if (scanAuthorizedEl) scanAuthorizedEl.checked = true;
+  if (localToolsEl) localToolsEl.checked = true;
+  selectedTools = LIVE_SCAN_DEFAULT_TOOLS.slice();
+  openToolsPalette(true);
+  syncScanTargetFields(false);
+  await renderToolsPalette();
+  syncToolsPaletteSelection();
+  updateToolsChipState();
+  const hint = document.getElementById("toolsPaletteHint");
+  if (hint) {
+    hint.textContent = "Enter owned target below · Auth on · Run scan";
+  }
+  const focusEl = scanTargetIpEl || targetIpEl;
+  focusEl?.focus();
+  if (!getScanTarget()) {
+    appendMessage(
+      "assistant",
+      renderMarkdown(
+        "**Live scan** — type an **owned** IP/hostname in the **Target** field above the tools, keep **Auth** on, then **Run scan**.\n\nDefault tools: `" +
+          LIVE_SCAN_DEFAULT_TOOLS.join(", ") +
+          "`."
+      ),
+      true
+    );
+  }
+}
+window.startLiveScan = startLiveScan;
 const attachBtn = document.getElementById("attachBtn");
 const chatAttachInput = document.getElementById("chatAttachInput");
 const attachChipsEl = document.getElementById("attachChips");
@@ -2011,8 +2075,10 @@ function wireCommandCenterUi() {
     });
   }
   wireToolsPalette();
+  wireLiveScanActions(document);
   document.querySelectorAll("#emptySuite .suite-chip").forEach((btn) => {
     btn.addEventListener("click", () => {
+      if (btn.getAttribute("data-action") === "live-scan") return; // handled by wireLiveScanActions
       if (btn.getAttribute("data-ai-tab")) {
         showView("chat");
         openAiTab(btn.getAttribute("data-ai-tab"));
@@ -2076,7 +2142,10 @@ function openToolsPalette(forceOpen) {
   if (!toolsPaletteEl) return;
   const opening = forceOpen || toolsPaletteEl.classList.contains("hidden");
   toolsPaletteEl.classList.toggle("hidden", !opening);
-  if (opening) renderToolsPalette().catch(() => {});
+  if (opening) {
+    syncScanTargetFields(false);
+    renderToolsPalette().catch(() => {});
+  }
 }
 window.openToolsPalette = openToolsPalette;
 
@@ -2086,28 +2155,70 @@ async function renderToolsPalette() {
     const res = await fetch("/api/tools", { headers: authHeaders() });
     const data = await res.json();
     toolsCatalogCache = data.tools || [];
-    const byCat = {};
+    const originMeta = {
+      securaiq: {
+        label: "SecuraIQ tools",
+        hint: "Built-in — no install · findings save with Auth",
+      },
+      third_party: {
+        label: "Third-party tools & APIs",
+        hint: "PATH binaries or vendor APIs · install / configure to enable",
+      },
+    };
+    const byOrigin = { securaiq: {}, third_party: {} };
     toolsCatalogCache.forEach((t) => {
-      const c = t.category || "other";
-      (byCat[c] = byCat[c] || []).push(t);
+      const origin = t.origin === "third_party" ? "third_party" : "securaiq";
+      const cat = t.category || "other";
+      (byOrigin[origin][cat] = byOrigin[origin][cat] || []).push(t);
     });
-    toolsPaletteGridEl.innerHTML = Object.entries(byCat)
-      .map(
-        ([cat, tools]) =>
-          `<div class="tools-cat"><p class="sidebar-label">${escapeHtml(cat)}</p><div class="tools-cat-grid">${tools
-            .map(
-              (t) => `<label class="tool-pick ${t.available ? "" : "unavailable"} ${
-                selectedTools.includes(t.id) ? "selected" : ""
-              }" data-id="${escapeHtml(t.id)}" title="${escapeHtml(t.description || "")}">
+    const renderTool = (t) => {
+      const readyLabel = !t.available
+        ? t.origin === "third_party"
+          ? t.kind === "external"
+            ? "not installed"
+            : "API not configured"
+          : "unavailable"
+        : t.heavy
+          ? "heavy"
+          : "ready";
+      const provider =
+        t.origin === "third_party" && t.provider ? ` · ${t.provider}` : "";
+      return `<label class="tool-pick tool-origin-${escapeHtml(t.origin || "securaiq")} ${
+        t.available ? "" : "unavailable"
+      } ${selectedTools.includes(t.id) ? "selected" : ""}" data-id="${escapeHtml(
+        t.id
+      )}" title="${escapeHtml(t.description || "")}">
                 <input type="checkbox" ${selectedTools.includes(t.id) ? "checked" : ""} ${
-                t.available ? "" : "disabled"
-              } />
+        t.available ? "" : "disabled"
+      } />
                 <span><strong>${escapeHtml(t.name || t.id)}</strong>
-                <small>${t.available ? (t.heavy ? "heavy" : "ready") : "not installed"}</small></span>
-              </label>`
+                <small>${escapeHtml(readyLabel)}${escapeHtml(provider)}</small></span>
+              </label>`;
+    };
+    toolsPaletteGridEl.innerHTML = ["securaiq", "third_party"]
+      .map((origin) => {
+        const cats = byOrigin[origin] || {};
+        const entries = Object.entries(cats);
+        if (!entries.length) return "";
+        const meta = originMeta[origin];
+        const avail =
+          origin === "securaiq" ? data.securaiq_available : data.third_party_available;
+        const total = origin === "securaiq" ? data.securaiq_count : data.third_party_count;
+        return `<section class="tools-origin tools-origin-${origin}">
+          <header class="tools-origin-head">
+            <strong>${escapeHtml(meta.label)}</strong>
+            <span class="hint">${avail || 0}/${total || 0} ready · ${escapeHtml(meta.hint)}</span>
+          </header>
+          ${entries
+            .map(
+              ([cat, tools]) =>
+                `<div class="tools-cat"><p class="sidebar-label">${escapeHtml(
+                  cat
+                )}</p><div class="tools-cat-grid">${tools.map(renderTool).join("")}</div></div>`
             )
-            .join("")}</div></div>`
-      )
+            .join("")}
+        </section>`;
+      })
       .join("");
     toolsPaletteGridEl.querySelectorAll(".tool-pick").forEach((el) => {
       el.addEventListener("click", (e) => {
@@ -2122,7 +2233,9 @@ async function renderToolsPalette() {
     });
     const hint = document.getElementById("toolsPaletteHint");
     if (hint) {
-      hint.textContent = `${data.available_count || 0}/${data.count || 0} ready · select & run on authorized/lab targets`;
+      hint.textContent = `SecuraIQ ${data.securaiq_available || 0}/${data.securaiq_count || 0} · third-party ${
+        data.third_party_available || 0
+      }/${data.third_party_count || 0} · Auth + owned target`;
     }
   } catch (err) {
     toolsPaletteGridEl.innerHTML = `<p class="hint">Tools unavailable: ${escapeHtml(err.message)}</p>`;
@@ -2144,18 +2257,30 @@ function wireToolsPalette() {
     toolsPaletteEl?.classList.add("hidden");
     openAiTab("chat");
     if (inputEl && selectedTools.length && !inputEl.value.trim()) {
-      inputEl.value = `Run ${selectedTools.join(", ")} on the authorized/lab target and summarize findings with remediations.`;
+      inputEl.value = `Run ${selectedTools.join(", ")} on the authorized target and summarize findings with remediations.`;
       resizeInput();
     }
     inputEl?.focus();
     updateToolsChipState();
   });
   on(document.getElementById("toolsPaletteRun"), "click", () => runSelectedTools());
+  on(scanTargetIpEl, "input", () => syncScanTargetFields(true));
+  on(scanTargetIpEl, "keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      runSelectedTools();
+    }
+  });
+  on(scanAuthorizedEl, "change", () => syncScanTargetFields(true));
+  on(targetIpEl, "input", () => syncScanTargetFields(false));
+  on(authorizedTargetEl, "change", () => syncScanTargetFields(false));
+  syncScanTargetFields(false);
 }
 
 async function runSelectedTools() {
-  const target = targetIpEl?.value?.trim() || "";
-  const authorized = authorizedTargetEl?.checked || false;
+  syncScanTargetFields(true);
+  const target = getScanTarget();
+  const authorized = getScanAuthorized();
   if (!selectedTools.length) {
     appendMessage("assistant", renderMarkdown("**Select at least one tool** in the palette first."), true);
     return;
@@ -2163,12 +2288,26 @@ async function runSelectedTools() {
   if (!target) {
     appendMessage(
       "assistant",
-      renderMarkdown("**Set a Target IP (lab)** and check **Auth** for owned/lab systems before running tools."),
+      renderMarkdown(
+        "**Set a Target** in the Live scan bar (owned IP/host or local code path) and keep **Auth** checked so findings and assets save live."
+      ),
       true
     );
     showView("chat");
-    targetIpEl?.focus();
+    openToolsPalette(true);
+    (scanTargetIpEl || targetIpEl)?.focus();
     return;
+  }
+  if (authorizedTargetEl) authorizedTargetEl.checked = authorized;
+  if (targetIpEl) targetIpEl.value = target;
+  if (!authorized) {
+    appendMessage(
+      "assistant",
+      renderMarkdown(
+        "**Auth is off** — tools will run but **assets and vulnerabilities will not be saved**. Check **Auth** only for systems you own or are authorized to assess."
+      ),
+      true
+    );
   }
   showView("chat");
   openAiTab("chat");
@@ -2252,12 +2391,35 @@ async function runSelectedTools() {
         .join("\n\n");
     }
     if (!md) md = data.error || "```json\n" + JSON.stringify(data, null, 2) + "\n```";
+    const vp = data.vulnerabilities_persisted || {};
+    let persistNote = "";
+    if (vp.ok && (vp.created || vp.asset_id)) {
+      const bits = [];
+      if (vp.asset_name || vp.asset_id) bits.push(`asset \`${vp.asset_name || vp.asset_id}\``);
+      if (vp.created) bits.push(`**${vp.created}** finding(s) saved`);
+      else bits.push("inventory updated (no new findings)");
+      persistNote = `\n\n**Live inventory:** ${bits.join(" · ")} — open **Assets** / **Vulnerabilities** / Mission Control.`;
+    } else if (vp.error) {
+      persistNote = `\n\n**Persist warning:** ${vp.error}`;
+    } else if (!data.authorized && !authorized) {
+      persistNote =
+        "\n\n_Findings were not saved — enable **Auth** for owned targets to populate Assets and Vulnerabilities._";
+    }
     bubble.innerHTML = renderMarkdown(
-      `**Tool run ${data.ok ? "complete" : "finished with errors"}** · target \`${data.target || target}\`${data.light ? " · light" : ""}\n\n${md}`
+      `**Tool run ${data.ok ? "complete" : "finished with errors"}** · target \`${data.target || target}\`${data.light ? " · light" : ""}${persistNote}\n\n${md}`
     );
     if (toolsPaletteOutEl) {
       toolsPaletteOutEl.classList.remove("hidden");
       toolsPaletteOutEl.textContent = typeof md === "string" ? md.slice(0, 4000) : JSON.stringify(data, null, 2);
+    }
+    if (vp.ok && (vp.created || vp.asset_id)) {
+      try {
+        if (typeof loadAssets === "function") loadAssets();
+        if (typeof loadVulns === "function") loadVulns();
+        if (typeof loadCommandCenter === "function") loadCommandCenter();
+      } catch {
+        /* ignore refresh errors */
+      }
     }
     setLiveState("live-on", "Ready", "");
   } catch (err) {
@@ -2479,12 +2641,13 @@ async function loadCommandCenter() {
     const levelEl = document.getElementById("ccScoreLevel");
     if (levelEl) {
       if (emptyWorkspace) {
-        levelEl.textContent = "Ready";
+        levelEl.textContent = "Empty — run Live scan";
         levelEl.dataset.level = "ok";
       } else {
         levelEl.textContent =
           index >= 80 ? "Strong" : index >= 60 ? "Stable" : index >= 40 ? "Watch" : "Critical";
         levelEl.dataset.level = index >= 60 ? "ok" : index >= 40 ? "warn" : "bad";
+        levelEl.title = mc.security_score_note || data.security_index_note || "Live workspace score";
       }
     }
     const incEl = document.getElementById("ccIncidents");
@@ -2494,9 +2657,10 @@ async function loadCommandCenter() {
     const topOrg = document.getElementById("topOrgName");
     if (topOrg) topOrg.textContent = (mc.organization || "Local").split(/\s+/)[0] || "Local";
     const topEnv = document.getElementById("topEnvName");
-    if (topEnv) topEnv.textContent = emptyWorkspace
-      ? "Lab"
-      : (mc.environment || "Lab").split("/")[0].trim() || "Lab";
+    if (topEnv) {
+      const env = emptyWorkspace ? "Empty" : mc.environment || "Live";
+      topEnv.textContent = env.split(/[·/]/)[0].trim() || "Live";
+    }
     const topProj = document.getElementById("topProjectName");
     if (topProj) topProj.textContent = engagementSelectEl?.selectedOptions?.[0]?.textContent || "Workspace";
     const syncEl = document.getElementById("topLastSync");
@@ -2510,7 +2674,7 @@ async function loadCommandCenter() {
     setTxt("mcOrgName", mc.organization || "Local workspace");
     setTxt("mcSecurityScore", String(emptyWorkspace ? 0 : mc.security_score != null ? mc.security_score : index));
     setTxt("mcFramework", emptyWorkspace ? "—" : mc.framework || "—");
-    setTxt("mcEnvironment", emptyWorkspace ? "Lab / local" : mc.environment || "Lab / local");
+    setTxt("mcEnvironment", emptyWorkspace ? "Empty" : mc.environment || "Live workspace");
     const brief = briefData.brief || data.morning_brief || {};
     const greetEl = document.getElementById("mcGreeting");
     if (greetEl) {
@@ -2774,20 +2938,20 @@ async function loadCommandCenter() {
         : `<li class="hint">No activity yet</li>`;
     }
 
-    // MITRE
+    // MITRE — keyword signals from live findings (not certified coverage %)
     const mitreEl = document.getElementById("ccMitre");
     if (mitreEl) {
-      const rows = data.mitre_coverage || [];
+      const rows = (data.mitre_coverage || []).filter((r) => Number(r.hits || r.coverage) > 0);
       mitreEl.innerHTML = rows.length
-        ? rows
+        ? `<p class="hint" style="margin:0 0 0.4rem">Signals from live findings / risks / playbooks</p>${rows
             .map(
               (r) =>
                 `<div class="mitre-row"><span>${escapeHtml(r.tactic)}</span>
                 <div class="cc-bar"><i style="width:${Number(r.coverage) || 0}%"></i></div>
-                <strong>${Number(r.coverage) || 0}%</strong></div>`
+                <strong>${Number(r.hits) || 0} hit${Number(r.hits) === 1 ? "" : "s"}</strong></div>`
             )
-            .join("")
-        : `<p class="hint">Import vulns / playbooks to estimate coverage</p>`;
+            .join("")}`
+        : `<p class="hint">No MITRE keyword signals yet — run Live scan or add risks/playbooks</p>`;
     }
 
     if (riskListEl) {
@@ -2861,11 +3025,24 @@ function syncChecklistProgress(data) {
   });
 }
 
+function wireLiveScanActions(root) {
+  (root || document).querySelectorAll("[data-action='live-scan']").forEach((btn) => {
+    if (btn.dataset.liveScanWired) return;
+    btn.dataset.liveScanWired = "1";
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (typeof window.startLiveScan === "function") window.startLiveScan();
+    });
+  });
+}
+
 function wireMissionFirstRunOnce() {
   if (window.__securaiqFirstRunWired) return;
   window.__securaiqFirstRunWired = true;
+  wireLiveScanActions(document);
   document.querySelectorAll("#mcChecklist .mc-check-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
+      if (btn.getAttribute("data-action") === "live-scan") return; // wireLiveScanActions
       const ws = btn.getAttribute("data-workspace");
       const mod = btn.getAttribute("data-module");
       if (ws && typeof window.showWorkspace === "function") window.showWorkspace(ws);
@@ -2885,7 +3062,7 @@ function renderWorkQueue(items) {
   const el = document.getElementById("ccWorkQueue");
   if (!el) return;
   if (!items.length) {
-    el.innerHTML = `<p class="hint">Empty queue — use the quick-start checklist or import your first scan.</p>`;
+    el.innerHTML = `<p class="hint">Empty queue — run a Live scan on an owned target, or use the quick-start checklist.</p>`;
     return;
   }
   el.innerHTML = `<div class="wq-table-wrap"><table class="wq-table">
@@ -5071,7 +5248,7 @@ on(document.getElementById("setSonarTestBtn"), "click", async () => {
   if (hint) hint.textContent = "Testing…";
   if (btn) btn.disabled = true;
   try {
-    const res = await fetch("/api/sonarqube/test", { method: "POST", headers: authHeaders() });
+    const res = await fetch("/api/code/test", { method: "POST", headers: authHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(formatApiDetail(data.detail, `HTTP ${res.status}`));
     if (data.ok) {

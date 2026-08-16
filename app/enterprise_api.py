@@ -364,7 +364,7 @@ async def vulns_samples(user: Annotated[AuthUser, Depends(require_user)]):
         "samples": [],
         "ok": True,
         "disabled": True,
-        "hint": "Lab fixtures removed. Import live Trivy/Semgrep/Gitleaks/Nessus JSON via Import scan.",
+        "hint": "Lab fixtures removed. Prefer Live scan (Tools + Auth) or import Trivy/Semgrep/Gitleaks/Nessus JSON.",
     }
 
 
@@ -376,7 +376,7 @@ async def vulns_sample_import(
 ):
     raise HTTPException(
         status_code=410,
-        detail="Lab sample import disabled. Use Import scan with your scanner export.",
+        detail="Lab sample import disabled. Use Live scan or Import with your scanner export.",
     )
 
 

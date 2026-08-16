@@ -787,7 +787,7 @@
     const el = qs("sonarPanelBody");
     if (!el) return;
     try {
-      const res = await fetch("/api/sonarqube/status", { headers: authHeaders() });
+      const res = await fetch("/api/code/status", { headers: authHeaders() });
       const st = await res.json().catch(() => ({}));
       const ping = st.ping || {};
       const chip = st.configured
@@ -797,6 +797,7 @@
         : `<span class="auto-job-status status-planned">not configured</span>`;
       el.innerHTML = `
         <p>${chip}
+          <strong>SecuraIQ Code</strong>
           ${st.base_url ? `<span class="hint">${escapeHtml(st.base_url)}</span>` : ""}
           ${st.project_key ? `<span class="hint">project ${escapeHtml(st.project_key)}</span>` : ""}
         </p>
@@ -804,11 +805,11 @@
           st.configured
             ? ping.ok
               ? `Ready · ${escapeHtml(String(ping.status || "UP"))}${ping.version ? ` · v${escapeHtml(String(ping.version))}` : ""} · Sync pulls open issues into this register (realtime).`
-              : escapeHtml(ping.error || "Connection failed — check token in Settings")
-            : "Settings → SonarQube: set base URL + token, then Sync. Or Import scan with issues JSON."
+              : escapeHtml(ping.error || "Connection failed — check token in Settings → SecuraIQ Code")
+            : "Settings → SecuraIQ Code: set engine URL + token, then Sync. Or run the SecuraIQ Code tool / local code_scan."
         }</p>`;
     } catch (err) {
-      el.innerHTML = `<p class="hint">SonarQube panel unavailable: ${escapeHtml(err.message)}</p>`;
+      el.innerHTML = `<p class="hint">SecuraIQ Code panel unavailable: ${escapeHtml(err.message)}</p>`;
     }
   }
 
@@ -822,16 +823,16 @@
         btn.disabled = true;
         btn.textContent = "Syncing…";
         try {
-          const res = await fetch("/api/sonarqube/sync", { method: "POST", headers: authHeaders() });
+          const res = await fetch("/api/code/sync", { method: "POST", headers: authHeaders() });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) {
             if (typeof notifyUser === "function") {
-              notifyUser(`**SonarQube sync failed:** ${data.detail || res.status}`);
+              notifyUser(`**SecuraIQ Code sync failed:** ${data.detail || res.status}`);
             }
             return;
           }
           if (typeof notifyUser === "function") {
-            notifyUser(`**SonarQube sync queued** · job \`${(data.job && data.job.id) || "?"}\``);
+            notifyUser(`**SecuraIQ Code sync queued** · job \`${(data.job && data.job.id) || "?"}\``);
           }
           const jobId = data.job && data.job.id;
           if (jobId && typeof window.waitForJob === "function") {
@@ -840,7 +841,7 @@
           renderSonarPanel();
           renderVulnsPage();
         } catch (err) {
-          if (typeof notifyUser === "function") notifyUser(`**SonarQube sync failed:** ${err.message || err}`);
+          if (typeof notifyUser === "function") notifyUser(`**SecuraIQ Code sync failed:** ${err.message || err}`);
         } finally {
           btn.disabled = false;
           btn.textContent = label || "Sync";
@@ -2115,7 +2116,7 @@
           <div>
             <p class="hint">File integrity (FIM)</p>
             <ul class="cc-list">${fimHtml}</ul>
-            <p class="hint" style="margin-top:0.75rem">Detection rules (sample)</p>
+            <p class="hint" style="margin-top:0.75rem">Recent detection rules</p>
             <ul class="cc-list">${rulesHtml}</ul>
           </div>
         </div>
@@ -2921,7 +2922,6 @@
     async function openControlCenter(frameworkId, assessmentId) {
       const detailEl = qs("fwControlDetail");
       if (!detailEl) return;
-      detailEl.classList.remove("hidden");
       detailEl.innerHTML = `<p class="hint">Loading controls…</p>`;
       let aid = assessmentId;
       if (!aid) {
@@ -3037,8 +3037,7 @@
           </table>
         </div>`;
       qs("fwDetailClose")?.addEventListener("click", () => {
-        detailEl.innerHTML = "";
-        detailEl.classList.add("hidden");
+        detailEl.innerHTML = `<p class="hint">Select a framework to review controls.</p>`;
       });
       qs("fwExportAssessment")?.addEventListener("click", async () => {
         try {
@@ -3061,7 +3060,6 @@
           alert(err.message || "Audit pack failed");
         }
       });
-      detailEl.classList.remove("hidden");
       detailEl.querySelectorAll(".fw-ctrl-ask").forEach((btn) => {
         btn.addEventListener("click", () => {
           if (typeof runNavPrompt === "function") {
@@ -3082,22 +3080,23 @@
       });
     }
 
+    const setTxt = (id, val) => {
+      const el = qs(id);
+      if (el) el.textContent = String(val);
+    };
+    setTxt("fwHeroPct", `${avgPct}%`);
+    setTxt("fwHeroMaturity", maturity);
+    setTxt("fwStatImpl", totImpl);
+    setTxt("fwStatPartial", totPartial);
+    setTxt("fwStatMissing", totMissing);
+    setTxt("fwStatRems", openRems);
+
     body.innerHTML = `
       ${
         apiErrors.length
           ? `<p class="hint" style="color:var(--danger,#b91c1c)">API issues: ${escapeHtml(apiErrors.join(" · "))}</p>`
           : ""
       }
-      <div class="comp-kpi-row" aria-label="Compliance health">
-        <div class="comp-kpi"><span>Implemented</span><strong>${totImpl}</strong></div>
-        <div class="comp-kpi"><span>Partial</span><strong>${totPartial}</strong></div>
-        <div class="comp-kpi"><span>Missing</span><strong>${totMissing}</strong></div>
-        <div class="comp-kpi"><span>Avg compliance</span><strong>${avgPct}%</strong></div>
-        <div class="comp-kpi"><span>Evidence</span><strong>${evidence.length}</strong></div>
-        <div class="comp-kpi"><span>Open remediations</span><strong>${openRems}</strong></div>
-        <div class="comp-kpi"><span>Risk score</span><strong>${riskScore}</strong></div>
-        <div class="comp-kpi"><span>Maturity</span><strong>${maturity}</strong></div>
-      </div>
       <div class="fw-grid">
         ${
           fws.length
@@ -3111,48 +3110,30 @@
                     st.controls_total ||
                     f.control_count ||
                     (c.implemented || 0) + (c.partial || 0) + (c.missing || 0);
-                  return `<article class="fw-card">
+                  return `<article class="fw-card ${pct != null ? "fw-card-scored" : ""}">
                     <header>
                       <h2>${escapeHtml(f.name)}</h2>
-                      <span class="hint">${escapeHtml(f.version || "")}</span>
+                      <span class="fw-card-pct">${pct != null ? `${pct}%` : "—"}</span>
                     </header>
-                    <p class="fw-meta"><strong>${total || f.control_count || 0}</strong> controls ·
-                      <strong>${c.implemented || 0}</strong> implemented ·
+                    <p class="hint">${escapeHtml(f.version || f.id || "")}</p>
+                    <p class="fw-meta"><strong>${total || 0}</strong> controls ·
+                      <strong>${c.implemented || 0}</strong> ok ·
                       <strong>${c.partial || 0}</strong> partial ·
                       <strong>${c.missing || 0}</strong> missing</p>
                     <div class="cc-bar"><i style="width:${pct != null ? pct : 0}%"></i></div>
-                    <p class="fw-score">${pct != null ? `${pct}% assessed` : "Not assessed yet — run gap analysis"}</p>
+                    <p class="fw-score">${pct != null ? "Live assessment score" : "Not assessed — run gap analysis"}</p>
                     <div class="cc-action-row">
-                      <button type="button" class="cc-action fw-open-controls" data-id="${escapeHtml(
+                      <button type="button" class="btn-primary-cc fw-open-controls" data-id="${escapeHtml(
                         f.id
                       )}" data-aid="${escapeHtml(st.assessment_id || s?.id || "")}">Open controls</button>
-                      <button type="button" class="btn-secondary fw-run-gap" data-id="${escapeHtml(f.id)}">Run gap</button>
-                      <button type="button" class="btn-secondary fw-ask" data-id="${escapeHtml(
-                        f.id
-                      )}" data-name="${escapeHtml(f.name)}">Ask AI</button>
+                      <button type="button" class="btn-secondary fw-run-gap" data-id="${escapeHtml(f.id)}">Gap analysis</button>
                     </div>
                   </article>`;
                 })
                 .join("")
-            : `<p class="hint">No frameworks installed — check data/frameworks on the server.</p>`
+            : `<p class="hint">No frameworks loaded.</p>`
         }
-      </div>
-      <section id="fwControlDetail" class="cc-panel fw-control-detail hidden"></section>
-      <section class="cc-panel fw-workflow-panel">
-        <header><h2>Evidence mapper workflow</h2></header>
-        <ol class="fw-steps">
-          <li>Upload policies / screenshots in Evidence</li>
-          <li>Run gap analysis against a framework</li>
-          <li>Open controls — review Evidence · Owner · Risk · Status</li>
-          <li>Assign remediations and link evidence</li>
-          <li>Export Markdown assessment or audit pack ZIP</li>
-        </ol>
-        <div class="cc-action-row">
-          <button type="button" class="cc-action" data-workspace="evidence">Open evidence</button>
-          <button type="button" class="cc-action" data-workspace="remediations">Open remediations</button>
-          <button type="button" class="cc-action" data-workspace="reports">Open reports</button>
-        </div>
-      </section>`;
+      </div>`;
     body.querySelectorAll(".fw-open-controls").forEach((btn) => {
       btn.addEventListener("click", () =>
         openControlCenter(btn.getAttribute("data-id"), btn.getAttribute("data-aid") || "")
@@ -3160,24 +3141,7 @@
     });
     body.querySelectorAll(".fw-run-gap").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const fid = btn.getAttribute("data-id") || "";
-        if (typeof openGap === "function") openGap(fid);
-      });
-    });
-    body.querySelectorAll(".fw-ask").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        if (typeof runNavPrompt === "function") {
-          runNavPrompt(
-            "ciso",
-            `Map our current security narrative to ${btn.getAttribute("data-name")} and list missing evidence for the top 10 gaps.`
-          );
-        }
-      });
-    });
-    body.querySelectorAll("[data-workspace]").forEach((el) => {
-      el.addEventListener("click", (e) => {
-        e.preventDefault();
-        showWorkspace(el.getAttribute("data-workspace"));
+        if (typeof openGap === "function") openGap(btn.getAttribute("data-id"));
       });
     });
   }
@@ -3499,7 +3463,7 @@
             </article>
             <article class="integ-card">
               <h2>Scanner import</h2>
-              <p class="hint">Trivy, Semgrep, Grype, ZAP, Bandit, Checkov, Gitleaks, SonarQube</p>
+              <p class="hint">Trivy, Semgrep, Grype, ZAP, Bandit, Checkov, Gitleaks, SecuraIQ Code</p>
               <span class="wq-badge pri-low">import</span>
               <div class="cc-action-row" style="margin-top:0.75rem">
                 <button type="button" class="cc-action integ-connect" data-kind="workspace" data-target="vulns">Open vulns</button>
@@ -3932,12 +3896,11 @@
   }
 
   async function loadVulnSampleButtons() {
-    /* Lab fixtures removed — use Import scan for live scanner exports. */
     return;
   }
 
   async function importLabSample(_sampleId) {
-    alert("Lab sample import disabled. Use Import scan with your scanner export.");
+    alert("Lab samples removed. Use Live scan (Tools + Auth) or Import with your scanner export.");
   }
 
   function renderAutomationPage() {
@@ -4219,24 +4182,53 @@
     const res = await fetch("/api/tools");
     const data = await res.json();
     const selected = typeof window.getSelectedTools === "function" ? window.getSelectedTools() : [];
+    const renderGroup = (origin, label, hint) => {
+      const tools = (data.tools || []).filter(
+        (t) => (t.origin === "third_party" ? "third_party" : "securaiq") === origin
+      );
+      if (!tools.length) return "";
+      return `<section class="tools-origin tools-origin-${origin}">
+        <header class="tools-origin-head">
+          <strong>${escapeHtml(label)}</strong>
+          <span class="hint">${escapeHtml(hint)}</span>
+        </header>
+        <div class="tools-cat-grid" style="margin:0.5rem 0 1rem">
+          ${tools
+            .map((t) => {
+              const status = !t.available
+                ? t.origin === "third_party"
+                  ? t.kind === "external"
+                    ? "missing"
+                    : "API off"
+                  : "off"
+                : t.heavy
+                  ? "heavy"
+                  : "ready";
+              const provider =
+                t.origin === "third_party" && t.provider ? ` · ${escapeHtml(t.provider)}` : "";
+              return `<button type="button" class="tool-pick tool-origin-${escapeHtml(
+                t.origin || "securaiq"
+              )} ${t.available ? "" : "unavailable"} ${
+                selected.includes(t.id) ? "selected" : ""
+              }" data-id="${escapeHtml(t.id)}" ${t.available ? "" : "disabled"}>
+              <span><strong>${escapeHtml(t.name || t.id)}</strong>
+              <small>${escapeHtml(status)}${provider}</small></span>
+            </button>`;
+            })
+            .join("")}
+        </div>
+      </section>`;
+    };
     el.innerHTML = `
       <div class="saas-tab-head">
         <h2>Cyber tools suite</h2>
         <button type="button" class="btn-primary-cc" id="aiToolsOpenPalette">Open palette</button>
       </div>
-      <p class="hint">${data.available_count || 0}/${data.count || 0} ready — select tools, set Auth + lab target, then Run or chat with them.</p>
-      <div class="tools-cat-grid" style="margin:0.75rem 0">
-        ${(data.tools || [])
-          .map(
-            (t) => `<button type="button" class="tool-pick ${t.available ? "" : "unavailable"} ${
-              selected.includes(t.id) ? "selected" : ""
-            }" data-id="${escapeHtml(t.id)}" ${t.available ? "" : "disabled"}>
-              <span><strong>${escapeHtml(t.name || t.id)}</strong>
-              <small>${t.available ? (t.heavy ? "heavy" : "ready") : "missing"}</small></span>
-            </button>`
-          )
-          .join("")}
-      </div>
+      <p class="hint">SecuraIQ ${data.securaiq_available || 0}/${data.securaiq_count || 0} ready · third-party ${
+        data.third_party_available || 0
+      }/${data.third_party_count || 0} ready — Auth + owned target, then Run.</p>
+      ${renderGroup("securaiq", "SecuraIQ tools", "Built-in scanners — no install")}
+      ${renderGroup("third_party", "Third-party tools & APIs", "PATH binaries or vendor APIs")}
       <div class="cc-action-row">
         <button type="button" class="cc-action" id="aiToolsRun">Run selected</button>
         <button type="button" class="cc-action" id="aiToolsChat">Chat with selected</button>
@@ -4267,7 +4259,7 @@
           "assess",
           tools.length
             ? `Use tools ${tools.join(", ")} on the authorized/lab target and summarize findings with remediations.`
-            : "Recommend which built-in cyber tools to run for a typical lab web app assessment."
+            : "Recommend which SecuraIQ tools vs third-party tools to run for a typical authorized web app assessment."
         );
       }
     });
@@ -4451,6 +4443,14 @@
     openers.forEach(([id, fn]) => {
       const el = qs(id);
       if (el) el.addEventListener("click", fn);
+    });
+    document.querySelectorAll("[data-action='live-scan']").forEach((el) => {
+      if (el.dataset.liveScanWired) return;
+      el.dataset.liveScanWired = "1";
+      el.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (typeof window.startLiveScan === "function") window.startLiveScan();
+      });
     });
   }
 

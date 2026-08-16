@@ -77,3 +77,27 @@ def test_heavy_tools_are_not_needs_target_false_with_binaries_missing():
     for tid, spec in TOOL_CATALOG.items():
         assert isinstance(spec.needs_target, bool), f"{tid}.needs_target is not a bool: {spec.needs_target!r}"
         assert isinstance(spec.heavy, bool), f"{tid}.heavy is not a bool: {spec.heavy!r}"
+
+
+def test_tools_split_securaiq_vs_third_party():
+    from app.tools.registry import list_tools_status
+
+    if hasattr(list_tools_status, "_cache"):
+        list_tools_status._cache = None
+    for tid, spec in TOOL_CATALOG.items():
+        assert spec.origin in {"securaiq", "third_party"}, f"{tid} bad origin={spec.origin!r}"
+        if spec.kind == "external":
+            assert spec.origin == "third_party", f"external {tid} must be third_party"
+    status = list_tools_status()
+    assert status["securaiq_count"] > 0
+    assert status["third_party_count"] > 0
+    assert all(t.get("origin") in {"securaiq", "third_party"} for t in status["tools"])
+    assert TOOL_CATALOG["ports"].origin == "securaiq"
+    assert TOOL_CATALOG["nmap"].origin == "third_party"
+    assert TOOL_CATALOG["defender_hunt"].origin == "third_party"
+    assert TOOL_CATALOG["cve_lookup"].origin == "third_party"
+    assert TOOL_CATALOG["netvuln_scan"].origin == "securaiq"
+    assert TOOL_CATALOG["openvas"].origin == "securaiq"
+    assert TOOL_CATALOG["openvas"].kind == "builtin"
+    assert TOOL_CATALOG["securaiq_code"].origin == "securaiq"
+    assert TOOL_CATALOG["securaiq_code"].kind == "builtin"

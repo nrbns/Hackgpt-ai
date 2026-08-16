@@ -53,6 +53,37 @@ def create_asset(
     return get_asset(user_id, aid)  # type: ignore[return-value]
 
 
+def ensure_asset_for_target(
+    user_id: str,
+    name: str,
+    *,
+    notes: str = "",
+    asset_type: str = "server",
+    criticality: str = "medium",
+) -> dict[str, Any] | None:
+    """Upsert an inventory asset from a live scan target (IP/hostname/path)."""
+    name = (name or "").strip()[:200]
+    if not name or name.lower() in {"unknown", "none", "null"}:
+        return None
+    for a in list_assets(user_id):
+        if (a.get("name") or "").strip().lower() == name.lower():
+            return a
+    # Heuristic type from target shape
+    at = asset_type
+    if "/" in name or "\\" in name or name.endswith((".py", ".js", ".ts", ".go")):
+        at = "code"
+    elif name.replace(".", "").isdigit() or ":" in name:
+        at = "server"
+    return create_asset(
+        user_id,
+        name,
+        asset_type=at,
+        criticality=criticality,
+        owner="SecOps",
+        notes=(notes or "Discovered via live SecuraIQ scan")[:2000],
+    )
+
+
 def get_asset(user_id: str, asset_id: str) -> dict[str, Any] | None:
     row = get_conn().execute(
         "SELECT * FROM assets WHERE id = ? AND user_id = ?", (asset_id, user_id)
@@ -914,10 +945,24 @@ def enterprise_dashboard(user_id: str) -> dict[str, Any]:
         pass
 
     last_scan = None
-    for v in vulns[:1]:
-        last_scan = v.get("updated_at") or v.get("created_at")
+    for v in vulns:
+        ts = v.get("updated_at") or v.get("created_at")
+        if ts and (last_scan is None or float(ts or 0) > float(last_scan or 0)):
+            last_scan = ts
+    for a in assets:
+        ts = a.get("updated_at") or a.get("created_at")
+        if ts and (last_scan is None or float(ts or 0) > float(last_scan or 0)):
+            last_scan = ts
     if not last_scan and frameworks:
         last_scan = primary_fw.get("created_at") if primary_fw else None
+
+    # Environment: live when inventory/findings exist — never invent "Production"
+    if is_empty:
+        environment = "Empty"
+    elif org_name and org_name != "Local workspace":
+        environment = f"Live · {org_name}"
+    else:
+        environment = "Live workspace"
 
     work_queue = _work_queue(gap, open_risks, crit_vulns or open_vulns, open_rems, assets, playbooks)
     timeline = _organization_timeline(user_id, list_audit, open_vulns, open_risks, remediations)
@@ -976,10 +1021,16 @@ def enterprise_dashboard(user_id: str) -> dict[str, Any]:
         "needs_attention": pending_approvals,
         "mission_control": {
             "organization": org_name,
-            "environment": "Production" if org_name != "Local workspace" else "Lab / local",
+            "environment": environment,
             "framework": (primary_fw or {}).get("framework_id") or "—",
             "framework_score": (primary_fw or {}).get("compliance_percent"),
             "security_score": security_index,
+            "security_score_source": "live_registers",
+            "security_score_note": (
+                "Computed from gap compliance + open risks/vulns/remediations in your workspace"
+                if not is_empty
+                else "Run Live scan or gap analysis to populate"
+            ),
             "last_scan": last_scan,
             "today": {
                 "critical_findings": len(crit_vulns),
@@ -1007,7 +1058,8 @@ def enterprise_dashboard(user_id: str) -> dict[str, Any]:
         "incidents_open": len(open_incidents),
         "incidents_total": len(incidents),
         "workflow": {
-            "imported": len(vulns),
+            "imported": len(vulns),  # live findings count (scans + imports)
+            "findings": len(vulns),
             "open": len(open_vulns),
             "triaged": len(
                 [v for v in vulns if (v.get("status") or "") in {"in_progress", "triaged", "accepted"}]
@@ -1016,6 +1068,12 @@ def enterprise_dashboard(user_id: str) -> dict[str, Any]:
             "closed": len([v for v in vulns if (v.get("status") or "") in {"closed", "resolved", "fixed"}]),
             "risks": len(open_risks),
         },
+        "data_source": "live_db",
+        "security_index_note": (
+            "Live composite of gap compliance and open risk/vuln/rem counts"
+            if not is_empty
+            else "Empty workspace"
+        ),
         "asset_breakdown": asset_breakdown,
         "timeline": timeline,
         "mitre_coverage": mitre,
@@ -1329,32 +1387,38 @@ def _mitre_coverage(
     playbooks: list[dict[str, Any]],
     risks: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Heuristic coverage bars for executive view — not a full ATT&CK mapping."""
+    """Keyword signals from live findings — not a certified ATT&CK coverage score."""
     text = " ".join(
-        f"{v.get('title','')} {v.get('cve','')}" for v in vulns
+        f"{v.get('title','')} {v.get('cve','')} {v.get('description','')}" for v in vulns
     ).lower() + " " + " ".join(p.get("title", "") for p in playbooks).lower()
     text += " " + " ".join(r.get("threat", "") for r in risks).lower()
 
     tactics = [
-        ("Discovery", ["scan", "recon", "enum", "discover"]),
-        ("Execution", ["rce", "remote code", "script", "execute"]),
+        ("Discovery", ["scan", "recon", "enum", "discover", "port"]),
+        ("Execution", ["rce", "remote code", "script", "execute", "eval"]),
         ("Persistence", ["persist", "backdoor", "startup", "cron"]),
         ("Privilege Escalation", ["privesc", "privilege", "sudo", "admin"]),
         ("Defense Evasion", ["evasion", "bypass", "disable"]),
-        ("Credential Access", ["password", "credential", "mfa", "token"]),
+        ("Credential Access", ["password", "credential", "mfa", "token", "secret"]),
         ("Lateral Movement", ["lateral", "rdp", "smb", "pivot"]),
         ("Exfiltration", ["exfil", "leak", "upload", "data loss"]),
     ]
     out = []
     for name, kws in tactics:
         hits = sum(1 for k in kws if k in text)
-        # Honest estimate: no fake floor when nothing matches
-        base = hits * 22
         if playbooks and name.lower() in " ".join(
             (p.get("category") or "") + " " + (p.get("title") or "") for p in playbooks
         ).lower():
-            base += 15
-        out.append({"tactic": name, "coverage": min(95, base)})
+            hits += 1
+        out.append(
+            {
+                "tactic": name,
+                "hits": hits,
+                # Relative bar for UI only — label as signal, not certified coverage
+                "coverage": min(100, hits * 20) if hits else 0,
+                "mode": "keyword_signal",
+            }
+        )
     return out
 
 

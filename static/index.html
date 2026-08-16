@@ -29,7 +29,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/style.css?v=109" />
+  <link rel="stylesheet" href="/style.css?v=110" />
   <script src="/vendor/marked.min.js"></script>
 </head>
 <body>
@@ -178,7 +178,7 @@
             <span class="scope-kicker">Project</span>
             <strong id="topProjectName">Workspace</strong>
           </button>
-          <span class="scope-env" id="topEnvName" title="Environment">Lab</span>
+          <span class="scope-env" id="topEnvName" title="Environment">Empty</span>
         </div>
         <div class="topbar-search-wrap">
           <label class="visually-hidden" for="globalSearch">Search workspace</label>
@@ -243,7 +243,7 @@
               <div><dt>Security score</dt><dd id="mcSecurityScore">0</dd></div>
               <div><dt>Last scan</dt><dd id="mcLastScan">Never</dd></div>
               <div><dt>Framework</dt><dd id="mcFramework">—</dd></div>
-              <div><dt>Environment</dt><dd id="mcEnvironment">Lab / local</dd></div>
+              <div><dt>Environment</dt><dd id="mcEnvironment">Empty</dd></div>
             </dl>
           </div>
 
@@ -252,18 +252,18 @@
               <div>
                 <p class="mc-kicker">Start here</p>
                 <h2>Your workspace is ready</h2>
-                <p class="hint">Import a real scanner export or add assets to populate Mission Control. No demo data.</p>
+                <p class="hint">Run a live scan on an owned target — tools invent assets and findings automatically. No demo data.</p>
               </div>
               <div class="mc-first-run-actions">
-                <button type="button" class="btn-primary-cc" data-workspace="vulns">Import scan</button>
+                <button type="button" class="btn-primary-cc" id="mcLiveScan" data-action="live-scan">Live scan</button>
                 <button type="button" class="btn-secondary" data-workspace="assets">Add assets</button>
-                <button type="button" class="btn-secondary" data-workspace="integrations">Integrations</button>
+                <button type="button" class="btn-secondary" data-workspace="vulns">Import (optional)</button>
               </div>
             </div>
             <ol class="mc-checklist" id="mcChecklist">
               <li data-step="org"><button type="button" class="mc-check-btn" data-workspace="orgs"><span>1</span> Organization</button></li>
               <li data-step="assets"><button type="button" class="mc-check-btn" data-workspace="assets"><span>2</span> Assets</button></li>
-              <li data-step="scan"><button type="button" class="mc-check-btn" data-workspace="vulns"><span>3</span> Import scan</button></li>
+              <li data-step="scan"><button type="button" class="mc-check-btn" data-action="live-scan"><span>3</span> Live scan</button></li>
               <li data-step="gap"><button type="button" class="mc-check-btn" data-module="gap"><span>4</span> Gap analysis</button></li>
               <li data-step="report"><button type="button" class="mc-check-btn" data-workspace="reports"><span>5</span> Reports</button></li>
               <li data-step="integrations"><button type="button" class="mc-check-btn" data-workspace="integrations"><span>6</span> Connect tools</button></li>
@@ -272,7 +272,7 @@
 
           <div id="mcLiveDashboard" class="mc-live-dashboard" hidden>
           <div class="mc-workflow-progress" id="mcWorkflowProgress" aria-label="Security workflow">
-            <div class="mc-wf-step" data-wf="imported"><span>Imported</span><strong id="wfImported">0</strong></div>
+            <div class="mc-wf-step" data-wf="imported"><span>Findings</span><strong id="wfImported">0</strong></div>
             <div class="mc-wf-step" data-wf="triaged"><span>Triaged</span><strong id="wfTriaged">0</strong></div>
             <div class="mc-wf-step" data-wf="actions"><span>Actions</span><strong id="wfActions">0</strong></div>
             <div class="mc-wf-step" data-wf="closed"><span>Closed</span><strong id="wfClosed">0</strong></div>
@@ -286,7 +286,8 @@
           </div>
 
           <div class="mc-workflow-row" aria-label="Quick actions">
-            <button type="button" class="cc-action" data-workspace="vulns" id="mcImportScanners">Import scan</button>
+            <button type="button" class="cc-action" id="mcLiveScanQuick" data-action="live-scan">Live scan</button>
+            <button type="button" class="cc-action" data-workspace="vulns" id="mcImportScanners">Import (optional)</button>
             <button type="button" class="cc-action" data-module="gap">Gap analysis</button>
             <button type="button" class="cc-action" data-workspace="evidence">Evidence</button>
             <button type="button" class="cc-action" data-view="chat" data-mode="ciso" data-prompt="Draft a board update from Mission Control: score, top risks, compliance %, and this week’s remediations">Board update</button>
@@ -424,7 +425,7 @@
               <ul id="ccTimeline" class="cc-list timeline-list"><li class="hint">—</li></ul>
             </section>
             <section class="cc-panel">
-              <header><h2>MITRE coverage</h2></header>
+              <header><h2>MITRE signals</h2></header>
               <div id="ccMitre" class="mitre-bars"><p class="hint">—</p></div>
             </section>
           </div>
@@ -467,10 +468,10 @@
               <div class="empty-mark" aria-hidden="true"><img src="/icon.svg" alt="" width="52" height="52" /></div>
               <p class="empty-brand">SecuraIQ</p>
               <p class="empty-tag">Industrial Security Control</p>
-              <p class="empty-lead" id="emptyLead">Query authorized posture, findings, and controls. Live jobs and KPIs stream on the ticker above.</p>
+              <p class="empty-lead" id="emptyLead">Live workspace — run tools on owned targets, or query posture from real findings and controls.</p>
               <div class="empty-suite" id="emptySuite">
                 <button type="button" class="suite-chip" data-view="command">Control Board</button>
-                <button type="button" class="suite-chip" data-workspace="vulns">Import scan</button>
+                <button type="button" class="suite-chip" data-action="live-scan">Live scan</button>
                 <button type="button" class="suite-chip" data-module="gap">Gap analysis</button>
               </div>
               <div id="quickPrompts" class="quick-prompts hidden" aria-hidden="true"></div>
@@ -495,12 +496,12 @@
           <div id="aiTab-automation" class="ai-tab-panel hidden page-pad">
             <div class="ai-auto-panel">
               <h2>Automation</h2>
-              <p class="hint">Golden path: Import scan → Triage → Jira → Close. Wire webhooks for outbound alerts. Background jobs + optional Prefect orchestration live under Automation.</p>
+              <p class="hint">Golden path: Live scan → Triage → Jira → Close. Optional import for third-party exports. Wire webhooks for outbound alerts.</p>
               <div class="cc-action-row">
-                <button type="button" class="cc-action" data-workspace="vulns">Import scan</button>
+                <button type="button" class="cc-action" data-action="live-scan">Live scan</button>
+                <button type="button" class="cc-action" data-workspace="vulns">Import (optional)</button>
                 <button type="button" class="cc-action" data-workspace="integrations">Webhooks</button>
                 <button type="button" class="cc-action" data-workspace="automation">Open Automation</button>
-                <button type="button" class="cc-action" data-view="chat" data-mode="ciso" data-prompt="Design an automation: scan import → AI triage → assign owner → Jira → verify">Design workflow</button>
               </div>
             </div>
           </div>
@@ -511,6 +512,7 @@
             <h1>Asset inventory</h1>
             <div class="page-head-actions">
               <button type="button" class="btn-secondary" id="oaSyncBtn">Sync inventory</button>
+              <button type="button" class="btn-secondary" data-action="live-scan">Live scan</button>
               <button type="button" class="btn-primary-cc" id="assetsOpenCreate">Add asset</button>
             </div>
           </div>
@@ -523,15 +525,16 @@
         <section id="viewVulns" class="workspace-view hidden" data-module-page data-view-panel="vulns">
           <div class="page-head"><h1>Vulnerability management</h1>
               <div class="page-head-actions">
-              <button type="button" class="btn-secondary" id="vulnsOpenImport">Import scan</button>
-              <button type="button" class="btn-secondary" id="sonarSyncBtn">Sync SonarQube</button>
+              <button type="button" class="btn-primary-cc" id="vulnsOpenLiveScan" data-action="live-scan">Live scan</button>
+              <button type="button" class="btn-secondary" id="vulnsOpenImport">Import</button>
+              <button type="button" class="btn-secondary" id="sonarSyncBtn">Sync SecuraIQ Code</button>
               <button type="button" class="btn-secondary" id="vulnsOpenExport">Export</button>
             </div>
           </div>
           <div class="vuln-layout">
             <div class="vuln-main">
               <section class="cc-panel vuln-side-panel" id="sonarPanel">
-                <header><h2>SonarQube</h2>
+                <header><h2>SecuraIQ Code</h2>
                   <div class="page-head-actions">
                     <button type="button" class="btn-secondary" id="sonarPanelSyncBtn">Sync</button>
                   </div>
@@ -611,19 +614,40 @@
         <section id="viewFrameworks" class="workspace-view hidden" data-module-page data-view-panel="frameworks">
           <div class="fw-page">
             <div class="page-head">
-              <h1>Compliance frameworks</h1>
+              <div>
+                <h1>Frameworks</h1>
+                <p class="page-intro hint" style="margin:0.35rem 0 0">Live compliance from your gap assessments — score, gaps, remediations.</p>
+              </div>
               <div class="page-head-actions">
-                <button type="button" class="btn-secondary" id="hkAuditBtn">Run HardeningKitty audit</button>
+                <button type="button" class="btn-secondary" id="hkAuditBtn">HardeningKitty audit</button>
                 <button type="button" class="btn-primary-cc" id="frameworksRunGap">Run gap analysis</button>
               </div>
             </div>
-            <p class="page-intro hint">Control libraries for gap analysis, evidence mapping, and remediation tracking. AI recommends; humans approve.</p>
-            <div class="fw-page-stack">
-              <section class="cc-panel fw-hk-panel" id="hkPanel">
-                <header><h2>Windows hardening</h2></header>
-                <div id="hkPanelBody"><p class="hint">Loading…</p></div>
-              </section>
-              <div id="frameworksPageBody"></div>
+            <div class="fw-hero" id="fwHero">
+              <div class="fw-hero-score">
+                <span class="fw-hero-label">Compliance</span>
+                <strong id="fwHeroPct">0%</strong>
+                <em id="fwHeroMaturity" class="hint">Ad hoc</em>
+              </div>
+              <ul class="fw-hero-stats" id="fwHeroStats">
+                <li><span>Implemented</span><strong id="fwStatImpl">0</strong></li>
+                <li><span>Partial</span><strong id="fwStatPartial">0</strong></li>
+                <li><span>Missing</span><strong id="fwStatMissing">0</strong></li>
+                <li><span>Open remediations</span><strong id="fwStatRems">0</strong></li>
+              </ul>
+            </div>
+            <div class="fw-page-grid">
+              <div id="frameworksPageBody" class="fw-cards"></div>
+              <aside class="fw-side">
+                <section class="cc-panel fw-hk-panel" id="hkPanel">
+                  <header><h2>Windows hardening</h2></header>
+                  <div id="hkPanelBody"><p class="hint">Loading…</p></div>
+                </section>
+                <section class="cc-panel" id="fwControlDetailPanel">
+                  <header><h2>Control detail</h2></header>
+                  <div id="fwControlDetail" class="fw-control-detail"><p class="hint">Select a framework to review controls.</p></div>
+                </section>
+              </aside>
             </div>
           </div>
         </section>
@@ -679,15 +703,25 @@
 
           <div id="toolsPalette" class="tools-palette hidden" aria-label="Cyber tools palette">
             <div class="tools-palette-head">
-              <strong>Cyber tools suite</strong>
-              <span class="hint" id="toolsPaletteHint">Select tools · set Auth + target · Run or chat with them</span>
+              <strong>Live scan</strong>
+              <span class="hint" id="toolsPaletteHint">SecuraIQ tools + third-party · set target · Auth · Run</span>
               <button type="button" class="btn-ghost" id="toolsPaletteClose" aria-label="Close tools">Close</button>
+            </div>
+            <div class="live-scan-bar" id="liveScanBar">
+              <label class="live-scan-target">
+                <span>Target</span>
+                <input type="text" id="scanTargetIp" placeholder="IP / hostname / code folder you own" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="chip-toggle live-scan-auth" title="Confirm you own or are authorized to assess this target">
+                <input type="checkbox" id="scanAuthorized" checked />
+                <span>Auth</span>
+              </label>
+              <button type="button" class="btn-primary-cc" id="toolsPaletteRun">Run scan</button>
             </div>
             <div id="toolsPaletteGrid" class="tools-palette-grid"></div>
             <div class="tools-palette-actions">
-              <button type="button" class="btn-secondary" id="toolsPaletteClear">Clear</button>
+              <button type="button" class="btn-secondary" id="toolsPaletteClear">Clear tools</button>
               <button type="button" class="btn-secondary" id="toolsPaletteUseChat">Use in chat</button>
-              <button type="button" class="btn-primary-cc" id="toolsPaletteRun">Run selected</button>
             </div>
             <pre id="toolsPaletteOut" class="tools-palette-out hidden"></pre>
           </div>
@@ -763,7 +797,7 @@
                 <option value="ctf">CTF</option>
               </optgroup>
             </select>
-            <input type="text" id="targetIp" class="target-input composer-target" placeholder="Target IP (lab) — or a local folder path for code_scan" autocomplete="off" spellcheck="false" />
+            <input type="text" id="targetIp" class="target-input composer-target" placeholder="Owned target IP / host — or local folder for code_scan" autocomplete="off" spellcheck="false" />
             <details class="composer-advanced">
               <summary>Advanced model routing</summary>
               <div class="composer-advanced-body">
@@ -1018,13 +1052,13 @@
         </fieldset>
 
         <fieldset id="settingsSonar">
-          <legend>SonarQube / SonarCloud</legend>
+          <legend>SecuraIQ Code</legend>
           <p class="hint">
-            Live issues sync into Vulnerabilities (authorized projects only).
-            Token: SonarQube user token or SonarCloud account token.
-            You can also use <strong>Import scan</strong> with an issues JSON export.
+            Live SAST / code-quality sync into Vulnerabilities (authorized projects only).
+            Connect a SonarQube- or SonarCloud-compatible engine URL + token, or run tool
+            <strong>SecuraIQ Code</strong> / local folder <strong>code_scan</strong>.
           </p>
-          <label>Base URL
+          <label>Engine base URL
             <input type="text" id="setSonarUrl" inputmode="url" autocomplete="off" placeholder="https://sonar.example.com" />
           </label>
           <label>Token
@@ -1048,7 +1082,7 @@
             <button type="button" class="btn-secondary" id="setSonarTestBtn">Test connection</button>
           </div>
           <p class="hint" id="sonarTestHint"></p>
-          <p class="hint">After save, open <strong>Vulnerabilities</strong> and click Sync SonarQube.</p>
+          <p class="hint">After save, open <strong>Vulnerabilities</strong> and click Sync SecuraIQ Code — or run the SecuraIQ Code tool with Auth.</p>
         </fieldset>
 
         <fieldset id="settingsTheHive">
@@ -1624,9 +1658,9 @@
         <h2 id="vulnHeading">Vulnerability management</h2>
         <button type="button" class="btn-secondary" data-close-vuln>Close</button>
       </div>
-      <p class="hint">Import scanner output (CSV / JSON / XML). Track CVE, severity, owner, and status in the database.</p>
+      <p class="hint">Prefer Live scan (Tools) on owned targets. Import is optional for CSV / JSON / XML from external scanners.</p>
       <div class="settings-row">
-        <button type="button" id="vulnImportBtn" class="btn-sidebar">Import scan file</button>
+        <button type="button" id="vulnImportBtn" class="btn-sidebar">Import file</button>
         <button type="button" id="vulnExportBtn" class="btn-secondary">Export Markdown</button>
         <input id="vulnFileInput" type="file" class="hidden" accept=".csv,.json,.xml,.txt" />
       </div>
@@ -1641,7 +1675,7 @@
         <h2 id="assetHeading">Asset inventory</h2>
         <button type="button" class="btn-secondary" data-close-asset>Close</button>
       </div>
-      <p class="hint">Track servers, apps, cloud accounts, and people-owned systems for risk/vuln mapping.</p>
+      <p class="hint">Live scans auto-register targets here. You can also add servers, apps, and cloud accounts manually.</p>
       <form id="assetForm" class="settings-form">
         <label>Name
           <input type="text" id="assetName" required placeholder="Finance file server" />
@@ -1788,7 +1822,7 @@
     </div>
   </div>
 
-  <script src="/app.js?v=116"></script>
-  <script src="/workspace.js?v=116"></script>
+  <script src="/app.js?v=117"></script>
+  <script src="/workspace.js?v=117"></script>
 </body>
 </html>
