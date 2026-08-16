@@ -218,7 +218,15 @@ async def security_headers(request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    # Relaxed CSP: allow same-origin scripts + Google Fonts used by Mission Control
+    # When bound to all interfaces (LAN / Docker), relax connect-src so phones
+    # and other PCs on Wi‑Fi can use SSE + fetch against this host. CSP does not
+    # support CIDR wildcards reliably — use scheme allowlists for lab LAN only.
+    lan_bind = (settings.host or "").strip() in {"0.0.0.0", "::", "[::]"}
+    connect_src = (
+        "'self' http: https: ws: wss:"
+        if lan_bind
+        else "'self' http://127.0.0.1:* http://localhost:*"
+    )
     response.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; "
@@ -226,7 +234,7 @@ async def security_headers(request, call_next):
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com data:; "
         "img-src 'self' data: blob:; "
-        "connect-src 'self' http://127.0.0.1:* http://localhost:*; "
+        f"connect-src {connect_src}; "
         "frame-ancestors 'none'; "
         "base-uri 'self'",
     )

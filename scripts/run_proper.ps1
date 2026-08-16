@@ -87,12 +87,16 @@ if ($ollama) {
 $envLines = @(Get-Content ".env" -Encoding utf8)
 if ($Lan) {
     $envLines = Set-EnvLine $envLines "HOST" "0.0.0.0"
+    $envLines = Set-EnvLine $envLines "CORS_ORIGINS" "*"
+    $envLines = Set-EnvLine $envLines "WORKSPACE_ZERO_START" "false"
 } else {
     $envLines = Set-EnvLine $envLines "HOST" "127.0.0.1"
     $envLines = Set-EnvLine $envLines "CORS_ORIGINS" "http://127.0.0.1:8080,http://localhost:8080"
 }
 $envLines = Set-EnvLine $envLines "AUTH_ALLOW_REGISTER" "false"
-$envLines = Set-EnvLine $envLines "WORKSPACE_ZERO_START" "true"
+if (-not ($envLines | Where-Object { $_ -match "^WORKSPACE_ZERO_START=" })) {
+    $envLines = Set-EnvLine $envLines "WORKSPACE_ZERO_START" "true"
+}
 $utf8Bom = New-Object System.Text.UTF8Encoding $true
 [System.IO.File]::WriteAllLines((Join-Path (Get-Location) ".env"), $envLines, $utf8Bom)
 
@@ -110,10 +114,11 @@ Write-Host ""
 if ($Lan) {
     Write-Host "Starting SecuraIQ (LAN mode)" -ForegroundColor Yellow
     Write-Host "  http://127.0.0.1:8080  (+ LAN IP for phones)"
+    Write-Host "  Or double-click start_lan.cmd next time"
 } else {
     Write-Host "Starting SecuraIQ (localhost)" -ForegroundColor Green
     Write-Host "  http://127.0.0.1:8080"
-    Write-Host "  For phones: .\start.cmd -Lan"
+    Write-Host "  For phones: .\start_lan.cmd"
 }
 Write-Host "No .env editing required. Optional keys: Settings in the UI."
 & .\.venv\Scripts\python.exe run.py

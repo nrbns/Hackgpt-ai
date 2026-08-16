@@ -40,6 +40,8 @@ python scripts/ingest_rag.py
 
 if [ "$LAN" -eq 1 ]; then
   set_env_value HOST 0.0.0.0
+  set_env_value CORS_ORIGINS "*"
+  set_env_value WORKSPACE_ZERO_START false
 else
   set_env_value HOST 127.0.0.1
   set_env_value CORS_ORIGINS "http://127.0.0.1:8080,http://localhost:8080"
@@ -50,8 +52,9 @@ stop_port_8080
 echo ""
 if [ "$LAN" -eq 1 ]; then
   echo "Starting SecuraIQ (LAN mode) at http://0.0.0.0:8080"
+  echo "  Or: ./start_lan.sh"
 else
   echo "Starting SecuraIQ (secure — localhost) at http://127.0.0.1:8080"
-  echo "For phones: ./scripts/run_proper.sh --lan"
+  echo "For phones: ./start_lan.sh"
 fi
 python run.py

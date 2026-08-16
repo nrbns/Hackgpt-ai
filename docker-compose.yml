@@ -6,8 +6,10 @@ services:
     environment:
       HOST: "0.0.0.0"
       PORT: "8080"
+      CORS_ORIGINS: "*"
       AUTH_ENABLED: "true"
       AUTH_ALLOW_REGISTER: "false"
+      WORKSPACE_ZERO_START: "false"
       BOOTSTRAP_ADMIN_USERNAME: "admin"
       BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:-changeme-change-me}"
       MFA_REQUIRED_FOR_ADMIN: "${MFA_REQUIRED_FOR_ADMIN:-false}"

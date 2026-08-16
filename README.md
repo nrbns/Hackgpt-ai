@@ -37,8 +37,17 @@ Open **http://127.0.0.1:8080**
 |---------|---------|
 | `.\run_proper.cmd` | First-time setup + start |
 | `.\start.cmd` | Start only (localhost) |
-| `.\scripts\start.cmd -Lan` | Start reachable on Wi‑Fi (phones) |
+| `.\start_lan.cmd` | Start reachable on Wi‑Fi (phones / other PCs) |
 | `.\scripts\enable_secure_mode.cmd` | Turn on login + lock register |
+
+### Other devices (phone / tablet / another PC on Wi‑Fi)
+
+1. On this machine run **`.\start_lan.cmd`** (Windows) or **`bash start_lan.sh`** (Linux/macOS).
+2. The console prints URLs like `http://192.168.x.x:8080`.
+3. On the other device (same Wi‑Fi), open that URL in a browser.
+4. If it does not load on Windows: allow **TCP 8080** in Windows Defender Firewall (Private networks). LAN start tries to add this rule automatically.
+
+LAN mode binds `0.0.0.0`, relaxes CORS for lab use, and **keeps workspace data** across restarts (`WORKSPACE_ZERO_START=false`).
 
 ### Linux / macOS
 
@@ -48,6 +57,8 @@ cd Hackgpt-ai
 bash scripts/run_proper.sh
 # later:
 bash scripts/start.sh
+# phones / other PCs on Wi‑Fi:
+bash start_lan.sh
 ```
 
 ### Docker

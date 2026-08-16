@@ -51,19 +51,23 @@ set_env() {
 
 if [ "$LAN" -eq 1 ]; then
   set_env HOST 0.0.0.0
+  set_env CORS_ORIGINS "*"
+  set_env WORKSPACE_ZERO_START false
 else
   set_env HOST 127.0.0.1
   set_env CORS_ORIGINS "http://127.0.0.1:8080,http://localhost:8080"
 fi
 set_env AUTH_ALLOW_REGISTER false
-set_env WORKSPACE_ZERO_START true
+if ! grep -q "^WORKSPACE_ZERO_START=" .env 2>/dev/null; then
+  set_env WORKSPACE_ZERO_START true
+fi
 if command -v ollama >/dev/null 2>&1; then
   set_env MODEL_BACKEND ollama
 fi
 
 echo ""
 if [ "$LAN" -eq 1 ]; then
-  echo "Starting SecuraIQ (LAN mode)"
+  echo "Starting SecuraIQ (LAN mode — other devices on Wi‑Fi can open)"
   echo "  This PC:     http://127.0.0.1:8080"
   if command -v hostname >/dev/null 2>&1; then
     (hostname -I 2>/dev/null || true) | tr ' ' '\n' | while read -r ip; do
@@ -76,7 +80,7 @@ if [ "$LAN" -eq 1 ]; then
 else
   echo "Starting SecuraIQ (localhost)"
   echo "  Open:  http://127.0.0.1:8080"
-  echo "  LAN:   ./scripts/start.sh --lan"
+  echo "  LAN:   ./start_lan.sh   or   ./scripts/start.sh --lan"
 fi
 echo "No .env editing required. Optional keys: Settings in the UI."
 .venv/bin/python run.py

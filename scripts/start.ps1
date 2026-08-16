@@ -82,6 +82,11 @@ Ensure-EnvFile
 $lines = @(Get-Content ".env" -Encoding UTF8)
 if ($Lan) {
     $lines = Set-EnvLine $lines "HOST" "0.0.0.0"
+    # SPA is same-origin on the phone, but allow * so preflighted tools / PWA
+    # edge cases on LAN IPs do not fail closed after a prior localhost start.
+    $lines = Set-EnvLine $lines "CORS_ORIGINS" "*"
+    # Keep data across restarts when sharing with other devices on Wi‑Fi
+    $lines = Set-EnvLine $lines "WORKSPACE_ZERO_START" "false"
 } else {
     $lines = Set-EnvLine $lines "HOST" "127.0.0.1"
     $lines = Set-EnvLine $lines "CORS_ORIGINS" "http://127.0.0.1:8080,http://localhost:8080"
@@ -91,7 +96,10 @@ if (Get-Command ollama -ErrorAction SilentlyContinue) {
 }
 # Sensible zero-config defaults if missing from an old .env
 $lines = Set-EnvLine $lines "AUTH_ALLOW_REGISTER" "false"
-$lines = Set-EnvLine $lines "WORKSPACE_ZERO_START" "true"
+# Only force wipe-on-start for first-run localhost labs when unset
+if (-not ($lines | Where-Object { $_ -match "^WORKSPACE_ZERO_START=" })) {
+    $lines = Set-EnvLine $lines "WORKSPACE_ZERO_START" "true"
+}
 $utf8Bom = New-Object System.Text.UTF8Encoding $true
 [System.IO.File]::WriteAllLines((Join-Path (Get-Location) ".env"), $lines, $utf8Bom)
 
@@ -102,7 +110,7 @@ $appUrl = "http://127.0.0.1:$port"
 
 Write-Host ""
 if ($Lan) {
-    Write-Host "Starting SecuraIQ (LAN mode)" -ForegroundColor Yellow
+    Write-Host "Starting SecuraIQ (LAN mode — other devices on Wi‑Fi can open)" -ForegroundColor Yellow
     Write-Host "  This PC:     $appUrl"
     try {
         Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
@@ -110,9 +118,21 @@ if ($Lan) {
             Select-Object -ExpandProperty IPAddress -Unique |
             ForEach-Object { Write-Host "  Phone/other: http://${_}:$port" }
     } catch { }
+    # Open Windows Firewall for inbound TCP on the app port (lab LAN only)
+    try {
+        $ruleName = "SecuraIQ LAN $port"
+        $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+        if (-not $existing) {
+            New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP `
+                -LocalPort $port -Action Allow -Profile Private -ErrorAction SilentlyContinue | Out-Null
+            Write-Host "  Firewall:    allowed inbound TCP $port (Private profile)" -ForegroundColor DarkGray
+        }
+    } catch {
+        Write-Host "  Firewall:    if phones cannot connect, allow TCP $port in Windows Defender Firewall" -ForegroundColor DarkYellow
+    }
 } else {
     Write-Host "Starting SecuraIQ (localhost)" -ForegroundColor Green
-    Write-Host "  LAN:   .\start.cmd -Lan"
+    Write-Host "  LAN / phone: .\start_lan.cmd   or   .\start.cmd -Lan"
 }
 Write-Host "No .env editing required. Optional keys: Settings in the UI."
 
