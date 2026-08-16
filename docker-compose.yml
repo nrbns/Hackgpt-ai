@@ -1,4 +1,7 @@
 services:
+  # Default app profile — lab / closed-beta on a single host.
+  # For SaaS: docker compose --profile saas up -d
+  #   and set required secrets in .env (no weak defaults).
   securaiq:
     build: .
     ports:
@@ -6,15 +9,18 @@ services:
     environment:
       HOST: "0.0.0.0"
       PORT: "8080"
-      CORS_ORIGINS: "*"
+      # Never use "*" in production. Override via .env for your real origin(s).
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://127.0.0.1:8080,http://localhost:8080}"
       AUTH_ENABLED: "true"
       AUTH_ALLOW_REGISTER: "false"
       WORKSPACE_ZERO_START: "false"
-      BOOTSTRAP_ADMIN_USERNAME: "admin"
-      BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:-changeme-change-me}"
-      MFA_REQUIRED_FOR_ADMIN: "${MFA_REQUIRED_FOR_ADMIN:-false}"
-      MODEL_BACKEND: "ollama"
-      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      DEPLOYMENT_MODE: "${DEPLOYMENT_MODE:-lab}"
+      BOOTSTRAP_ADMIN_USERNAME: "${BOOTSTRAP_ADMIN_USERNAME:-admin}"
+      # Required for first boot — set in .env. Empty disables bootstrap user creation.
+      BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:?Set BOOTSTRAP_ADMIN_PASSWORD in .env}"
+      MFA_REQUIRED_FOR_ADMIN: "${MFA_REQUIRED_FOR_ADMIN:-true}"
+      MODEL_BACKEND: "${MODEL_BACKEND:-ollama}"
+      OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
       DATA_DIR: "/data"
       CHROMA_PERSIST_DIR: "/data/chroma"
       QDRANT_URL: "${QDRANT_URL:-}"
@@ -31,46 +37,113 @@ services:
       - securaiq-data:/data
     restart: unless-stopped
 
+  # SaaS profile: Postgres is the source of truth (internal network only).
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: securaiq
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-securaiq}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env for saas profile}"
+      POSTGRES_DB: securaiq
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # Not published to the host by default — app reaches it on the compose network.
+    expose:
+      - "5432"
+    restart: unless-stopped
+    profiles: ["postgres", "saas"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U securaiq -d securaiq"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    # Internal only — use REDIS_URL=redis://redis:6379/0 from the app container.
+    expose:
+      - "6379"
+    restart: unless-stopped
+    profiles: ["redis", "saas"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Optional: publish DB/Redis to localhost for debugging (never on public hosts).
+  postgres-debug:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: securaiq
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
       POSTGRES_DB: securaiq
     volumes:
       - postgres-data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     restart: unless-stopped
-    profiles: ["postgres", "saas"]
+    profiles: ["debug-ports"]
 
-  redis:
+  redis-debug:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     restart: unless-stopped
-    profiles: ["redis", "saas"]
+    profiles: ["debug-ports"]
 
   qdrant:
     image: qdrant/qdrant:v1.13.2
+    # Bind to localhost only if published for local tooling.
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
     volumes:
       - qdrant-data:/qdrant/storage
     restart: unless-stopped
     profiles: ["vectors"]
 
-  # Optional Prefect server for multi-worker job orchestration
   prefect-server:
     image: prefecthq/prefect:3-latest
     command: prefect server start --host 0.0.0.0
     ports:
-      - "4200:4200"
+      - "127.0.0.1:4200:4200"
     environment:
       PREFECT_SERVER_API_HOST: "0.0.0.0"
     restart: unless-stopped
     profiles: ["prefect"]
+
+  # Opinionated SaaS app service — use with: docker compose --profile saas up -d
+  # Expects reverse proxy (Caddy/nginx) in front; do not put this on a public IP alone.
+  securaiq-saas:
+    build: .
+    profiles: ["saas"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8080"
+      DEPLOYMENT_MODE: "production"
+      CORS_ORIGINS: "${CORS_ORIGINS:?Set CORS_ORIGINS to your HTTPS origin(s)}"
+      AUTH_ENABLED: "true"
+      AUTH_ALLOW_REGISTER: "false"
+      WORKSPACE_ZERO_START: "false"
+      BOOTSTRAP_ADMIN_USERNAME: "${BOOTSTRAP_ADMIN_USERNAME:-admin}"
+      BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:?Set BOOTSTRAP_ADMIN_PASSWORD}"
+      MFA_REQUIRED_FOR_ADMIN: "true"
+      DATABASE_URL: "postgresql://securaiq:${POSTGRES_PASSWORD}@postgres:5432/securaiq"
+      REDIS_URL: "redis://redis:6379/0"
+      DATA_DIR: "/data"
+      CHROMA_PERSIST_DIR: "/data/chroma"
+      MODEL_BACKEND: "${MODEL_BACKEND:-ollama}"
+      OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
+    volumes:
+      - securaiq-data:/data
+    restart: unless-stopped
 
 volumes:
   securaiq-data:

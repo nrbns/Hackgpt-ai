@@ -4,16 +4,41 @@ from pathlib import Path
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
-from sentence_transformers import SentenceTransformer
 
 from app.config import settings
 
 KNOWLEDGE_DIR = Path(__file__).resolve().parent.parent / "data" / "knowledge"
 
 
+def rag_where_for_org(org_id: str | None) -> dict | None:
+    """Chroma metadata filter: global knowledge + optional tenant corpus.
+
+    Global docs use metadata scope=global (shipped knowledge).
+    Tenant docs must set org_id on upsert. Without a filter, older DBs that
+    lack scope still return everything (backward compatible).
+    """
+    if not org_id:
+        return None
+    return {
+        "$or": [
+            {"scope": {"$eq": "global"}},
+            {"org_id": {"$eq": str(org_id)}},
+        ]
+    }
+
+
+def assert_no_cross_tenant_hit(chunks: list[dict], org_id: str) -> None:
+    """Raise if any chunk metadata belongs to a different org (test helper / audit)."""
+    for c in chunks:
+        meta = c.get("meta") or {}
+        other = meta.get("org_id")
+        if other and str(other) != str(org_id):
+            raise PermissionError(f"cross-tenant RAG hit: org={other} asked={org_id}")
+
+
 class RAGEngine:
     def __init__(self) -> None:
-        self._embedder: SentenceTransformer | None = None
+        self._embedder = None
         self._client: chromadb.PersistentClient | None = None
         self._collection = None
         self._cached_count: int = 0
@@ -34,6 +59,8 @@ class RAGEngine:
     def _ensure_ready(self) -> None:
         self._ensure_client()
         if self._embedder is None:
+            from sentence_transformers import SentenceTransformer
+
             self._embedder = SentenceTransformer(settings.embedding_model)
 
     def _knowledge_files(self, root: Path) -> list[Path]:
@@ -72,7 +99,7 @@ class RAGEngine:
                 continue
             docs.append(text)
             ids.append(path.stem)
-            metas.append({"source": str(path.relative_to(root))})
+            metas.append({"source": str(path.relative_to(root)), "scope": "global"})
 
         if not docs:
             return 0
@@ -101,15 +128,19 @@ class RAGEngine:
         metas = result.get("metadatas") or []
         return sorted({m.get("source", "") for m in metas if m.get("source")})
 
-    def query(self, question: str, top_k: int = 3) -> list[str]:
-        return [r["text"] for r in self.query_with_sources(question, top_k=top_k)]
+    def query(self, question: str, top_k: int = 3, org_id: str | None = None) -> list[str]:
+        return [r["text"] for r in self.query_with_sources(question, top_k=top_k, org_id=org_id)]
 
-    def query_with_sources(self, question: str, top_k: int = 3) -> list[dict]:
+    def query_with_sources(
+        self, question: str, top_k: int = 3, *, org_id: str | None = None
+    ) -> list[dict]:
         """Like query(), but keeps the source filename + a similarity score per
         chunk instead of throwing them away — this is what the citations UI /
         confidence indicators need. Previously `query()` discarded chroma's
         metadatas/distances entirely, which is why no citation ever made it
         past this layer.
+
+        When org_id is set, only global knowledge + that org's docs are returned.
         """
         self._ensure_ready()
         assert self._embedder is not None
@@ -122,11 +153,26 @@ class RAGEngine:
             return []
 
         embedding = self._embedder.encode([question], show_progress_bar=False).tolist()
-        results = self._collection.query(
-            query_embeddings=embedding,
-            n_results=min(top_k, self._collection.count()),
-            include=["documents", "metadatas", "distances"],
-        )
+        kwargs: dict = {
+            "query_embeddings": embedding,
+            "n_results": min(top_k, self._collection.count()),
+            "include": ["documents", "metadatas", "distances"],
+        }
+        where = rag_where_for_org(org_id)
+        if where is not None:
+            kwargs["where"] = where
+        try:
+            results = self._collection.query(**kwargs)
+        except Exception:
+            # Older collections without scope metadata — fall back unfiltered
+            if where is not None:
+                results = self._collection.query(
+                    query_embeddings=embedding,
+                    n_results=min(top_k, self._collection.count()),
+                    include=["documents", "metadatas", "distances"],
+                )
+            else:
+                raise
         documents = results.get("documents", [[]])[0]
         metadatas = results.get("metadatas", [[]])[0]
         distances = results.get("distances", [[]])[0]
@@ -140,23 +186,29 @@ class RAGEngine:
             # Cosine distance -> similarity in [0, 1]; clamp for safety since
             # this is an approximate confidence signal, not a calibrated one.
             score = max(0.0, min(1.0, 1.0 - dist)) if isinstance(dist, (int, float)) else None
+            # Soft drop foreign-tenant docs if filter was unavailable
+            if org_id and (meta or {}).get("org_id") and str(meta.get("org_id")) != str(org_id):
+                continue
             out.append(
                 {
                     "text": doc,
                     "source": (meta or {}).get("source", "unknown"),
                     "score": round(score, 3) if score is not None else None,
+                    "meta": dict(meta or {}),
                 }
             )
         return out
 
-    def build_context(self, question: str, top_k: int = 3) -> tuple[str, list[dict]]:
+    def build_context(
+        self, question: str, top_k: int = 3, *, org_id: str | None = None
+    ) -> tuple[str, list[dict]]:
         """Returns (context_text_for_the_model, sources_for_the_ui).
 
         Each retrieved chunk is tagged with a [S1]/[S2]/... marker in the
         context text and the model is instructed to cite them, so a citation
         the model emits can be matched back to `sources` by index.
         """
-        chunks = self.query_with_sources(question, top_k=top_k)
+        chunks = self.query_with_sources(question, top_k=top_k, org_id=org_id)
         if not chunks:
             return "", []
 

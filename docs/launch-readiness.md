@@ -4,7 +4,9 @@
 
 Suitable for **closed beta / design partners**. **Not** ready for public enterprise launch.
 
-Overall launch readiness: **~7.0 / 10**. Strongest areas are vision, UI, AI, backend, and **cross-discipline correlation**. Weakest remains legal. Live-tenant proof and counsel still required.
+**Feature freeze (Aug 2026):** stop adding scanners, agents, frameworks, and report formats. Next 30 days = harden, validate connectors, commercialize, and run 5–10 design partners. See [closed-beta-checklist.md](./closed-beta-checklist.md) and [production-hardening.md](./production-hardening.md).
+
+Overall launch readiness: **~7.2 / 10**. Strongest areas are vision, UI, AI, backend, and **cross-discipline correlation**. Weakest remains legal. Live-tenant proof and counsel still required.
 
 | Area | Score (/10) | Notes |
 |------|------------:|-------|
@@ -16,9 +18,22 @@ Overall launch readiness: **~7.0 / 10**. Strongest areas are vision, UI, AI, bac
 | Enterprise readiness | 7.5 | MFA, OIDC SSO, **SCIM Users** (`/scim/v2` list/create/PATCH/DELETE; no Groups/Bulk), usage metering, notifications, multi-project lifecycle. Live Stripe still needs a real account + price IDs |
 | Compliance | 6.5 | Catalogs + gap analysis + evidence queue + audit packs. Scoring methodology now explicit on every assessment (`methodology.auditor_grade=false`) — still heuristic, not auditor-certified |
 | Legal readiness | 4.5 | All ten draft policies exist under `/legal/` … **None reviewed by counsel** |
-| **Launch readiness** | **~7.0** | Closed beta candidate; public launch blocked on counsel, payments, TLS domain, and live connector validation |
+| **Launch readiness** | **~7.2** | Closed beta candidate; public launch blocked on counsel, payments, TLS domain, and live connector validation |
 
-See also: [commercial-roadmap.md](./commercial-roadmap.md) · [enterprise-integrations.md](./enterprise-integrations.md) · [beta-deploy.md](./beta-deploy.md)
+See also: [commercial-roadmap.md](./commercial-roadmap.md) · [enterprise-integrations.md](./enterprise-integrations.md) · [beta-deploy.md](./beta-deploy.md) · [production-hardening.md](./production-hardening.md) · [connector-validation-matrix.md](./connector-validation-matrix.md) · [closed-beta-checklist.md](./closed-beta-checklist.md)
+
+---
+
+## 30-day plan (feature freeze)
+
+| Week | Focus | In-repo |
+|------|--------|---------|
+| 1 | Production hardening | Compose secrets/CORS/internal DB; tenant isolation tests |
+| 2 | AI security | Guardrails + scope + approval suites (`tests/test_ai_security.py`) |
+| 3 | Live integrations | `scripts/connector_verify.py --matrix` + partner trials |
+| 4 | Commercial + beta | Stripe end-to-end; 5–10 design partners; Investigate workflow feedback |
+
+**Flagship bet:** Investigate (assets → findings → risk → intel → graph → remediation → report) — not more navigation.
 
 ---
 
@@ -80,8 +95,8 @@ SecuraIQ **maps controls** and helps gather evidence. It does **not** make your 
 - Selected design partners
 - Feedback loops + security hardening
 - MFA + OIDC shipped — enforce on deploy (`docs/beta-deploy.md`)
-- Postgres/Redis compose profiles (SQLite default until PG adapter)
-- Validated connectors: GitHub webhook + Jira + Slack webhook; **live-tenant proof** for any EDR/SIEM sold as “working”
+- Postgres/Redis compose profiles — **Postgres mandatory for SaaS** (`--profile saas`); SQLite remains lab/community default
+- Validated connectors: GitHub webhook + Jira + Slack webhook; **live-tenant proof** for any EDR/SIEM sold as “working” — see [connector-validation-matrix.md](./connector-validation-matrix.md)
 
 ### Stage 3 — Public
 

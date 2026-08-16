@@ -15,11 +15,40 @@ CORS_ORIGINS=https://securaiq.yourdomain.com
 
 ## Docker Compose (recommended)
 
+Create a `.env` (never commit it):
+
+```env
+BOOTSTRAP_ADMIN_PASSWORD=<strong-password>
+MFA_REQUIRED_FOR_ADMIN=true
+CORS_ORIGINS=http://127.0.0.1:8080,http://localhost:8080
+```
+
 ```bash
-export BOOTSTRAP_ADMIN_PASSWORD='your-strong-password'
-export MFA_REQUIRED_FOR_ADMIN=true
 docker compose up --build
 ```
+
+### SaaS / staging (Postgres + Redis, internal only)
+
+```env
+BOOTSTRAP_ADMIN_PASSWORD=<strong-password>
+POSTGRES_PASSWORD=<strong-db-password>
+CORS_ORIGINS=https://securaiq.yourdomain.com
+MFA_REQUIRED_FOR_ADMIN=true
+```
+
+```bash
+docker compose --profile saas up --build -d
+```
+
+Postgres and Redis are **not** published on `0.0.0.0`. For local DB tooling only:
+
+```bash
+docker compose --profile debug-ports up -d
+```
+
+(binds `127.0.0.1:5432` / `6379` — never on a public host)
+
+See [production-hardening.md](./production-hardening.md).
 
 Login: `admin` + bootstrap password. Enroll MFA via API after first login:
 

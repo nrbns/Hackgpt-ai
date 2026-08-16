@@ -4,6 +4,7 @@
 Usage:
   python scripts/connector_verify.py
   python scripts/connector_verify.py --base http://127.0.0.1:8080 --sync
+  python scripts/connector_verify.py --matrix
 """
 
 from __future__ import annotations
@@ -34,6 +35,23 @@ SYNC_ENDPOINTS = [
     "/api/cloud/sync",
 ]
 
+# Marketing honesty matrix — update after real tenant trials.
+VALIDATION_MATRIX = [
+    ("GitHub webhooks", "built", "verified_when_secret_set"),
+    ("Jira", "built", "trial_pending"),
+    ("Slack webhook", "built", "trial_pending"),
+    ("Wazuh / SecuraIQ SIEM", "built", "trial_pending"),
+    ("CrowdStrike", "built", "trial_pending"),
+    ("SentinelOne", "built", "trial_pending"),
+    ("Sophos", "built", "trial_pending"),
+    ("Microsoft Defender", "built", "trial_pending"),
+    ("TheHive", "built", "trial_pending"),
+    ("AWS Security Hub", "built", "trial_pending"),
+    ("Azure Defender", "built", "trial_pending"),
+    ("GCP SCC", "built", "trial_pending"),
+    ("GitLab webhooks", "built", "trial_pending"),
+]
+
 
 def _req(base: str, method: str, path: str, timeout: float = 20.0) -> tuple[int, Any]:
     url = base.rstrip("/") + path
@@ -57,11 +75,28 @@ def _req(base: str, method: str, path: str, timeout: float = 20.0) -> tuple[int,
         return 0, {"error": str(exc)}
 
 
+def _print_matrix() -> None:
+    print("Connector validation matrix (do not claim 'supported' until verified):")
+    print(f"  {'Integration':<28} {'Code':<8} {'Live tenant'}")
+    print(f"  {'-' * 28} {'-' * 8} {'-' * 16}")
+    for name, code, live in VALIDATION_MATRIX:
+        print(f"  {name:<28} {code:<8} {live}")
+    print(
+        "\nAfter a successful trial, update docs/connector-validation-matrix.md "
+        "and this VALIDATION_MATRIX list."
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="SecuraIQ connector verification harness")
     parser.add_argument("--base", default="http://127.0.0.1:8080")
     parser.add_argument("--sync", action="store_true", help="Also POST sync for configured connectors")
+    parser.add_argument("--matrix", action="store_true", help="Print live-tenant validation matrix and exit")
     args = parser.parse_args()
+
+    if args.matrix:
+        _print_matrix()
+        return 0
 
     fails = 0
     print(f"Base: {args.base}")
@@ -106,7 +141,9 @@ def main() -> int:
                 fails += 1
             print(f"  [{'OK' if ok else 'FAIL'}] POST {path} -> {sc}")
 
-    print(f"Result: {'PASS' if fails == 0 else f'FAIL ({fails})'}")
+    print()
+    _print_matrix()
+    print(f"\nResult: {'PASS' if fails == 0 else f'FAIL ({fails})'}")
     return 0 if fails == 0 else 1
 
 
