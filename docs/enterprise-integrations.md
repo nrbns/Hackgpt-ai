@@ -40,7 +40,7 @@ Each catalog item includes a `ui_action` so Mission Control can **Connect** to t
 | Containers / SCA | Trivy + Grype | **import** |
 | IaC | Checkov | **import** |
 | DAST | OWASP ZAP + Nuclei | PATH + ZAP **import** |
-| Threat intel | MITRE + NVD + CISA KEV + Free APIs Security | Shipped (`/api/intel/*`) |
+| Threat intel | MITRE + NVD + CISA KEV + built-in providers | Shipped (`/api/intel/*`) |
 | SIEM | Wazuh | Shipped (manager JWT + optional Indexer alert pull; SOC sync) |
 | CMDB / inventory | Network inventory | Shipped (cookie session API; Assets sync) |
 | Hardening | HardeningKitty + CIS Downloads | Shipped (Audit/Config import; HailMary blocked in API) |
@@ -138,9 +138,9 @@ Planned depth: NIST SP 800-53 full mapping.
 
 ---
 
-## Free Security APIs
+## Threat intel providers
 
-Full catalog from [Free APIs — Security](https://free-apis.github.io/#/categories/Security) (plus Anti-Malware):
+Built-in Security + Anti-Malware provider catalog (integrated in Threat intel → Lookup):
 
 | Endpoint | Purpose |
 |----------|---------|

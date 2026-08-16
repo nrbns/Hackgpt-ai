@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = "securaiq@localhost"
     smtp_use_tls: bool = True
-    # Free / optional threat-intel API keys (https://free-apis.github.io/#/categories/Security)
+    # Optional threat-intel API keys (AbuseIPDB, VT, Shodan, OTX, …)
     abuseipdb_api_key: str = ""
     virustotal_api_key: str = ""
     shodan_api_key: str = ""
@@ -134,8 +134,16 @@ class Settings(BaseSettings):
     # Infra (beta SaaS — Postgres/Redis via compose profiles)
     database_url: str = ""  # empty = SQLite at DATA_DIR/securaiq.db
     redis_url: str = ""
+    # production / DEPLOYMENT_MODE=production requires PostgreSQL (never SQLite for SaaS)
+    require_postgres_in_production: bool = True
     # Security hardening
     cors_origins: str = "http://127.0.0.1:8080,http://localhost:8080"  # restrictive; use * only with LAN bind
+    # Session cookie (Bearer token still supported; cookie preferred behind HTTPS)
+    session_cookie_name: str = "securaiq_session"
+    cookie_secure: bool = False  # set true (or auto via production) for HTTPS-only cookies
+    cookie_samesite: str = "lax"  # lax | strict | none
+    cookie_httponly: bool = True
+    force_https_headers: bool = False  # HSTS + secure cookie defaults when true
     rate_limit_per_minute: int = 180
     rate_limit_auth_per_minute: int = 20
     rate_limit_chat_per_minute: int = 45
@@ -244,7 +252,7 @@ def _decrypt_secret_fields_in_place() -> None:
     """
     from app.secrets_crypto import decrypt_value, is_encrypted
 
-    for name in settings.model_fields:
+    for name in type(settings).model_fields:
         value = getattr(settings, name, None)
         if isinstance(value, str) and is_encrypted(value):
             setattr(settings, name, decrypt_value(value))

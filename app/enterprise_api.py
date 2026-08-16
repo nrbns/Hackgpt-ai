@@ -27,11 +27,14 @@ from app.services.findings import (
     update_vulnerability,
 )
 from app.services.risk import (
+    compute_risk_score,
     create_risk,
     delete_risk,
+    explain_risk_score,
     list_risks,
     update_risk,
 )
+from app.services.investigation import investigate_top_assets
 from app.enterprise import (
     create_campaign,
     create_playbook,
@@ -258,6 +261,21 @@ async def workspace_reset(req: WorkspaceResetRequest, user: Annotated[AuthUser, 
     return reset_workspace(user.id, clear_rag=req.clear_rag)
 
 
+class InvestigateRequest(BaseModel):
+    limit: int = Field(default=5, ge=1, le=25)
+    engagement_id: str | None = None
+    org_id: str | None = None
+
+
+class RiskScoreRequest(BaseModel):
+    cvss: float | None = None
+    exploitability: float | None = None
+    exposure: float | None = None
+    asset_criticality: str | None = "medium"
+    threat_intel: float | None = None
+    confidence: float | None = None
+
+
 @router.get("/assets")
 async def assets_list(
     user: Annotated[AuthUser, Depends(require_user)],
@@ -268,6 +286,40 @@ async def assets_list(
     oid = resolve_request_org(user, org_id=org_id, header_org=x_securaiq_org)
     require_perm(user, "asset.read", org_id=oid)
     return {"assets": list_assets(user.id, engagement_id, org_id=oid), "org_id": oid}
+
+
+@router.post("/ai/investigate")
+async def ai_investigate(
+    req: InvestigateRequest,
+    user: Annotated[AuthUser, Depends(require_user)],
+    x_securaiq_org: str | None = Header(default=None, alias="X-SecuraIQ-Org"),
+):
+    """Flagship workflow: investigate top-risk assets inside the caller's tenant."""
+    oid = resolve_request_org(user, org_id=req.org_id, header_org=x_securaiq_org)
+    require_perm(user, "asset.read", org_id=oid)
+    require_perm(user, "vuln.read", org_id=oid)
+    return investigate_top_assets(
+        user.id,
+        org_id=oid,
+        engagement_id=req.engagement_id,
+        limit=req.limit,
+    )
+
+
+@router.post("/risk/score")
+async def risk_score_compute(req: RiskScoreRequest, user: Annotated[AuthUser, Depends(require_user)]):
+    """Deterministic risk score — AI should explain, not invent."""
+    _ = user
+    result = compute_risk_score(
+        cvss=req.cvss,
+        exploitability=req.exploitability,
+        exposure=req.exposure,
+        asset_criticality=req.asset_criticality,
+        threat_intel=req.threat_intel,
+        confidence=req.confidence,
+    )
+    result["explanation"] = explain_risk_score(result)
+    return result
 
 
 @router.post("/assets")

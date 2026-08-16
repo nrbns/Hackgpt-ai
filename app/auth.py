@@ -28,21 +28,66 @@ class AuthUser:
     role: str
 
 
-def assert_safe_deployment_auth() -> None:
-    """Refuse unsafe auth/bind combinations for commercial / internet exposure."""
+def _is_production_mode() -> bool:
     mode = (getattr(settings, "deployment_mode", "lab") or "lab").lower()
+    return mode in {"production", "prod", "commercial", "saas", "cloud"}
+
+
+def using_postgres_url() -> bool:
+    url = (getattr(settings, "database_url", "") or "").strip().lower()
+    return url.startswith("postgres://") or url.startswith("postgresql://")
+
+
+def assert_safe_deployment_auth() -> None:
+    """Refuse unsafe auth/bind/database combinations for commercial / internet exposure."""
     host = (settings.host or "").strip()
     open_bind = host in {"0.0.0.0", "::", "[::]"}
-    if mode in {"production", "prod", "commercial"} and not settings.auth_enabled:
+    if _is_production_mode() and not settings.auth_enabled:
         raise RuntimeError(
             "DEPLOYMENT_MODE=production requires AUTH_ENABLED=true. "
             "Never expose SecuraIQ without authentication."
+        )
+    if (
+        _is_production_mode()
+        and getattr(settings, "require_postgres_in_production", True)
+        and not using_postgres_url()
+    ):
+        raise RuntimeError(
+            "DEPLOYMENT_MODE=production requires DATABASE_URL=postgresql://... "
+            "(SQLite is for community/lab only). Set REQUIRE_POSTGRES_IN_PRODUCTION=false "
+            "only for emergency break-glass — never for public SaaS."
         )
     if open_bind and not settings.auth_enabled and not getattr(settings, "allow_open_lan", False):
         raise RuntimeError(
             f"HOST={host} with AUTH_ENABLED=false is blocked. "
             "Enable AUTH_ENABLED, bind to 127.0.0.1, or set ALLOW_OPEN_LAN=true only on trusted private LANs."
         )
+
+
+def session_cookie_secure() -> bool:
+    if getattr(settings, "cookie_secure", False):
+        return True
+    if getattr(settings, "force_https_headers", False):
+        return True
+    return _is_production_mode()
+
+
+def session_cookie_kwargs() -> dict[str, Any]:
+    same = (getattr(settings, "cookie_samesite", "lax") or "lax").lower()
+    if same not in {"lax", "strict", "none"}:
+        same = "lax"
+    secure = session_cookie_secure()
+    if same == "none" and not secure:
+        # Browsers reject SameSite=None without Secure
+        same = "lax"
+    return {
+        "key": getattr(settings, "session_cookie_name", "securaiq_session") or "securaiq_session",
+        "httponly": bool(getattr(settings, "cookie_httponly", True)),
+        "secure": secure,
+        "samesite": same,
+        "max_age": _session_ttl_days() * 86400,
+        "path": "/",
+    }
 
 
 def hash_password(password: str) -> str:
@@ -311,12 +356,18 @@ def revoke_api_key(user_id: str, key_id: str) -> bool:
     return False
 
 
-def resolve_user(authorization: str | None, api_key_header: str | None = None) -> AuthUser | None:
+def resolve_user(
+    authorization: str | None,
+    api_key_header: str | None = None,
+    session_cookie: str | None = None,
+) -> AuthUser | None:
     token = None
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization[7:].strip()
     if not token and api_key_header:
         token = api_key_header.strip()
+    if not token and session_cookie:
+        token = session_cookie.strip()
     if not token:
         return None
 

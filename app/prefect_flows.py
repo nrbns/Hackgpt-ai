@@ -15,8 +15,9 @@ from typing import Any
 
 
 def _run_handler(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
-    # Import handlers (registers JOB_HANDLERS)
+    # Import handlers (registers JOB_HANDLERS including scan_execute)
     import app.jobs  # noqa: F401
+    import app.scan_engine.jobs  # noqa: F401
     from app.jobs import JOB_HANDLERS
 
     handler = JOB_HANDLERS.get(kind)

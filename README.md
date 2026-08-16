@@ -70,6 +70,14 @@ docker compose up --build
 
 Auth is on by default in Compose. Sign in as `admin`.
 
+The image installs **Nmap**, **Nuclei** (templates), and **OWASP ZAP** by default so **New scan** can use those scanners in the container. Smaller image without ZAP:
+
+```bash
+docker compose build --build-arg INSTALL_ZAP=false
+```
+
+Override versions with `--build-arg NUCLEI_VERSION=…` / `ZAP_VERSION=…` if needed.
+
 Optional profiles:
 
 ```bash
@@ -82,10 +90,13 @@ docker compose --profile prefect up -d    # Prefect UI
 ## How to use
 
 1. Open **Mission Control** (starts at score **0** / empty workspace).
-2. **Import a scan** (Vulnerabilities) or run **Gap analysis**.
-3. Triage findings → remediations → optional Jira.
-4. Use chat agents (SOC, XDR, CISO, …) for authorized lab work.
-5. Connect Wazuh / Slack / webhooks under **Integrations** when ready.
+2. **New scan** → set an owned target → choose **Discovery** (Nmap) → authorize → **Start scan**.
+3. Review assets/services and findings (evidence under `data/evidence/scans/`).
+4. Optionally **Import** third-party reports (ZAP, Burp, Trivy, …) under Vulnerabilities.
+5. Triage findings → remediations → optional Jira / AI Investigation.
+6. Connect Wazuh / Slack / webhooks under **Integrations** when ready.
+
+**Primary workflow:** Create Engagement → Define Scope → Run Scan → Review Findings → AI Investigation → Remediate → Report
 
 **In-app manual:** http://127.0.0.1:8080/manual/ · source: [`docs/user-manual.md`](docs/user-manual.md)
 
@@ -115,12 +126,13 @@ Set `WORKSPACE_ZERO_START=false` (or use secured mode) to keep assets and findin
 
 ## Features
 
+- **Scan engine** — **New scan** queues a worker: built-in SecuraIQ, **Nmap**, **Nuclei**, or **OWASP ZAP** → evidence → assets/findings. Docker image includes Nmap+Nuclei (+ ZAP by default). Import remains optional for third-party reports.
 - **Mission Control** — security score, KPIs, first-run checklist, morning brief
 - **18 agent modes** — CTF, red/blue/purple, XDR, IR, cloud, AppSec, CISO, awareness, …
 - **Gap analysis** — ISO / NIST / CIS controls + remediations
-- **Vuln import** — CSV / JSON / XML + lab fixtures
+- **Vuln import** — CSV / JSON / XML (optional alongside live scans)
 - **SOC / XDR** — incidents, detections, optional **Wazuh** sync
-- **Inventory** — optional network discovery sync into Assets
+- **Inventory** — scan discovery + optional network sync into Assets
 - **Threat intel** — KEV, NVD, free intel APIs, password exposure check (k-anonymity)
 - **Automation** — background jobs + optional Prefect
 - **RAG** — local knowledge base (Re-index in UI)

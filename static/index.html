@@ -29,7 +29,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/style.css?v=121" />
+  <link rel="stylesheet" href="/style.css?v=127" />
   <script src="/vendor/marked.min.js"></script>
 </head>
 <body>
@@ -250,10 +250,10 @@
               <div>
                 <p class="mc-kicker">Start here</p>
                 <h2>Your workspace is ready</h2>
-                <p class="hint">Run a live scan on an owned target — tools invent assets and findings automatically. No demo data.</p>
+                <p class="hint">Create a scan: Nmap discovers ports/services → evidence → findings. Import is optional for third-party reports.</p>
               </div>
               <div class="mc-first-run-actions">
-                <button type="button" class="btn-primary-cc" id="mcLiveScan" data-action="live-scan">Live scan</button>
+                <button type="button" class="btn-primary-cc" id="mcLiveScan" data-action="new-scan">New scan</button>
                 <button type="button" class="btn-secondary" data-workspace="assets">Add assets</button>
                 <button type="button" class="btn-secondary" data-workspace="vulns">Import (optional)</button>
               </div>
@@ -261,7 +261,7 @@
             <ol class="mc-checklist" id="mcChecklist">
               <li data-step="org"><button type="button" class="mc-check-btn" data-workspace="orgs"><span>1</span> Organization</button></li>
               <li data-step="assets"><button type="button" class="mc-check-btn" data-workspace="assets"><span>2</span> Assets</button></li>
-              <li data-step="scan"><button type="button" class="mc-check-btn" data-action="live-scan"><span>3</span> Live scan</button></li>
+              <li data-step="scan"><button type="button" class="mc-check-btn" data-action="new-scan"><span>3</span> Run scan</button></li>
               <li data-step="gap"><button type="button" class="mc-check-btn" data-module="gap"><span>4</span> Gap analysis</button></li>
               <li data-step="report"><button type="button" class="mc-check-btn" data-workspace="reports"><span>5</span> Reports</button></li>
               <li data-step="integrations"><button type="button" class="mc-check-btn" data-workspace="integrations"><span>6</span> Connect tools</button></li>
@@ -278,7 +278,7 @@
 
           <div class="mc-action-bar" aria-label="Primary actions">
             <div class="mc-workflow-row" aria-label="Quick actions">
-              <button type="button" class="cc-action cc-action-primary" id="mcLiveScanQuick" data-action="live-scan">Live scan</button>
+              <button type="button" class="cc-action cc-action-primary" id="mcLiveScanQuick" data-action="new-scan">New scan</button>
               <button type="button" class="cc-action" data-module="gap">Gap analysis</button>
               <button type="button" class="cc-action" data-workspace="evidence">Evidence</button>
               <button type="button" class="cc-action" data-view="chat" data-mode="ciso" data-prompt="Draft a board update from Mission Control: score, top risks, compliance %, and this week’s remediations">Board update</button>
@@ -475,7 +475,7 @@
               <p class="empty-lead" id="emptyLead">Ask about authorized security work — posture, findings, or remediations.</p>
               <div class="empty-suite" id="emptySuite">
                 <button type="button" class="suite-chip" data-view="command">Control Board</button>
-                <button type="button" class="suite-chip" data-action="live-scan">Live scan</button>
+                <button type="button" class="suite-chip" data-action="new-scan">New scan</button>
                 <button type="button" class="suite-chip" data-module="gap">Gap analysis</button>
               </div>
               <div id="quickPrompts" class="quick-prompts hidden" aria-hidden="true"></div>
@@ -500,9 +500,9 @@
           <div id="aiTab-automation" class="ai-tab-panel hidden page-pad">
             <div class="ai-auto-panel">
               <h2>Automation</h2>
-              <p class="hint">Golden path: Live scan → Triage → Jira → Close. Optional import for third-party exports. Wire webhooks for outbound alerts.</p>
+              <p class="hint">Golden path: New scan → Triage → Jira → Close. Optional import for third-party exports. Wire webhooks for outbound alerts.</p>
               <div class="cc-action-row">
-                <button type="button" class="cc-action" data-action="live-scan">Live scan</button>
+                <button type="button" class="cc-action" data-action="new-scan">New scan</button>
                 <button type="button" class="cc-action" data-workspace="vulns">Import (optional)</button>
                 <button type="button" class="cc-action" data-workspace="integrations">Webhooks</button>
                 <button type="button" class="cc-action" data-workspace="automation">Open Automation</button>
@@ -516,7 +516,7 @@
             <h1>Asset inventory</h1>
             <div class="page-head-actions">
               <button type="button" class="btn-secondary" id="oaSyncBtn">Sync inventory</button>
-              <button type="button" class="btn-secondary" data-action="live-scan">Live scan</button>
+              <button type="button" class="btn-secondary" data-action="new-scan">New scan</button>
               <button type="button" class="btn-primary-cc" id="assetsOpenCreate">Add asset</button>
             </div>
           </div>
@@ -529,7 +529,7 @@
         <section id="viewVulns" class="workspace-view hidden" data-module-page data-view-panel="vulns">
           <div class="page-head"><h1>Vulnerability management</h1>
               <div class="page-head-actions">
-              <button type="button" class="btn-primary-cc" id="vulnsOpenLiveScan" data-action="live-scan">Live scan</button>
+              <button type="button" class="btn-primary-cc" id="vulnsOpenLiveScan" data-action="new-scan">New scan</button>
               <button type="button" class="btn-secondary" id="vulnsOpenImport">Import</button>
               <button type="button" class="btn-secondary" id="vulnsOpenCodeScan">Code scan</button>
               <button type="button" class="btn-secondary" id="sonarSyncBtn">Sync engine</button>
@@ -610,8 +610,13 @@
           <div id="campaignsPageBody"></div>
         </section>
         <section id="viewIntel" class="workspace-view hidden" data-module-page data-view-panel="intel">
-          <div class="page-head"><h1>Threat intelligence</h1></div>
-          <div id="intelPageBody"></div>
+          <div class="page-head">
+            <div>
+              <h1>Threat intelligence</h1>
+              <p class="page-intro hint" style="margin:0.35rem 0 0">Lookup IOCs, sync KEV, exchange STIX/TAXII — authorized research only.</p>
+            </div>
+          </div>
+          <div id="intelPageBody" class="intel-page"></div>
         </section>
         <section id="viewReports" class="workspace-view hidden" data-module-page data-view-panel="reports">
           <div class="page-head"><h1>Reports</h1></div>
@@ -726,8 +731,8 @@
 
           <div id="toolsPalette" class="tools-palette hidden" aria-label="Cyber tools palette">
             <div class="tools-palette-head">
-              <strong>Live scan</strong>
-              <span class="hint" id="toolsPaletteHint">SecuraIQ tools + third-party · set target · Auth · Run</span>
+              <strong>Tools hub</strong>
+              <span class="hint" id="toolsPaletteHint">Scan engine · PT pack · PATH tools · SIEM / inventory sync</span>
               <button type="button" class="btn-ghost" id="toolsPaletteClose" aria-label="Close tools">Close</button>
             </div>
             <div class="live-scan-bar" id="liveScanBar">
@@ -739,12 +744,33 @@
                 <input type="checkbox" id="scanAuthorized" checked />
                 <span>Auth</span>
               </label>
-              <button type="button" class="btn-primary-cc" id="toolsPaletteRun">Run scan</button>
+              <select id="toolsEngineScanner" class="tools-engine-select" title="Scan engine">
+                <option value="securaiq">Engine: SecuraIQ</option>
+                <option value="all">Engine: all available</option>
+                <option value="nmap">Engine: Nmap</option>
+                <option value="nuclei">Engine: Nuclei</option>
+                <option value="zap">Engine: ZAP</option>
+                <option value="none">Engine: off (tools only)</option>
+              </select>
+              <select id="toolsEngineProfile" class="tools-engine-select" title="Scan profile">
+                <option value="discovery">Discovery</option>
+                <option value="web">Web</option>
+                <option value="vulnerability">Vulnerability</option>
+                <option value="full">Full</option>
+              </select>
+            </div>
+            <div class="tools-hub-actions" id="toolsHubActions">
+              <button type="button" class="btn-secondary" id="toolsPalettePtPack">PT pack</button>
+              <button type="button" class="btn-secondary" id="toolsPaletteEngineRun">Queue engine scan</button>
+              <button type="button" class="btn-secondary" id="toolsPaletteSyncSiem">Sync SIEM</button>
+              <button type="button" class="btn-secondary" id="toolsPaletteSyncInv">Sync inventory</button>
+              <button type="button" class="btn-primary-cc" id="toolsPaletteRun">Run all</button>
             </div>
             <div id="toolsPaletteGrid" class="tools-palette-grid"></div>
             <div class="tools-palette-actions">
               <button type="button" class="btn-secondary" id="toolsPaletteClear">Clear tools</button>
               <button type="button" class="btn-secondary" id="toolsPaletteUseChat">Use in chat</button>
+              <button type="button" class="btn-secondary" id="toolsPaletteNewScan">New scan modal</button>
             </div>
             <pre id="toolsPaletteOut" class="tools-palette-out hidden"></pre>
           </div>
@@ -940,7 +966,7 @@
 
         <fieldset>
           <legend>Threat intel API keys (optional)</legend>
-          <p class="hint">From <a href="https://free-apis.github.io/#/categories/Security" target="_blank" rel="noopener">Free APIs — Security</a>. Live without keys: GreyNoise, OTX, URLScan search, MSRC, FilterLists, NVD, CISA KEV.</p>
+          <p class="hint">Optional keys unlock richer IOC lookups. Live without keys: GreyNoise, OTX, URLScan search, MSRC, FilterLists, NVD, CISA KEV, PhishStats.</p>
           <label>AbuseIPDB
             <input type="password" id="setAbuseipdbKey" autocomplete="off" placeholder="leave blank to keep" />
           </label>
@@ -1686,7 +1712,7 @@
         <h2 id="vulnHeading">Vulnerability management</h2>
         <button type="button" class="btn-secondary" data-close-vuln>Close</button>
       </div>
-      <p class="hint">Prefer Live scan (Tools) on owned targets. Import is optional for CSV / JSON / XML from external scanners.</p>
+      <p class="hint">Prefer <strong>New scan</strong> (queued engine) on owned targets. Import is optional for CSV / JSON / XML from external scanners. Advanced PATH tools remain under Tools.</p>
       <div class="settings-row">
         <button type="button" id="vulnImportBtn" class="btn-sidebar">Import file</button>
         <button type="button" id="vulnExportBtn" class="btn-secondary">Export Markdown</button>
@@ -1703,7 +1729,7 @@
         <h2 id="assetHeading">Asset inventory</h2>
         <button type="button" class="btn-secondary" data-close-asset>Close</button>
       </div>
-      <p class="hint">Live scans auto-register targets here. You can also add servers, apps, and cloud accounts manually.</p>
+      <p class="hint">New scans auto-register targets here. You can also add servers, apps, and cloud accounts manually.</p>
       <form id="assetForm" class="settings-form">
         <label>Name
           <input type="text" id="assetName" required placeholder="Finance file server" />
@@ -1850,7 +1876,54 @@
     </div>
   </div>
 
-  <script src="/app.js?v=126"></script>
-  <script src="/workspace.js?v=125"></script>
+  <div id="newScanModal" class="modal hidden" role="dialog" aria-labelledby="newScanTitle" aria-modal="true">
+    <div class="modal-card scan-modal-card">
+      <div class="modal-head">
+        <h2 id="newScanTitle">New scan</h2>
+        <button type="button" class="btn-ghost" id="newScanClose" aria-label="Close">Close</button>
+      </div>
+      <p class="hint">Scanner engine runs in a background worker. AI does not perform the scan — it interprets evidence afterward.</p>
+      <form id="newScanForm" class="scan-form">
+        <label>Target
+          <input type="text" id="newScanTarget" required placeholder="example.com or 192.168.56.101" autocomplete="off" spellcheck="false" />
+        </label>
+        <fieldset class="scan-profile-set">
+          <legend>Scan profile</legend>
+          <label class="chip-toggle"><input type="radio" name="scanProfile" value="discovery" checked /> <span>Discovery</span></label>
+          <label class="chip-toggle"><input type="radio" name="scanProfile" value="web" /> <span>Web</span></label>
+          <label class="chip-toggle"><input type="radio" name="scanProfile" value="vulnerability" /> <span>Vulnerability</span></label>
+          <label class="chip-toggle"><input type="radio" name="scanProfile" value="full" /> <span>Full</span></label>
+        </fieldset>
+        <label>Scanner
+          <select id="newScanScanner">
+            <option value="securaiq">SecuraIQ Scanner (built-in)</option>
+            <option value="all">All available scanners</option>
+            <option value="nmap">Nmap (if installed)</option>
+            <option value="nuclei">Nuclei (if installed)</option>
+            <option value="zap">OWASP ZAP (if installed)</option>
+          </select>
+        </label>
+        <label>Scope (optional — one host/CIDR per line; defaults to engagement scope)
+          <textarea id="newScanScope" rows="3" placeholder="example.com&#10;*.example.com&#10;10.0.0.0/24"></textarea>
+        </label>
+        <label class="chip-toggle scan-auth-row">
+          <input type="checkbox" id="newScanAuthorized" />
+          <span>I own / am authorized to test this target</span>
+        </label>
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" id="newScanAdvanced">Advanced tools…</button>
+          <button type="submit" class="btn-primary-cc" id="newScanStart">Start scan</button>
+        </div>
+      </form>
+      <div id="newScanProgress" class="scan-progress hidden" aria-live="polite">
+        <p><strong id="newScanStatusLabel">Queued</strong> · <code id="newScanIdLabel"></code></p>
+        <ul id="newScanSteps" class="scan-steps"></ul>
+        <p class="hint" id="newScanSummary"></p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=138"></script>
+  <script src="/workspace.js?v=134"></script>
 </body>
 </html>

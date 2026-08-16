@@ -65,12 +65,14 @@ def ensure_asset_for_target(
     notes: str = "",
     asset_type: str = "server",
     criticality: str = "medium",
+    engagement_id: str | None = None,
+    org_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Upsert an inventory asset from a live scan target (IP/hostname/path)."""
     name = (name or "").strip()[:200]
     if not name or name.lower() in {"unknown", "none", "null"}:
         return None
-    for a in list_assets(user_id):
+    for a in list_assets(user_id, engagement_id, org_id=org_id):
         if (a.get("name") or "").strip().lower() == name.lower():
             return a
     # Heuristic type from target shape
@@ -86,6 +88,8 @@ def ensure_asset_for_target(
         criticality=criticality,
         owner="SecOps",
         notes=(notes or "Discovered via live SecuraIQ scan")[:2000],
+        engagement_id=engagement_id,
+        org_id=org_id,
     )
 
 
@@ -1614,6 +1618,7 @@ def reset_workspace(user_id: str, *, clear_rag: bool = False) -> dict[str, Any]:
         "assets",
         "risks",
         "vulnerabilities",
+        "scans",
         "playbooks",
         "campaigns",
         "incidents",

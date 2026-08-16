@@ -4,11 +4,11 @@ import asyncio
 import base64
 import json
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from contextlib import asynccontextmanager
 
-from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -41,13 +41,14 @@ from app.prompts import (
     TOOLS_BEHAVIOR_PROMPT,
     XDR_MODE_PROMPT,
 )
-from app.auth import resolve_user
+from app.auth import AuthUser, resolve_user
 from app.backends import hermes_reachable, openai_compat_reachable
-from app.commercial_api import bootstrap_auth, router as commercial_router
+from app.commercial_api import bootstrap_auth, require_user, router as commercial_router
 from app.integrations_api import router as integrations_router
 from app.gap_api import router as gap_router
 from app.enterprise_api import router as enterprise_router
 from app.ops_api import router as ops_router
+from app.scans_api import router as scans_router
 from app.commercial_ext_api import router as commercial_ext_router
 from app.platform_api import router as platform_router
 from app.billing_api import router as billing_router
@@ -124,10 +125,14 @@ async def lifespan(app: FastAPI):
         from app.wazuh import ensure_schema as ensure_wazuh_schema
 
         ensure_wazuh_schema()
+        from app.scan_engine.models import ensure_scans_schema
+        import app.scan_engine.jobs  # noqa: F401 — register scan_execute handler
+
+        ensure_scans_schema()
     except Exception as exc:
         print(f"DB/auth bootstrap: {exc}")
         # Hard-fail unsafe production auth misconfig
-        if "AUTH_ENABLED" in str(exc) or "DEPLOYMENT_MODE" in str(exc) or "HOST=" in str(exc):
+        if "AUTH_ENABLED" in str(exc) or "DEPLOYMENT_MODE" in str(exc) or "HOST=" in str(exc) or "DATABASE_URL" in str(exc):
             raise
     try:
         from app.enterprise import apply_workspace_zero_start
@@ -230,14 +235,29 @@ async def security_headers(request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    response.headers.setdefault("X-XSS-Protection", "0")
+    prod = (settings.deployment_mode or "lab").lower() in {
+        "production",
+        "prod",
+        "commercial",
+        "saas",
+        "cloud",
+    }
+    if prod or getattr(settings, "force_https_headers", False) or getattr(settings, "cookie_secure", False):
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        )
     # When bound to all interfaces (LAN / Docker), relax connect-src so phones
     # and other PCs on Wi‑Fi can use SSE + fetch against this host. CSP does not
     # support CIDR wildcards reliably — use scheme allowlists for lab LAN only.
     lan_bind = (settings.host or "").strip() in {"0.0.0.0", "::", "[::]"}
     connect_src = (
         "'self' http: https: ws: wss:"
-        if lan_bind
-        else "'self' http://127.0.0.1:* http://localhost:*"
+        if lan_bind and not prod
+        else "'self' http://127.0.0.1:* http://localhost:* https:"
     )
     response.headers.setdefault(
         "Content-Security-Policy",
@@ -257,6 +277,7 @@ app.include_router(integrations_router)
 app.include_router(gap_router)
 app.include_router(enterprise_router)
 app.include_router(ops_router)
+app.include_router(scans_router)
 app.include_router(commercial_ext_router)
 app.include_router(platform_router)
 app.include_router(billing_router)
@@ -860,6 +881,16 @@ async def health():
     return payload
 
 
+@app.get("/api/admin/health")
+async def admin_health_board(user: Annotated[AuthUser, Depends(require_user)]):
+    """SecuraIQ Admin Health — green/yellow/red per subsystem."""
+    if settings.auth_enabled and user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required for /api/admin/health")
+    from app.admin_health import collect_admin_health
+
+    return collect_admin_health()
+
+
 class RouterPlanRequest(BaseModel):
     message: str = Field(default="general security question", max_length=8000)
     mode: str = "default"
@@ -1001,8 +1032,15 @@ class ToolsRunRequest(BaseModel):
     message: str = ""
     tools: list[str] | None = None
     authorized_target: bool = False
+    # Accept UI/legacy alias so Auth checkbox always maps correctly
+    authorized: bool | None = None
     auto: bool = False
     engagement_id: str | None = Field(default=None, max_length=64)
+
+    def resolved_authorized(self) -> bool:
+        if self.authorized_target:
+            return True
+        return bool(self.authorized)
 
 
 @app.post("/api/tools/run")
@@ -1019,8 +1057,8 @@ async def api_tools_run(req: ToolsRunRequest, request: Request):
         req.message or (f"run tools on {req.target}" if req.target else ""),
         target=req.target,
         tools=req.tools,
-        authorized=req.authorized_target,
-        allow_public=req.authorized_target,
+        authorized=req.resolved_authorized(),
+        allow_public=req.resolved_authorized(),
         auto=req.auto and not req.tools,
         include_heavy=settings.local_tools_allow_heavy or bool(req.tools),
         user_id=uid,
@@ -1048,8 +1086,8 @@ async def api_tools_run_stream(req: ToolsRunRequest, request: Request):
             message,
             target=req.target,
             tools=req.tools,
-            authorized=req.authorized_target,
-            allow_public=req.authorized_target,
+            authorized=req.resolved_authorized(),
+            allow_public=req.resolved_authorized(),
             auto=req.auto and not req.tools,
             include_heavy=settings.local_tools_allow_heavy or bool(req.tools),
             user_id=uid,
@@ -1076,6 +1114,7 @@ class JobEnqueueRequest(BaseModel):
         "thehive_sync",
         "cloud_posture_sync",
         "sonarqube_sync",
+        "scan_execute",
     ]
     payload: dict[str, Any] = Field(default_factory=dict)
     engine: Literal["auto", "local", "prefect"] = "auto"

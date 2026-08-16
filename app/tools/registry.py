@@ -127,6 +127,16 @@ TOOL_CATALOG: dict[str, ToolSpec] = {
         origin="securaiq",
         provider="SecuraIQ",
     ),
+    "securaiq": ToolSpec(
+        "securaiq", "SecuraIQ Scan Engine", "builtin",
+        "Primary built-in scan engine (no install): discovery → ports → services → "
+        "normalized findings → evidence + report. Queued as job kind scan_execute "
+        "(Prefect when PREFECT_ENABLED, else local worker). Authorized / owned targets only.",
+        category="vuln",
+        origin="securaiq",
+        provider="SecuraIQ",
+        heavy=True,
+    ),
     "openvas": ToolSpec(
         "openvas", "SecuraIQ Network Scanner", "builtin",
         "Install-free network vulnerability assessment (OpenVAS-class checks): "
@@ -225,11 +235,13 @@ TOOL_CATALOG: dict[str, ToolSpec] = {
     # --- Third-party PATH binaries ---
     "nmap": ToolSpec(
         "nmap", "Nmap", "external",
-        "Service/version scan (top ports)",
+        "Nmap via SecuraIQ scan engine (job scan_execute / Prefect when enabled); "
+        "falls back to PATH nmap or builtin port probe if the binary is missing.",
         binaries=("nmap",),
         category="recon",
         origin="third_party",
         provider="Nmap",
+        heavy=True,
     ),
     "nikto": ToolSpec(
         "nikto", "Nikto", "external",
@@ -242,7 +254,8 @@ TOOL_CATALOG: dict[str, ToolSpec] = {
     ),
     "nuclei": ToolSpec(
         "nuclei", "Nuclei", "external",
-        "Template-based vuln scan (severity capped)",
+        "Nuclei via SecuraIQ scan engine (job scan_execute / Prefect when enabled); "
+        "falls back to PATH nuclei or builtin netvuln_scan if missing.",
         binaries=("nuclei",),
         heavy=True,
         category="vuln",
@@ -251,7 +264,8 @@ TOOL_CATALOG: dict[str, ToolSpec] = {
     ),
     "zap": ToolSpec(
         "zap", "OWASP ZAP", "external",
-        "Baseline web scan (open-source Burp/Acunetix-class coverage)",
+        "ZAP via SecuraIQ scan engine (job scan_execute / Prefect when enabled); "
+        "falls back to PATH zap or builtin headers_security if missing.",
         binaries=("zap.sh", "zap", "zaproxy"),
         heavy=True,
         category="web",
@@ -408,6 +422,46 @@ ORIGIN_LABELS = {
     "third_party": "Third-party tools & APIs",
 }
 
+# When PATH binary missing, run this builtin so PT workflows still produce real results.
+EXTERNAL_FALLBACKS: dict[str, str] = {
+    "nmap": "ports",
+    "masscan": "ports",
+    "rustscan": "ports",
+    "nikto": "headers_security",
+    "nuclei": "netvuln_scan",
+    "zap": "headers_security",
+    "whatweb": "tech",
+    "dig": "dns",
+    "sslscan": "tls",
+    "sslyze": "tls",
+    "gobuster": "robots",
+    "ffuf": "robots",
+    "wafw00f": "headers_security",
+    "sqlmap": "http",
+    "wpscan": "http",
+    "openssl": "tls",
+}
+
+# Always-on PT pack — SecuraIQ engine + builtins (nmap/nuclei/zap use engine or fallback)
+PT_PACK_TOOLS: tuple[str, ...] = (
+    "securaiq",
+    "ports",
+    "http",
+    "tls",
+    "dns",
+    "headers_security",
+    "hardening_baseline",
+    "openvas",
+)
+
+# Tools that queue the scan engine (scan_execute → Prefect when ready)
+ENGINE_TOOLS: dict[str, str] = {
+    "securaiq": "securaiq",
+    "nmap": "nmap",
+    "nuclei": "nuclei",
+    "zap": "zap",
+}
+
 
 def resolve_binary(spec: ToolSpec) -> str | None:
     if spec.kind == "builtin":
@@ -475,6 +529,8 @@ def list_tools_status() -> dict:
                 "needs_target": spec.needs_target,
                 "category": spec.category,
                 "binary": resolve_binary(spec) if spec.kind == "external" else "builtin",
+                "fallback": EXTERNAL_FALLBACKS.get(tid) if not avail and tid in EXTERNAL_FALLBACKS else None,
+                "engine": ENGINE_TOOLS.get(tid),
             }
         )
     payload = {
@@ -496,6 +552,8 @@ def list_tools_status() -> dict:
         ],
         "auto_light": list(AUTO_LIGHT_TOOLS),
         "auto_awareness": list(AWARENESS_AUTO_TOOLS),
+        "pt_pack": list(PT_PACK_TOOLS),
+        "engine_tools": dict(ENGINE_TOOLS),
     }
     list_tools_status._cache = {"ts": now, "payload": payload}
     return payload

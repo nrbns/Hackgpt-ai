@@ -198,7 +198,8 @@ async def sync(user_id: str = "local") -> dict[str, Any]:
     try:
         from app.realtime_bus import publish
 
-        publish(type="inventory", source="openaudit", **{k: out[k] for k in ("devices_new", "devices_total")})
+        publish(type="inventory", source="openaudit", devices_new=new_count, devices_total=len(devices), assets_linked=linked)
+        publish(type="asset", source="inventory", count=linked)
     except Exception:
         pass
     return out

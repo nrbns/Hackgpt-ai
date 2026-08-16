@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, Response, UploadFile
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app.auth import (
@@ -22,6 +22,7 @@ from app.auth import (
     reset_password_with_token,
     resolve_user,
     revoke_api_key,
+    session_cookie_kwargs,
 )
 from app.config import settings
 from app.db import get_conn, now as db_now
@@ -124,12 +125,26 @@ class ApiKeyCreate(BaseModel):
     name: str = "default"
 
 
+def _attach_session_cookie(response: Response, token: str) -> None:
+    kw = session_cookie_kwargs()
+    name = kw.pop("key")
+    response.set_cookie(name, token, **kw)
+
+
+def _clear_session_cookie(response: Response) -> None:
+    name = session_cookie_kwargs()["key"]
+    response.delete_cookie(name, path="/")
+
+
 def current_user(
+    request: Request,
     authorization: Annotated[str | None, Header()] = None,
     x_securaiq_key: Annotated[str | None, Header(alias="X-SecuraIQ-Key")] = None,
     x_hackgpt_key: Annotated[str | None, Header(alias="X-HackGPT-Key")] = None,
 ) -> AuthUser | None:
-    return resolve_user(authorization, x_securaiq_key or x_hackgpt_key)
+    cookie_name = getattr(settings, "session_cookie_name", "securaiq_session") or "securaiq_session"
+    cookie_val = request.cookies.get(cookie_name)
+    return resolve_user(authorization, x_securaiq_key or x_hackgpt_key, cookie_val)
 
 
 _MFA_ENFORCEMENT_EXEMPT_PATHS = {
@@ -214,7 +229,10 @@ async def auth_register(req: RegisterRequest):
         if isinstance(result, dict):
             return {"user": {"id": u.id, "username": u.username, "role": u.role}, **result}
         user, token = result
-        return {"user": {"id": user.id, "username": user.username, "role": user.role}, "token": token}
+        body = {"user": {"id": user.id, "username": user.username, "role": user.role}, "token": token}
+        resp = JSONResponse(body)
+        _attach_session_cookie(resp, token)
+        return resp
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -228,7 +246,10 @@ async def auth_login(req: LoginRequest):
         if isinstance(result, dict):
             return result
         user, token = result
-        return {"user": {"id": user.id, "username": user.username, "role": user.role}, "token": token}
+        body = {"user": {"id": user.id, "username": user.username, "role": user.role}, "token": token}
+        resp = JSONResponse(body)
+        _attach_session_cookie(resp, token)
+        return resp
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
@@ -257,7 +278,10 @@ async def auth_mfa_verify(req: MfaVerifyRequest):
         raise HTTPException(status_code=400, detail="Auth disabled")
     try:
         user, token = complete_mfa_login(req.mfa_token, req.totp)
-        return {"user": {"id": user.id, "username": user.username, "role": user.role}, "token": token}
+        body = {"user": {"id": user.id, "username": user.username, "role": user.role}, "token": token}
+        resp = JSONResponse(body)
+        _attach_session_cookie(resp, token)
+        return resp
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
@@ -340,12 +364,20 @@ window.location.href = '/';
 
 
 @router.post("/auth/logout")
-async def auth_logout(authorization: Annotated[str | None, Header()] = None):
+async def auth_logout(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+):
     token = None
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization[7:].strip()
+    if not token:
+        cookie_name = getattr(settings, "session_cookie_name", "securaiq_session") or "securaiq_session"
+        token = request.cookies.get(cookie_name)
     logout(token)
-    return {"ok": True}
+    resp = JSONResponse({"ok": True})
+    _clear_session_cookie(resp)
+    return resp
 
 
 @router.post("/auth/api-keys")

@@ -1,0 +1,23 @@
+# Docker Compose Caddy — TLS termination for securaiq-saas on the internal network.
+# Replace securaiq.yourdomain.com before going live. DNS must point at this host.
+
+{$SECURAIQ_DOMAIN:securaiq.yourdomain.com} {
+	reverse_proxy securaiq-saas:8080
+
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+
+	@sse path /api/chat /api/realtime /api/tools/run/stream
+	handle @sse {
+		reverse_proxy securaiq-saas:8080 {
+			flush_interval -1
+		}
+	}
+}

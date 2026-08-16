@@ -1,10 +1,7 @@
-"""Free public Security APIs (from Free APIs / public-apis Security + Anti-Malware).
-
-Source: https://free-apis.github.io/#/categories/Security
-Derived catalog: https://github.com/public-apis/public-apis
+"""Built-in threat-intel provider catalog (Security + Anti-Malware).
 
 Integration model:
-  - catalog: every listed API is registered with docs link + auth needs
+  - catalog: registered provider with docs/auth metadata
   - live: no-auth / community endpoints SecuraIQ can call today
   - keyed: optional API keys in Settings / .env unlock richer lookups
   - skipped: client-only JS, privacy/fraud-banking, or unsafe cracking APIs
@@ -24,7 +21,7 @@ from app.intel_feeds import _cache_get, _cache_put, lookup_nvd_cve
 
 UA = {"User-Agent": "SecuraIQ/1.0 (+authorized-labs; https://github.com/nrbns/Hackgpt-ai)"}
 
-# Full Free APIs Security + Anti-Malware catalog (auth/status for SecuraIQ).
+# Built-in Security + Anti-Malware provider catalog (auth/status for SecuraIQ).
 FREE_SECURITY_CATALOG: list[dict[str, Any]] = [
     # --- Security ---
     {"id": "aev", "name": "Application Environment Verification", "auth": "apiKey", "docs": "https://github.com/fingerprintjs/aev", "status": "catalog", "notes": "Client Android library"},
@@ -121,11 +118,20 @@ def catalog_summary() -> dict[str, Any]:
                 row["status"] = "live"
         items.append(row)
     return {
-        "source": "https://free-apis.github.io/#/categories/Security",
         "total": len(items),
         "counts": counts,
         "keys_configured": keyed_ready,
         "items": items,
+        "live_without_keys": [
+            "greynoise",
+            "otx",
+            "urlscan",
+            "msrc",
+            "filterlists",
+            "nvd",
+            "cisa_kev",
+            "phishstats",
+        ],
     }
 
 
@@ -520,5 +526,4 @@ async def unified_lookup(query: str) -> dict[str, Any]:
         "providers_failed": len(errors),
         "results": results,
         "errors": errors,
-        "catalog": "https://free-apis.github.io/#/categories/Security",
     }

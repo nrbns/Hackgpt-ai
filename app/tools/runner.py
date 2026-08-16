@@ -19,6 +19,9 @@ from app.net_assess import extract_targets, resolve_and_authorize
 from app.tools.registry import (
     AUTO_LIGHT_TOOLS,
     AWARENESS_AUTO_TOOLS,
+    ENGINE_TOOLS,
+    EXTERNAL_FALLBACKS,
+    PT_PACK_TOOLS,
     TOOL_CATALOG,
     is_available,
     resolve_binary,
@@ -36,7 +39,7 @@ _TOOL_WORD_RE = re.compile(
     r"\b(nmap|nikto|nuclei|whatweb|gobuster|ffuf|sslscan|sslyze|dig|whois|curl|"
     r"traceroute|tracert|ping|openssl|wafw00f|ports?|dns|tls|http|robots|tech|"
     r"cve_lookup|headers?(?:\s+security)?|zap|zaproxy|sqlmap|wpscan|masscan|"
-    r"rustscan|openvas|greenbone|gvm|securaiq_code|sonarqube|sonar|burp|acunetix|email_auth|phishing_url|suite_guide|"
+    r"rustscan|openvas|greenbone|gvm|securaiq(?:_scan|_code|_engine)?|sonarqube|sonar|burp|acunetix|email_auth|phishing_url|suite_guide|"
     r"spf|dmarc|dkim|phish(?:ing)?|awareness|hardening(?:_baseline)?|patch(?:es|ing|"
     r"\s+compliance)?|xdr|edr|defender(?:_hunt)?|advanced\s*hunting|kql|semgrep|codeql|code_scan)\b",
     re.IGNORECASE,
@@ -108,6 +111,9 @@ def parse_tool_request(
             "openvas": "openvas",
             "network_scanner": "openvas",
             "securaiq_network": "openvas",
+            "securaiq": "securaiq",
+            "securaiq_scan": "securaiq",
+            "securaiq_engine": "securaiq",
             "sonarqube": "securaiq_code",
             "sonar": "securaiq_code",
             "sonarcloud": "securaiq_code",
@@ -658,100 +664,14 @@ Always: written scope, rate limits, detection notes, remediation owners.
     return {"ok": True, "output": text}
 
 
-_RISKY_PORTS: dict[int, str] = {
-    21: "FTP (unencrypted; prefer SFTP/FTPS or disable)",
-    23: "Telnet (unencrypted remote shell; disable, use SSH)",
-    135: "MSRPC (Windows RPC; should not face untrusted networks)",
-    139: "NetBIOS (should not face untrusted networks)",
-    445: "SMB (frequent ransomware/lateral-movement vector when exposed)",
-    3389: "RDP (brute-force/ransomware target; put behind VPN + MFA)",
-    5900: "VNC (often weak/no auth; put behind VPN)",
-    6379: "Redis (frequently unauthenticated by default)",
-    9200: "Elasticsearch (frequently unauthenticated by default)",
-    27017: "MongoDB (frequently unauthenticated by default)",
-    3306: "MySQL (should not face untrusted networks)",
-    5432: "PostgreSQL (should not face untrusted networks)",
-}
-
-_HIGH_RISK_PORTS = frozenset({445, 3389, 23, 21})
-
-
-def _host_token(target: str) -> str:
-    """First host-like token from asset/target labels like '127.0.0.1 (localhost)'."""
-    raw = (target or "").strip().lower()
-    if not raw:
-        return ""
-    token = raw.split()[0].strip("()[],")
-    if token.endswith(":") and token.count(":") == 1:
-        token = token[:-1]
-    return token
-
-
-def _target_network_scope(target: str, ip: str | None = None) -> str:
-    """Classify exposure: loopback | private | public | unknown."""
-    import ipaddress
-
-    for candidate in (_host_token(ip or ""), _host_token(target)):
-        if not candidate:
-            continue
-        if candidate in {"localhost", "::1"} or candidate.startswith("127."):
-            return "loopback"
-        try:
-            obj = ipaddress.ip_address(candidate)
-        except ValueError:
-            continue
-        if obj.is_loopback:
-            return "loopback"
-        if obj.is_private or obj.is_link_local:
-            return "private"
-        if obj.is_global:
-            return "public"
-    host = _host_token(target)
-    if host in {"localhost"} or host.endswith(".local") or host.endswith(".lan"):
-        return "private"
-    return "unknown"
-
-
-def _risky_port_finding(port: int, *, target: str, source: str, ip: str | None = None) -> dict[str, Any]:
-    """Build a port finding with severity that matches real exposure (not loopback=RCE)."""
-    note = _RISKY_PORTS.get(port, "Potentially sensitive service")
-    scope = _target_network_scope(target, ip)
-    if scope == "loopback":
-        title = f"Local listener on port {port}/tcp (loopback only)"
-        severity = "info"
-        guidance = (
-            f"Port {port}/tcp is open on loopback ({target}). This is not remotely reachable "
-            f"from other hosts or the internet. Treat as local hardening: confirm the service "
-            f"is needed, bind only to 127.0.0.1 if required, or disable it. Note: {note}"
-        )
-    elif scope == "private":
-        title = f"LAN-reachable service on port {port}/tcp"
-        severity = "medium" if port in _HIGH_RISK_PORTS else "low"
-        guidance = (
-            f"Port {port}/tcp is open on a private/lab host ({target}). Risk is lateral movement "
-            f"inside the network, not direct internet exposure unless NAT/port-forward exists. "
-            f"Restrict with host firewall / VLAN segmentation. Note: {note}"
-        )
-    else:
-        title = f"Exposed risky service on port {port}/tcp"
-        severity = "high" if port in _HIGH_RISK_PORTS else "medium"
-        guidance = (
-            f"Port {port}/tcp appears reachable on {target}. Confirm it is not internet-facing; "
-            f"if it is, disable, put behind VPN, or harden immediately. Note: {note}"
-        )
-    return {
-        "title": title,
-        "severity": severity,
-        "asset_name": str(target)[:200],
-        "source": source,
-        "raw": {
-            "port": port,
-            "note": note,
-            "scope": scope,
-            "guidance": guidance,
-            "ip": ip,
-        },
-    }
+from app.exposure import (
+    HIGH_RISK_PORTS as _HIGH_RISK_PORTS,
+    RISKY_PORT_NOTES as _RISKY_PORTS,
+    extract_port as _extract_port,
+    network_scope as _target_network_scope,
+    port_dedupe_key,
+    risky_port_finding as _risky_port_finding,
+)
 
 _HEADER_CHECKS = (
     "strict-transport-security",
@@ -839,10 +759,17 @@ async def _tool_hardening_baseline(host: str, ip: str, open_ports: list[int] | N
         passed += 1
         findings.append("[PASS] No high-risk services in the scanned port set")
     else:
+        from app.exposure import WINDOWS_LAN_PORTS
+
         for p in exposed_risky:
             if scope == "loopback":
                 findings.append(
                     f"[FAIL] Local listener port {p}/tcp (loopback — not network-exposed) — {_RISKY_PORTS[p]}"
+                )
+            elif scope == "private" and p in WINDOWS_LAN_PORTS:
+                # Do not fail the hardening score for expected Windows LAN listeners
+                findings.append(
+                    f"[INFO] Windows LAN service on port {p}/tcp (private/lab) — {_RISKY_PORTS[p]}"
                 )
             elif scope == "private":
                 findings.append(
@@ -850,6 +777,8 @@ async def _tool_hardening_baseline(host: str, ip: str, open_ports: list[int] | N
                 )
             else:
                 findings.append(f"[FAIL] Exposed risky port {p}/tcp — {_RISKY_PORTS[p]}")
+        if scope == "private" and all(p in WINDOWS_LAN_PORTS for p in exposed_risky):
+            passed += 1  # only lab-common Windows ports → control passes with INFO notes
 
     # 5) Patch compliance — pulled from whatever XDR/EDR vendors are connected
     try:
@@ -965,11 +894,17 @@ async def _tool_netvuln_scan(host: str, ip: str, open_ports: list[int] | None) -
 
     # 5) Risky exposed services (same table hardening_baseline uses)
     scope = _target_network_scope(host, ip)
+    from app.exposure import WINDOWS_LAN_PORTS
+
     for p in ports:
         if p in _RISKY_PORTS:
             if scope == "loopback":
                 findings.append(
                     f"[FAIL] Local listener on port {p}/tcp (loopback — not network-exposed) — {_RISKY_PORTS[p]}"
+                )
+            elif scope == "private" and p in WINDOWS_LAN_PORTS:
+                findings.append(
+                    f"[INFO] Windows LAN service on port {p}/tcp (private/lab) — {_RISKY_PORTS[p]}"
                 )
             elif scope == "private":
                 findings.append(
@@ -1005,6 +940,117 @@ async def _tool_openvas(host: str, ip: str, open_ports: list[int] | None) -> dic
     result["scanner"] = "securaiq_network"
     return result
 
+
+async def _tool_engine_scan(
+    scanner_id: str,
+    target: str,
+    *,
+    authorized: bool,
+    user_id: str,
+    engagement_id: str | None = None,
+    profile: str = "discovery",
+    wait_sec: float = 180.0,
+) -> dict[str, Any]:
+    """Queue scan_execute (Prefect when enabled) and wait for a short window."""
+    from app.jobs import get_job
+    from app.scan_engine.executor import enqueue_scan_job
+    from app.scan_engine.models import create_scan, get_scan
+    from app.scanners.registry import get_scanner
+
+    scanner_id = (scanner_id or "securaiq").lower().strip()
+    target = (target or "").strip()
+    if not target:
+        return {"ok": False, "error": "target required", "output": ""}
+    if not authorized:
+        return {
+            "ok": False,
+            "error": "Auth required",
+            "output": "Check Auth — only scan systems you own or are authorized to assess.",
+        }
+
+    try:
+        scanner = get_scanner(scanner_id)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "output": ""}
+
+    avail, avail_detail = scanner.available()
+    if not avail:
+        return {
+            "ok": False,
+            "error": "scanner_unavailable",
+            "output": avail_detail or f"{scanner_id} not available",
+            "scanner_unavailable": True,
+        }
+
+    scan = create_scan(
+        user_id=user_id or "local",
+        target=target,
+        scanner=scanner_id,
+        profile=profile or "discovery",
+        engagement_id=engagement_id,
+        authorized=True,
+    )
+    scan_id = scan["id"]
+    job = enqueue_scan_job(scan_id)
+    job_id = (job or {}).get("id")
+    engine = ((job or {}).get("payload") or {}).get("_engine") or "local"
+
+    deadline = asyncio.get_running_loop().time() + max(30.0, wait_sec)
+    final = get_scan(scan_id) or scan
+    while asyncio.get_running_loop().time() < deadline:
+        final = get_scan(scan_id) or final
+        status = (final.get("status") or "").lower()
+        if status in {"completed", "failed", "blocked"}:
+            break
+        if job_id:
+            j = get_job(job_id)
+            if j and (j.get("status") or "").lower() in {"completed", "failed"}:
+                final = get_scan(scan_id) or final
+                if (final.get("status") or "").lower() in {"completed", "failed", "blocked"}:
+                    break
+        await asyncio.sleep(0.75)
+
+    status = (final.get("status") or "unknown").lower()
+    summary = final.get("summary") or {}
+    if isinstance(summary, str):
+        try:
+            summary = json.loads(summary)
+        except Exception:
+            summary = {}
+    findings_n = summary.get("findings_count") or summary.get("vulns") or 0
+    services_n = summary.get("services_count") or summary.get("services") or 0
+    err = final.get("error") or ""
+    report_md = f"/api/scans/{scan_id}/report"
+    report_pdf = f"/api/scans/{scan_id}/report.pdf"
+    lines = [
+        f"SecuraIQ scan engine · scanner={scanner_id} · profile={profile}",
+        f"scan_id={scan_id} · job={job_id or '-'} · orchestration={engine}",
+        f"status={status}",
+    ]
+    if services_n or findings_n:
+        lines.append(f"services={services_n} · findings={findings_n}")
+    if err:
+        lines.append(f"error={err}")
+    if status == "completed":
+        lines.append(f"report: {report_md}")
+        lines.append(f"pdf: {report_pdf}")
+    elif status not in {"failed", "blocked"}:
+        lines.append("still running — open Reports / scan status for the finished report")
+
+    ok = status == "completed"
+    return {
+        "ok": ok,
+        "output": "\n".join(lines),
+        "scan_id": scan_id,
+        "job_id": job_id,
+        "engine": engine,
+        "scanner": scanner_id,
+        "status": status,
+        "summary": summary,
+        "report_url": report_md if ok else None,
+        "report_pdf_url": report_pdf if ok else None,
+        "error": err or (None if ok else status),
+    }
 
 async def _tool_securaiq_code(
     *,
@@ -2000,6 +2046,45 @@ async def iter_security_tools(
                 result = await _tool_netvuln_scan(host, ip, ports_hint)
             elif tid == "openvas":
                 result = await _tool_openvas(host, ip, ports_hint)
+            elif tid == "securaiq" or tid in ENGINE_TOOLS:
+                scanner_key = ENGINE_TOOLS.get(tid, "securaiq")
+                eng_target = host or ip or (target or "").strip()
+                result = await _tool_engine_scan(
+                    scanner_key,
+                    eng_target,
+                    authorized=bool(authorized),
+                    user_id=user_id or "local",
+                    engagement_id=engagement_id,
+                    profile="discovery" if light_mode else "vulnerability",
+                )
+                if result.get("scanner_unavailable") and tid != "securaiq":
+                    if not is_available(tid):
+                        fb = EXTERNAL_FALLBACKS.get(tid)
+                        if fb and fb in TOOL_CATALOG:
+                            fb_entry = await _execute(fb, ports_hint)
+                            note = (
+                                f"{spec.name} engine/PATH unavailable — ran builtin "
+                                f"`{fb}` instead.\n\n"
+                            )
+                            result = {
+                                "ok": fb_entry.get("ok"),
+                                "output": note + (fb_entry.get("output") or ""),
+                                "error": fb_entry.get("error"),
+                                "fallback_to": fb,
+                                "open_ports": fb_entry.get("open_ports"),
+                                "findings": fb_entry.get("findings"),
+                            }
+                        else:
+                            result = {
+                                "ok": False,
+                                "error": "not installed on PATH",
+                                "output": (
+                                    f"{spec.name} is not available via scan engine or PATH. "
+                                    "Use tool `securaiq` or install the binary."
+                                ),
+                            }
+                    else:
+                        result = await _run_external(tid, host, ip, ports_hint)
             elif tid == "hardeningkitty":
                 # HardeningKitty has no PATH binary (binaries=()) — it runs via a
                 # dedicated Windows/PowerShell module, not a generic subprocess.
@@ -2032,7 +2117,33 @@ async def iter_security_tools(
                     }
             elif spec.kind == "external":
                 if not is_available(tid):
-                    result = {"ok": False, "error": "not installed on PATH", "output": ""}
+                    fb = EXTERNAL_FALLBACKS.get(tid)
+                    if fb and fb in TOOL_CATALOG:
+                        fb_entry = await _execute(fb, ports_hint)
+                        note = (
+                            f"{spec.name} (`{tid}`) is not installed on PATH — "
+                            f"ran builtin `{fb}` instead so the PT workflow still produces evidence.\n"
+                            f"Install `{tid}` (or rebuild the Docker image) for the real scanner.\n\n"
+                        )
+                        out = fb_entry.get("output") or ""
+                        result = {
+                            "ok": bool(fb_entry.get("ok")),
+                            "error": "" if fb_entry.get("ok") else (fb_entry.get("error") or "fallback failed"),
+                            "output": note + str(out),
+                            "fallback_from": tid,
+                            "fallback_to": fb,
+                            "open_ports": fb_entry.get("open_ports"),
+                            "findings": fb_entry.get("findings"),
+                        }
+                    else:
+                        result = {
+                            "ok": False,
+                            "error": "not installed on PATH",
+                            "output": (
+                                f"{spec.name} is not installed. Use New scan (SecuraIQ scanner) "
+                                f"or install the binary and ensure it is on PATH."
+                            ),
+                        }
                 else:
                     result = await _run_external(tid, host, ip, ports_hint)
             else:
@@ -2260,10 +2371,15 @@ def _parse_nuclei_jsonl(output: str) -> list[dict[str, Any]]:
 
 
 def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Turn authorized tool output into real vulnerability rows (not chat-only)."""
+    """Turn authorized tool output into real vulnerability rows (not chat-only).
+
+    Cross-tool dedupe: the same risky port from ports + openvas + hardening_baseline
+    becomes one finding. Private Windows LAN ports (135/139/445) are info-severity.
+    """
     from app.enterprise import create_vulnerability, ensure_asset_for_target, list_vulnerabilities
 
     target = payload.get("target") or payload.get("ip") or "unknown"
+    ip = str(payload.get("ip") or "") or None
     # Live inventory: every authorized scan registers the target as an asset
     asset = None
     try:
@@ -2279,7 +2395,41 @@ def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dic
         ((v.get("title") or "").strip().lower(), (v.get("asset_name") or "").strip().lower())
         for v in list_vulnerabilities(user_id)
     }
+    # Also remember ports already filed for this asset (prior scans + this run)
+    seen_ports: set[tuple[str, int]] = set()
+    for v in list_vulnerabilities(user_id):
+        raw = v.get("raw") or {}
+        if isinstance(raw, str):
+            try:
+                import json as _json
+
+                raw = _json.loads(raw)
+            except Exception:
+                raw = {}
+        if isinstance(raw, dict) and raw.get("port") is not None:
+            try:
+                seen_ports.add(port_dedupe_key(v.get("asset_name") or target, int(raw["port"])))
+            except (TypeError, ValueError):
+                pass
+        else:
+            p = _extract_port(v.get("title") or "")
+            if p is not None:
+                seen_ports.add(port_dedupe_key(v.get("asset_name") or target, p))
+
     to_create: list[dict[str, Any]] = []
+
+    def _claim_risky_port(port: int, source: str) -> dict[str, Any] | None:
+        """Return canonical finding once per (asset, port); None if duplicate."""
+        key = port_dedupe_key(str(target), port)
+        if key in seen_ports:
+            return None
+        seen_ports.add(key)
+        item = _risky_port_finding(port, target=str(target), source=source, ip=ip)
+        tkey = (item["title"].lower(), str(target).lower())
+        if tkey in existing:
+            return None
+        existing.add(tkey)
+        return item
 
     for run in payload.get("runs") or []:
         if not run.get("ok"):
@@ -2303,7 +2453,6 @@ def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dic
         elif tid in {"nmap", "ports"}:
             ports = run.get("open_ports")
             if not isinstance(ports, list):
-                # Parse classic nmap "PORT STATE SERVICE" lines
                 ports = []
                 for line in out.splitlines():
                     m = re.match(r"^(\d+)/tcp\s+open\b", line.strip())
@@ -2312,46 +2461,33 @@ def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dic
             for p in ports or []:
                 if p not in _RISKY_PORTS:
                     continue
-                item = _risky_port_finding(
-                    int(p),
-                    target=str(target),
-                    source=f"{tid}:port-{p}",
-                    ip=str(payload.get("ip") or "") or None,
-                )
-                key = (item["title"].lower(), str(target).lower())
-                if key in existing:
-                    continue
-                existing.add(key)
-                to_create.append(item)
+                item = _claim_risky_port(int(p), f"{tid}:port-{p}")
+                if item:
+                    to_create.append(item)
 
         elif tid == "hardening_baseline":
             for line in out.splitlines():
                 if not line.strip().startswith("[FAIL]"):
                     continue
                 msg = line.strip()[6:].strip()
+                port = _extract_port(msg)
+                if port is not None and port in _RISKY_PORTS:
+                    item = _claim_risky_port(port, "hardening_baseline")
+                    if item:
+                        to_create.append(item)
+                    continue
                 title = f"Hardening gap: {msg}"[:300]
                 key = (title.lower(), str(target).lower())
                 if key in existing:
                     continue
                 existing.add(key)
-                scope = _target_network_scope(str(target), str(payload.get("ip") or "") or None)
-                port_m = re.search(r"port\s+(\d+)/tcp", msg, re.I)
-                if port_m and int(port_m.group(1)) in _RISKY_PORTS:
-                    item = _risky_port_finding(
-                        int(port_m.group(1)),
-                        target=str(target),
-                        source="hardening_baseline",
-                        ip=str(payload.get("ip") or "") or None,
-                    )
-                    item["title"] = title
-                    to_create.append(item)
-                    continue
+                scope = _target_network_scope(str(target), ip)
                 if scope == "loopback" and any(x in msg.lower() for x in ("smb", "rdp", "port")):
                     sev = "info"
                 elif any(x in msg.lower() for x in ("tls", "rdp", "smb", "patch")):
-                    sev = "high" if scope != "private" else "medium"
+                    sev = "high" if scope == "public" else ("info" if scope == "private" else "medium")
                 else:
-                    sev = "medium"
+                    sev = "medium" if scope != "private" else "low"
                 to_create.append(
                     {
                         "title": title,
@@ -2386,36 +2522,25 @@ def persist_tool_findings_to_vulns(user_id: str, payload: dict[str, Any]) -> dic
                     continue
                 msg = line.strip()[6:].strip()
                 if any(msg.startswith(prod) for prod in matched_products):
-                    continue  # already captured above with CVE detail
-                port_m = re.search(r"port\s+(\d+)/tcp", msg, re.I)
-                if port_m and int(port_m.group(1)) in _RISKY_PORTS:
-                    item = _risky_port_finding(
-                        int(port_m.group(1)),
-                        target=str(target),
-                        source="securaiq_network" if tid == "openvas" else "netvuln_scan",
-                        ip=str(payload.get("ip") or "") or None,
-                    )
-                    # Keep scanner wording in title when not loopback; loopback title is clearer
-                    if item.get("raw", {}).get("scope") != "loopback":
-                        item["title"] = f"Network finding: {msg}"[:300]
-                    key = (item["title"].lower(), str(target).lower())
-                    if key in existing:
-                        continue
-                    existing.add(key)
-                    to_create.append(item)
+                    continue
+                port = _extract_port(msg)
+                if port is not None and port in _RISKY_PORTS:
+                    item = _claim_risky_port(port, "securaiq_network" if tid == "openvas" else "netvuln_scan")
+                    if item:
+                        to_create.append(item)
                     continue
                 title = f"Network finding: {msg}"[:300]
                 key = (title.lower(), str(target).lower())
                 if key in existing:
                     continue
                 existing.add(key)
-                scope = _target_network_scope(str(target), str(payload.get("ip") or "") or None)
+                scope = _target_network_scope(str(target), ip)
                 if scope == "loopback" and any(x in msg.lower() for x in ("smb", "rdp", "risky", "port")):
                     sev = "info"
                 elif any(x in msg.lower() for x in ("tls", "rdp", "smb", "risky", "backdoor")):
-                    sev = "high" if scope == "public" else "medium"
+                    sev = "high" if scope == "public" else "info" if scope == "private" else "medium"
                 else:
-                    sev = "medium"
+                    sev = "medium" if scope != "private" else "low"
                 to_create.append(
                     {
                         "title": title,

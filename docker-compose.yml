@@ -1,3 +1,8 @@
+networks:
+  securaiq-internal:
+    driver: bridge
+    name: securaiq-internal
+
 services:
   # Default app profile — lab / closed-beta on a single host.
   # For SaaS: docker compose --profile saas up -d
@@ -35,6 +40,8 @@ services:
       GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
     volumes:
       - securaiq-data:/data
+    networks:
+      - securaiq-internal
     restart: unless-stopped
 
   # SaaS profile: Postgres is the source of truth (internal network only).
@@ -49,6 +56,8 @@ services:
     # Not published to the host by default — app reaches it on the compose network.
     expose:
       - "5432"
+    networks:
+      - securaiq-internal
     restart: unless-stopped
     profiles: ["postgres", "saas"]
     healthcheck:
@@ -62,6 +71,8 @@ services:
     # Internal only — use REDIS_URL=redis://redis:6379/0 from the app container.
     expose:
       - "6379"
+    networks:
+      - securaiq-internal
     restart: unless-stopped
     profiles: ["redis", "saas"]
     healthcheck:
@@ -81,24 +92,33 @@ services:
       - postgres-data:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5432:5432"
+    networks:
+      - securaiq-internal
     restart: unless-stopped
     profiles: ["debug-ports"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U securaiq -d securaiq"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis-debug:
     image: redis:7-alpine
     ports:
       - "127.0.0.1:6379:6379"
+    networks:
+      - securaiq-internal
     restart: unless-stopped
     profiles: ["debug-ports"]
 
   qdrant:
-    image: qdrant/qdrant:v1.13.2
-    # Bind to localhost only if published for local tooling.
+    image: qdrant/qdrant:v1.12.1
     ports:
       - "127.0.0.1:6333:6333"
-      - "127.0.0.1:6334:6334"
     volumes:
       - qdrant-data:/qdrant/storage
+    networks:
+      - securaiq-internal
     restart: unless-stopped
     profiles: ["vectors"]
 
@@ -109,21 +129,24 @@ services:
       - "127.0.0.1:4200:4200"
     environment:
       PREFECT_SERVER_API_HOST: "0.0.0.0"
+    networks:
+      - securaiq-internal
     restart: unless-stopped
     profiles: ["prefect"]
 
-  # Opinionated SaaS app service — use with: docker compose --profile saas up -d
-  # Expects reverse proxy (Caddy/nginx) in front; do not put this on a public IP alone.
+  # Opinionated SaaS app — reverse proxy in front; do not put on a public IP alone.
+  # App is internal-only (expose). Use profile `proxy` (Caddy) for HTTPS on 80/443.
   securaiq-saas:
     build: .
     profiles: ["saas"]
+    command: ["python", "scripts/db_migrate_and_run.py"]
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     environment:
       HOST: "0.0.0.0"
       PORT: "8080"
@@ -135,6 +158,9 @@ services:
       BOOTSTRAP_ADMIN_USERNAME: "${BOOTSTRAP_ADMIN_USERNAME:-admin}"
       BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:?Set BOOTSTRAP_ADMIN_PASSWORD}"
       MFA_REQUIRED_FOR_ADMIN: "true"
+      COOKIE_SECURE: "true"
+      FORCE_HTTPS_HEADERS: "true"
+      REQUIRE_POSTGRES_IN_PRODUCTION: "true"
       DATABASE_URL: "postgresql://securaiq:${POSTGRES_PASSWORD}@postgres:5432/securaiq"
       REDIS_URL: "redis://redis:6379/0"
       DATA_DIR: "/data"
@@ -143,9 +169,30 @@ services:
       OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
     volumes:
       - securaiq-data:/data
+    networks:
+      - securaiq-internal
+    restart: unless-stopped
+
+  # TLS reverse proxy — docker compose --profile saas --profile proxy up -d
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["proxy"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile.docker:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - securaiq-saas
+    networks:
+      - securaiq-internal
     restart: unless-stopped
 
 volumes:
   securaiq-data:
   postgres-data:
   qdrant-data:
+  caddy-data:
+  caddy-config:

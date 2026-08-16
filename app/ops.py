@@ -233,9 +233,49 @@ def delete_intel_watch(user_id: str, watch_id: str) -> bool:
 
 def reports_catalog(user_id: str) -> dict[str, Any]:
     from app.gap_analysis import list_assessments
+    from app.scan_engine.models import ensure_scans_schema, list_scans
 
     assessments = list_assessments(user_id)
-    items: list[dict[str, Any]] = [
+    items: list[dict[str, Any]] = []
+
+    # Per-scan reports first (what users look for after New scan)
+    try:
+        ensure_scans_schema()
+        for s in list_scans(user_id, limit=30):
+            if (s.get("status") or "") != "completed":
+                continue
+            sid = s.get("id")
+            target = s.get("target") or "target"
+            scanner = s.get("scanner") or "scan"
+            findings = (s.get("summary") or {}).get("findings_created")
+            title = f"Scan - {target} ({scanner})"
+            if findings is not None:
+                title += f" - {findings} findings"
+            items.append(
+                {
+                    "id": f"scan-{sid}",
+                    "title": title,
+                    "href": f"/api/scans/{sid}/report",
+                    "kind": "scan",
+                    "scan_id": sid,
+                    "created_at": s.get("created_at"),
+                }
+            )
+            items.append(
+                {
+                    "id": f"scan-pdf-{sid}",
+                    "title": f"{title} (PDF)",
+                    "href": f"/api/scans/{sid}/report.pdf",
+                    "kind": "pdf",
+                    "scan_id": sid,
+                    "created_at": s.get("created_at"),
+                }
+            )
+    except Exception:
+        pass
+
+    items.extend(
+        [
         {
             "id": "exec-pdf",
             "title": "Executive security report (PDF)",
@@ -290,7 +330,8 @@ def reports_catalog(user_id: str) -> dict[str, Any]:
             "href": "/api/vulnerabilities/export",
             "kind": "vuln",
         },
-    ]
+        ]
+    )
     for a in assessments[:20]:
         items.append(
             {

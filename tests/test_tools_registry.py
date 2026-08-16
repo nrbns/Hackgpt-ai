@@ -80,7 +80,7 @@ def test_heavy_tools_are_not_needs_target_false_with_binaries_missing():
 
 
 def test_tools_split_securaiq_vs_third_party():
-    from app.tools.registry import list_tools_status
+    from app.tools.registry import ENGINE_TOOLS, PT_PACK_TOOLS, list_tools_status
 
     if hasattr(list_tools_status, "_cache"):
         list_tools_status._cache = None
@@ -99,8 +99,14 @@ def test_tools_split_securaiq_vs_third_party():
     assert TOOL_CATALOG["netvuln_scan"].origin == "securaiq"
     assert TOOL_CATALOG["openvas"].origin == "securaiq"
     assert TOOL_CATALOG["openvas"].kind == "builtin"
+    assert TOOL_CATALOG["securaiq"].kind == "builtin"
+    assert TOOL_CATALOG["securaiq"].origin == "securaiq"
     assert TOOL_CATALOG["securaiq_code"].origin == "securaiq"
     assert TOOL_CATALOG["securaiq_code"].kind == "builtin"
+    assert "securaiq" in PT_PACK_TOOLS
+    assert ENGINE_TOOLS["securaiq"] == "securaiq"
+    assert set(ENGINE_TOOLS) >= {"securaiq", "nmap", "nuclei", "zap"}
+    assert status.get("engine_tools", {}).get("securaiq") == "securaiq"
 
 
 def test_extract_targets_ignores_scan_code_phrase():

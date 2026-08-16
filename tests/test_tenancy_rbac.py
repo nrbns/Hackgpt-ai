@@ -29,12 +29,31 @@ def test_assert_safe_deployment_blocks_prod_without_auth(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "false")
     monkeypatch.setenv("DEPLOYMENT_MODE", "production")
     monkeypatch.setenv("HOST", "127.0.0.1")
+    monkeypatch.setenv("REQUIRE_POSTGRES_IN_PRODUCTION", "false")
     import app.config as config_mod
     import app.auth as auth_mod
 
     importlib.reload(config_mod)
     importlib.reload(auth_mod)
     with pytest.raises(RuntimeError, match="AUTH_ENABLED"):
+        auth_mod.assert_safe_deployment_auth()
+
+
+def test_assert_safe_deployment_blocks_prod_without_postgres(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("DEPLOYMENT_MODE", "production")
+    monkeypatch.setenv("HOST", "127.0.0.1")
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("REQUIRE_POSTGRES_IN_PRODUCTION", "true")
+    import app.config as config_mod
+    import app.auth as auth_mod
+
+    importlib.reload(config_mod)
+    importlib.reload(auth_mod)
+    with pytest.raises(RuntimeError, match="DATABASE_URL"):
         auth_mod.assert_safe_deployment_auth()
 
 

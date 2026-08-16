@@ -127,7 +127,7 @@ async def intel_nvd(cve_id: str, user: Annotated[AuthUser, Depends(require_user)
 
 @router.get("/intel/free/catalog")
 async def intel_free_catalog(user: Annotated[AuthUser, Depends(require_user)]):
-    """Full Free APIs Security + Anti-Malware catalog with live/keyed/skipped status."""
+    """Built-in Security + Anti-Malware provider catalog with live/keyed/skipped status."""
     return catalog_summary()
 
 

@@ -263,7 +263,7 @@
           const r = job?.result || {};
           if ((job?.status || "") === "done" && typeof notifyUser === "function") {
             notifyUser(
-              `**Inventory sync done** · ${r.devices_total || 0} devices · ${r.devices_new || 0} new`
+              `**Inventory sync done** · ${r.devices_total || 0} devices · ${r.devices_new || 0} new · ${r.assets_linked || 0} assets`
             );
           } else if ((job?.status || "") === "error" && typeof notifyUser === "function") {
             notifyUser(`**Inventory sync error:** ${job.error || "failed"}`);
@@ -559,11 +559,13 @@
         const scopeHint =
           /127\.|localhost|::1/i.test(String(v.asset_name || "")) || scope === "loopback"
             ? " Asset is loopback — not remotely exposed; focus on local Windows hardening for SMB/RDP, not internet RCE."
-            : "";
+            : scope === "private" || /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(String(v.asset_name || ""))
+              ? " Asset is private/lab RFC1918. For SMB/445 RPC/135 NetBIOS/139: treat as expected Windows LAN (info), not internet High ransomware. Prefer real Windows firewall / SMB signing steps. Never invent CLIs."
+              : "";
         const prompts = {
-          root: `Root-cause analysis for ${v.cve || ""} — ${v.title || v.id} on asset ${v.asset_name || "?"}.${scopeHint} Include contributing config issues and realistic blast radius.`,
-          patch: `Suggest fix and verify steps for ${v.cve || ""} — ${v.title || v.id} (severity=${v.severity}, CVSS=${v.cvss ?? "?"}, exposure=${scope || "unknown"}).${scopeHint}`,
-          ticket: `Draft a Jira-ready remediation ticket for ${v.cve || ""} — ${v.title || v.id} with acceptance criteria and SLA.${scopeHint}`,
+          root: `Root-cause analysis for ${v.cve || ""} — ${v.title || v.id} on asset ${v.asset_name || "?"} (severity=${v.severity}, exposure=${scope || "unknown"}).${scopeHint} Include realistic blast radius only.`,
+          patch: `Suggest fix and verify steps for ${v.cve || ""} — ${v.title || v.id} (severity=${v.severity}, CVSS=${v.cvss ?? "?"}, exposure=${scope || "unknown"}).${scopeHint} Use only real tools/commands.`,
+          ticket: `Draft a Jira-ready remediation ticket for ${v.cve || ""} — ${v.title || v.id} with acceptance criteria and SLA matching true exposure (${scope || v.severity}).${scopeHint}`,
         };
         if (typeof window.runNavPrompt === "function") {
           window.runNavPrompt("blueteam", prompts[kind] || prompts.patch, { stay: true });
@@ -1406,118 +1408,150 @@
       return "";
     };
     body.innerHTML = `
-      <section class="cc-panel" style="margin-bottom:1rem">
-        <header><h2>IOC / CVE lookup</h2>
-          <span class="hint"><a href="https://free-apis.github.io/#/categories/Security" target="_blank" rel="noopener">Free APIs Security</a></span>
-        </header>
-        <form id="intelLookupForm" class="inline-form">
-          <input id="intelLookupQ" placeholder="IP, domain, URL, email, hash, or CVE-…" required style="min-width:16rem" />
-          <button type="submit">Lookup</button>
-        </form>
-        <pre id="intelLookupOut" class="tools-palette-out hidden"></pre>
-      </section>
-      <section class="cc-panel" style="margin-bottom:1rem">
-        <header><h2>STIX 2.1 / TAXII</h2>
-          <span class="hint">Standard intel exchange — ingest bundles or poll a TAXII collection</span>
-        </header>
-        <div class="cc-action-row" style="flex-wrap:wrap;gap:0.5rem">
-          <button type="button" class="btn-secondary" id="stixExportBtn">Export watchlist (STIX)</button>
-          <button type="button" class="btn-secondary" id="stixTaxiiPollBtn">Poll TAXII (configured)</button>
-          <label class="btn-secondary" style="cursor:pointer">Import STIX JSON
-            <input type="file" id="stixFileInput" accept=".json,application/json" hidden />
-          </label>
-        </div>
-        <p class="hint" id="stixStatusHint">Loading STIX status…</p>
-        <pre id="stixOut" class="tools-palette-out hidden"></pre>
-      </section>
-      <div class="ws-grid-2">
-        <section class="cc-panel">
-          <header><h2>Watchlist</h2>
-            <button type="button" class="btn-secondary" id="intelKevSync">Sync CISA KEV</button>
+      <div class="intel-stack">
+        <section class="cc-panel intel-panel intel-panel-lookup">
+          <header class="intel-panel-head">
+            <div>
+              <h2>IOC / CVE lookup</h2>
+              <p class="hint">Queries built-in providers (${counts.live || 0} live · ${counts.keyed || 0} keyed). Add keys in Settings for AbuseIPDB, VirusTotal, Shodan, and more.</p>
+            </div>
+            <span class="intel-status">${catalog.total || 0} providers</span>
           </header>
-          <ul class="cc-list">${
-            watch.length
-              ? watch
-                  .map(
-                    (w) =>
-                      `<li><strong>${escapeHtml(w.kind)}</strong> ${escapeHtml(w.value)}
-                      <span class="hint">${escapeHtml((w.notes || "").slice(0, 80))}</span>
-                      <button type="button" class="btn-secondary ws-del-watch" data-id="${w.id}">Remove</button></li>`
-                  )
-                  .join("")
-              : `<li class="hint">No watched CVEs / IOCs yet — sync KEV or add manually</li>`
-          }</ul>
-          <form id="intelWatchForm" class="inline-form">
-            <input id="intelValue" placeholder="CVE-2024-...." required />
-            <button type="submit">Add</button>
+          <form id="intelLookupForm" class="intel-lookup-form">
+            <input id="intelLookupQ" placeholder="IP, domain, URL, email, hash, or CVE-…" required autocomplete="off" spellcheck="false" />
+            <button type="submit" class="btn-primary-cc">Lookup</button>
           </form>
-          <form id="intelNvdForm" class="inline-form" style="margin-top:0.5rem">
-            <input id="intelNvdCve" placeholder="Lookup NVD CVE…" required />
-            <button type="submit">NVD</button>
+          <div class="intel-catalog" id="intelCatalogStrip" aria-label="Integrated providers">
+            ${catalogItems
+              .filter((it) => it.status === "live" || it.status === "keyed")
+              .map(
+                (it) =>
+                  `<span class="integ-pill integ-chip ${statusClass(it.status)}" title="${escapeHtml(
+                    it.notes || it.auth || ""
+                  )}">${escapeHtml(it.name)} · ${escapeHtml(it.status)}${it.key_configured ? " ✓" : ""}</span>`
+              )
+              .join("")}
+          </div>
+          <div id="intelLookupOut" class="intel-lookup-results hidden" aria-live="polite"></div>
+        </section>
+
+        <section class="cc-panel intel-panel intel-panel-stix">
+          <header class="intel-panel-head">
+            <div>
+              <h2>STIX 2.1 / TAXII</h2>
+              <p class="hint">Standard intel exchange — ingest bundles or poll a configured TAXII collection.</p>
+            </div>
+            <span class="intel-status" id="stixStatusHint">Loading…</span>
+          </header>
+          <div class="intel-toolbar">
+            <button type="button" class="btn-secondary" id="stixExportBtn">Export watchlist</button>
+            <button type="button" class="btn-secondary" id="stixTaxiiPollBtn">Poll TAXII</button>
+            <label class="btn-secondary intel-file-btn">Import STIX JSON
+              <input type="file" id="stixFileInput" accept=".json,application/json" hidden />
+            </label>
+          </div>
+          <pre id="stixOut" class="tools-palette-out intel-out hidden"></pre>
+        </section>
+
+        <div class="intel-grid">
+          <section class="cc-panel intel-panel">
+            <header class="intel-panel-head">
+              <div><h2>Watchlist</h2></div>
+              <button type="button" class="btn-secondary" id="intelKevSync">Sync CISA KEV</button>
+            </header>
+            <ul class="cc-list intel-list">${
+              watch.length
+                ? watch
+                    .map(
+                      (w) =>
+                        `<li class="intel-watch-row">
+                          <div class="intel-watch-main">
+                            <strong class="intel-kind">${escapeHtml(w.kind)}</strong>
+                            <code>${escapeHtml(w.value)}</code>
+                            ${w.notes ? `<span class="hint">${escapeHtml((w.notes || "").slice(0, 100))}</span>` : ""}
+                          </div>
+                          <button type="button" class="btn-ghost ws-del-watch" data-id="${w.id}">Remove</button>
+                        </li>`
+                    )
+                    .join("")
+                : `<li class="hint">No watched CVEs / IOCs yet — sync KEV or add below.</li>`
+            }</ul>
+            <form id="intelWatchForm" class="intel-lookup-form intel-lookup-form-compact">
+              <input id="intelValue" placeholder="CVE-2024-… or IOC" required autocomplete="off" />
+              <button type="submit" class="btn-primary-cc">Add</button>
+            </form>
+            <form id="intelNvdForm" class="intel-lookup-form intel-lookup-form-compact">
+              <input id="intelNvdCve" placeholder="Lookup NVD CVE…" required autocomplete="off" />
+              <button type="submit" class="btn-secondary">NVD</button>
+            </form>
+            <pre id="intelNvdOut" class="tools-palette-out intel-out hidden"></pre>
+          </section>
+
+          <section class="cc-panel intel-panel">
+            <header class="intel-panel-head"><div><h2>CISA KEV</h2><p class="hint">Recently exploited vulnerabilities</p></div></header>
+            <ul class="cc-list intel-list">${
+              kevItems.length
+                ? kevItems
+                    .map(
+                      (k) =>
+                        `<li>
+                          <strong>${escapeHtml(k.cve || "")}</strong>
+                          <span class="hint">${escapeHtml([k.vendor, k.product].filter(Boolean).join(" · "))}</span>
+                          ${k.name ? `<div class="hint">${escapeHtml(k.name)}</div>` : ""}
+                        </li>`
+                    )
+                    .join("")
+                : `<li class="hint">${escapeHtml(kevData.detail || "KEV feed unavailable offline")}</li>`
+            }</ul>
+            <header class="intel-panel-head intel-subhead"><div><h2>Critical in register</h2></div></header>
+            <ul class="cc-list intel-list">${
+              vulns.length
+                ? vulns
+                    .map(
+                      (v) =>
+                        `<li><strong class="sev-${escapeHtml((v.severity || "").toLowerCase())}">${escapeHtml(
+                          v.severity
+                        )}</strong> ${escapeHtml(v.cve || "")} — ${escapeHtml(v.title)}</li>`
+                    )
+                    .join("")
+                : `<li class="hint">Run New scan or import vulns to populate</li>`
+            }</ul>
+            <button type="button" class="cc-action" id="intelAskAi">Ask AI for weekly threat brief</button>
+          </section>
+        </div>
+
+        <section class="cc-panel intel-panel">
+          <header class="intel-panel-head">
+            <div>
+              <h2>Provider feeds</h2>
+              <p class="hint">Pull MSRC updates, FilterLists, or check password exposure (HIBP when keyed).</p>
+            </div>
+          </header>
+          <div class="intel-toolbar">
+            <button type="button" class="btn-secondary" id="intelFeedMsrc">MSRC updates</button>
+            <button type="button" class="btn-secondary" id="intelFeedFilterlists">FilterLists</button>
+            <button type="button" class="btn-secondary" id="intelFeedPassword">Password exposure</button>
+          </div>
+          <pre id="intelFeedOut" class="tools-palette-out intel-out hidden"></pre>
+        </section>
+
+        <section class="cc-panel intel-panel">
+          <header class="intel-panel-head">
+            <div>
+              <h2>Threat detection catalog</h2>
+              <p class="hint">Searchable Sigma / Sysmon / Zeek / lab references (cached in-app).</p>
+            </div>
+            <button type="button" class="btn-secondary" id="intelAtdRefresh">Refresh</button>
+          </header>
+          <form id="intelAtdForm" class="intel-lookup-form">
+            <input id="intelAtdQ" placeholder="Search Sigma, Sysmon, Zeek, labs…" autocomplete="off" />
+            <select id="intelAtdCat"><option value="">All categories</option></select>
+            <button type="submit" class="btn-primary-cc">Search</button>
           </form>
-          <pre id="intelNvdOut" class="tools-palette-out hidden"></pre>
+          <p class="hint" id="intelAtdMeta">Loading catalog…</p>
+          <ul class="cc-list intel-list" id="intelAtdList"><li class="hint">…</li></ul>
         </section>
-        <section class="cc-panel">
-          <header><h2>CISA KEV (recent)</h2></header>
-          <ul class="cc-list">${
-            kevItems.length
-              ? kevItems
-                  .map(
-                    (k) =>
-                      `<li><strong>${escapeHtml(k.cve || "")}</strong> ${escapeHtml(k.vendor || "")} ${escapeHtml(
-                        k.product || ""
-                      )}
-                      <span class="hint">${escapeHtml(k.name || "")}</span></li>`
-                  )
-                  .join("")
-              : `<li class="hint">${escapeHtml(kevData.detail || "KEV feed unavailable offline")}</li>`
-          }</ul>
-          <header style="margin-top:1rem"><h2>Critical in register</h2></header>
-          <ul class="cc-list">${
-            vulns.length
-              ? vulns
-                  .map((v) => `<li><strong>${escapeHtml(v.severity)}</strong> ${escapeHtml(v.cve || "")} — ${escapeHtml(v.title)}</li>`)
-                  .join("")
-              : `<li class="hint">Import vulns to populate</li>`
-          }</ul>
-          <button type="button" class="cc-action" id="intelAskAi">Ask AI for weekly threat brief</button>
-        </section>
-      </div>
-      <section class="cc-panel" style="margin-top:1rem">
-        <header><h2>Free Security APIs</h2>
-          <span class="hint">${catalog.total || 0} listed · live ${counts.live || 0} · keyed ${counts.keyed || 0} · catalog ${counts.catalog || 0} · skipped ${counts.skipped || 0}</span>
-        </header>
-        <div class="integ-status-strip" id="intelCatalogStrip">
-          ${catalogItems
-            .map(
-              (it) =>
-                `<a class="integ-pill integ-chip ${statusClass(it.status)}" href="${escapeHtml(it.docs || "#")}" target="_blank" rel="noopener" title="${escapeHtml(
-                  it.notes || it.auth || ""
-                )}">${escapeHtml(it.name)} · ${escapeHtml(it.status)}${it.key_configured ? " ✓" : ""}</a>`
-            )
-            .join("")}
-        </div>
-        <p class="hint">Add optional keys in Settings to unlock AbuseIPDB, VirusTotal, Shodan, HIBP, URLhaus, EmailRep, and more.</p>
-        <div class="cc-action-row" style="margin-top:0.75rem">
-          <button type="button" class="btn-secondary" id="intelFeedMsrc">MSRC updates</button>
-          <button type="button" class="btn-secondary" id="intelFeedFilterlists">FilterLists</button>
-          <button type="button" class="btn-secondary" id="intelFeedPassword">Password exposure check</button>
-        </div>
-        <pre id="intelFeedOut" class="tools-palette-out hidden"></pre>
-      </section>
-      <section class="cc-panel" style="margin-top:1rem">
-        <header><h2>Threat detection &amp; hunting catalog</h2>
-          <span class="hint"><a href="https://github.com/0x4d31/awesome-threat-detection" target="_blank" rel="noopener">awesome-threat-detection</a></span>
-          <button type="button" class="btn-secondary" id="intelAtdRefresh">Refresh</button>
-        </header>
-        <form id="intelAtdForm" class="inline-form">
-          <input id="intelAtdQ" placeholder="Search Sigma, Sysmon, Zeek, labs…" style="min-width:14rem" />
-          <select id="intelAtdCat"><option value="">All categories</option></select>
-          <button type="submit">Search</button>
-        </form>
-        <p class="hint" id="intelAtdMeta">Loading catalog…</p>
-        <ul class="cc-list" id="intelAtdList"><li class="hint">…</li></ul>
-      </section>`;
+      </div>`;
     // Threat detection catalog (awesome list)
     const atdMeta = qs("intelAtdMeta");
     const atdList = qs("intelAtdList");
@@ -1586,27 +1620,34 @@
       const out = qs("intelLookupOut");
       if (!q || !out) return;
       out.classList.remove("hidden");
-      out.textContent = "Looking up…";
+      out.innerHTML = `<p class="hint">Looking up across integrated providers…</p>`;
       const res = await fetch(`/api/intel/lookup?q=${encodeURIComponent(q)}`, { headers: authHeaders() });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        out.textContent = data.detail || `HTTP ${res.status}`;
+        out.innerHTML = `<p class="hint">${escapeHtml(data.detail || `HTTP ${res.status}`)}</p>`;
         return;
       }
-      const lines = [
-        `kind: ${data.kind} · ok ${data.providers_ok} · failed ${data.providers_failed}`,
-        "",
-      ];
-      for (const r of data.results || []) {
-        const src = r.source || "?";
-        const summary = JSON.stringify(r.data || r, null, 0).slice(0, 400);
-        lines.push(`[${src}] ${summary}`);
-      }
-      if ((data.errors || []).length) {
-        lines.push("", "errors:");
-        for (const err of data.errors) lines.push(`- ${err.provider}: ${err.error}`);
-      }
-      out.textContent = lines.join("\n");
+      const cards = (data.results || [])
+        .map((r) => {
+          const src = escapeHtml(r.source || "?");
+          const payload = r.data != null ? r.data : r;
+          const preview = escapeHtml(JSON.stringify(payload, null, 2).slice(0, 1200));
+          return `<article class="intel-result-card">
+            <header><strong>${src}</strong>${r.cached ? ' <span class="hint">cached</span>' : ""}</header>
+            <pre>${preview}</pre>
+          </article>`;
+        })
+        .join("");
+      const errs = (data.errors || [])
+        .map((err) => `<li>${escapeHtml(err.provider || "?")}: ${escapeHtml(err.error || "")}</li>`)
+        .join("");
+      out.innerHTML = `
+        <div class="intel-lookup-meta">
+          <strong>${escapeHtml(data.kind || "ioc")}</strong>
+          <span class="hint">${escapeHtml(String(data.query || q))} · ok ${data.providers_ok ?? 0} · failed ${data.providers_failed ?? 0}</span>
+        </div>
+        <div class="intel-result-grid">${cards || `<p class="hint">No provider hits</p>`}</div>
+        ${errs ? `<ul class="hint intel-lookup-errors"><li>Errors</li>${errs}</ul>` : ""}`;
     });
     const stixOut = qs("stixOut");
     const stixHint = qs("stixStatusHint");
@@ -1620,11 +1661,12 @@
       .then((s) => {
         if (!stixHint) return;
         stixHint.textContent = s.taxii_configured
-          ? `STIX ${s.stix_version} · TAXII configured · ${s.taxii_api_root || ""}`
-          : `STIX ${s.stix_version || "2.1"} ready · set TAXII in Settings to poll a collection`;
+          ? `TAXII ready · ${s.stix_version || "2.1"}`
+          : `STIX ${s.stix_version || "2.1"} · set TAXII in Settings`;
+        stixHint.classList.toggle("ok", !!s.taxii_configured);
       })
       .catch(() => {
-        if (stixHint) stixHint.textContent = "STIX status unavailable";
+        if (stixHint) stixHint.textContent = "STIX unavailable";
       });
     qs("stixExportBtn")?.addEventListener("click", async () => {
       const res = await fetch("/api/intel/stix/export", { headers: authHeaders() });
@@ -1774,10 +1816,11 @@
                   </button>`
                 )
                 .join("")
-            : `<p class="hint">No reports yet — run gap analysis or add risks/vulns.</p>`
+            : `<p class="hint">No reports yet — run <strong>New scan</strong> (Reports lists each completed scan) or add risks/vulns.</p>`
         }
       </div>
       <div class="cc-action-row" style="margin-top:1rem">
+        <button type="button" class="cc-action" id="reportClearScans">Clear old scan findings</button>
         <button type="button" class="cc-action" id="reportExecPdf">Download executive PDF</button>
         <button type="button" class="cc-action" id="reportExecDocx">Executive DOCX</button>
         <button type="button" class="cc-action" id="reportRisksPdf">Risks PDF</button>
@@ -1817,13 +1860,17 @@
               await window.downloadBinary(href, name, mime);
             }
           } else if (typeof downloadMd === "function") {
-            await downloadMd(href, `securaiq-report.md`);
+            const name =
+              kind === "scan"
+                ? `securaiq-scan-${(href.split("/")[3] || "report").slice(0, 8)}.md`
+                : "securaiq-report.md";
+            await downloadMd(href, name);
           } else {
             const r = await fetch(href, { headers: authHeaders() });
             const md = await r.text();
             const a = document.createElement("a");
             a.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
-            a.download = "securaiq-report.md";
+            a.download = kind === "scan" ? "securaiq-scan-report.md" : "securaiq-report.md";
             a.click();
           }
         } catch (err) {
@@ -1836,6 +1883,22 @@
         window.downloadBinary("/api/reports/executive.pdf", "securaiq-executive.pdf", "application/pdf").catch((e) =>
           alert(e.message)
         );
+      }
+    });
+    qs("reportClearScans")?.addEventListener("click", async () => {
+      if (!confirm("Delete old scan records, evidence, and scan/tool findings so you can start fresh?")) return;
+      try {
+        const res = await fetch("/api/scans/clear", { method: "POST", headers: authHeaders() });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+        alert(
+          `Cleared: ${data.scans_deleted || 0} scans, ${data.vulnerabilities_deleted || 0} findings, ${data.evidence_dirs_removed || 0} evidence folders.`
+        );
+        await renderReportsPage();
+        if (typeof loadVulns === "function") await loadVulns();
+        if (typeof refreshMissionControl === "function") await refreshMissionControl();
+      } catch (err) {
+        alert(err.message || "Clear failed");
       }
     });
     const bin = (href, name, mime) => {
@@ -2461,13 +2524,23 @@
         }
         const jobId = data.job && data.job.id;
         if (jobId && typeof window.waitForJob === "function") {
-          await window.waitForJob(jobId, { timeoutMs: 120000 });
+          const job = await window.waitForJob(jobId, { timeoutMs: 120000 });
+          const r = job?.result || {};
+          if ((job?.status || "") === "done" && typeof notifyUser === "function") {
+            notifyUser(
+              `**SIEM sync done** · ${r.agents_total || 0} agents · ${r.assets_linked || 0} assets · ${r.alerts_new || 0} new alerts`
+            );
+          } else if ((job?.status || "") === "error" && typeof notifyUser === "function") {
+            notifyUser(`**SIEM sync error:** ${job.error || "failed"}`);
+          }
         }
       } catch (err) {
         if (typeof notifyUser === "function") notifyUser(`**SecuraIQ SIEM sync error:** ${err.message || err}`);
       }
       renderWazuhPanel();
       renderXdrPanel();
+      if (typeof renderAssetsPage === "function") renderAssetsPage();
+      if (typeof loadCommandCenter === "function") loadCommandCenter();
       if (btn) { btn.disabled = false; btn.textContent = "Sync SIEM"; }
     });
     qs("thehiveSyncBtn")?.addEventListener("click", async () => {
@@ -4627,12 +4700,17 @@
       const el = qs(id);
       if (el) el.addEventListener("click", fn);
     });
-    document.querySelectorAll("[data-action='live-scan']").forEach((el) => {
+    document.querySelectorAll("[data-action='live-scan'], [data-action='new-scan']").forEach((el) => {
       if (el.dataset.liveScanWired) return;
       el.dataset.liveScanWired = "1";
       el.addEventListener("click", (e) => {
         e.preventDefault();
-        if (typeof window.startLiveScan === "function") window.startLiveScan();
+        const action = el.getAttribute("data-action");
+        if (action === "new-scan" && typeof window.openNewScanModal === "function") {
+          window.openNewScanModal();
+        } else if (typeof window.startLiveScan === "function") {
+          window.startLiveScan();
+        }
       });
     });
   }

@@ -30,6 +30,10 @@ cryptography>=42.0.0
 # Optional: Postgres dual-backend (set DATABASE_URL=postgresql://...)
 # psycopg[binary]>=3.1.0
 
+# Optional: Alembic migrations for SaaS Postgres (scripts/db_migrate_and_run.py)
+# alembic>=1.13.0
+# sqlalchemy>=2.0.0
+
 # Optional: multi-worker realtime bus (set REDIS_URL)
 # redis>=5.0.0
 

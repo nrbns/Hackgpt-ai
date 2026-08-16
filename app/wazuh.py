@@ -25,6 +25,8 @@ def status() -> dict[str, Any]:
 
 
 def ensure_schema() -> None:
+    from app.db import table_columns
+
     c = get_conn()
     c.execute(
         """
@@ -38,20 +40,78 @@ def ensure_schema() -> None:
             version TEXT NOT NULL DEFAULT '',
             group_name TEXT NOT NULL DEFAULT '',
             last_keep_alive TEXT NOT NULL DEFAULT '',
+            asset_id TEXT NOT NULL DEFAULT '',
             raw_json TEXT NOT NULL DEFAULT '{}',
             updated_at REAL NOT NULL
         )
         """
     )
+    try:
+        cols = table_columns(c, "wazuh_agents")
+        if "asset_id" not in cols:
+            c.execute("ALTER TABLE wazuh_agents ADD COLUMN asset_id TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass
     c.commit()
 
 
-def _upsert_agent(item: dict[str, Any]) -> bool:
-    """Returns True if inserted, False if updated/skipped."""
+def _link_agent_asset(user_id: str, item: dict[str, Any]) -> str:
+    """Create/update a SecuraIQ asset for a SIEM agent. Returns asset_id."""
+    from app.enterprise import create_asset, list_assets
+
+    aid = str(item.get("agent_id") or "")
+    name = (item.get("name") or "").strip() or f"siem-agent-{aid}"
+    ip = (item.get("ip") or "").strip()
+    display = f"{name} ({ip})" if ip and ip not in name else name
+    notes = (
+        f"siem_agent_id={aid}\n"
+        f"ip={ip}\n"
+        f"os={item.get('os') or ''}\n"
+        f"status={item.get('status') or ''}\n"
+        f"group={item.get('group') or ''}\n"
+        f"version={item.get('version') or ''}\n"
+        "source=securaiq-siem"
+    ).strip()
+    asset_id = ""
+    for a in list_assets(user_id):
+        n = a.get("notes") or ""
+        if f"siem_agent_id={aid}" in n:
+            asset_id = a["id"]
+            break
+        if (a.get("name") or "").strip().lower() == display.strip().lower():
+            asset_id = a["id"]
+            break
+        if ip and ip in (a.get("name") or ""):
+            asset_id = a["id"]
+            break
+    if not asset_id:
+        created = create_asset(
+            user_id,
+            display,
+            asset_type="endpoint",
+            criticality="high" if (item.get("status") or "").lower() == "active" else "medium",
+            owner="SIEM",
+            notes=notes,
+        )
+        asset_id = created.get("id") or ""
+    else:
+        from app.db import now as _now
+
+        get_conn().execute(
+            "UPDATE assets SET name=?, notes=?, updated_at=? WHERE id=? AND user_id=?",
+            (display, notes, _now(), asset_id, user_id),
+        )
+        get_conn().commit()
+    return asset_id
+
+
+def _upsert_agent(item: dict[str, Any], user_id: str = "local") -> tuple[bool, str]:
+    """Returns (inserted, asset_id)."""
     ensure_schema()
     aid = str(item.get("agent_id") or "")
     if not aid:
-        return False
+        return False, ""
+    asset_id = _link_agent_asset(user_id, item)
     c = get_conn()
     ts = now()
     fields = (
@@ -62,6 +122,7 @@ def _upsert_agent(item: dict[str, Any]) -> bool:
         item.get("version") or "",
         item.get("group") or "",
         item.get("last_keep_alive") or "",
+        asset_id,
         json.dumps(item.get("raw") or item),
         ts,
     )
@@ -70,22 +131,22 @@ def _upsert_agent(item: dict[str, Any]) -> bool:
         c.execute(
             """
             UPDATE wazuh_agents SET name=?, ip=?, status=?, os=?, version=?, group_name=?,
-            last_keep_alive=?, raw_json=?, updated_at=? WHERE agent_id=?
+            last_keep_alive=?, asset_id=?, raw_json=?, updated_at=? WHERE agent_id=?
             """,
             (*fields, aid),
         )
         c.commit()
-        return False
+        return False, asset_id
     c.execute(
         """
         INSERT INTO wazuh_agents
-        (id, agent_id, name, ip, status, os, version, group_name, last_keep_alive, raw_json, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, agent_id, name, ip, status, os, version, group_name, last_keep_alive, asset_id, raw_json, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (new_id(), aid, *fields),
     )
     c.commit()
-    return True
+    return True, asset_id
 
 
 def list_agents(limit: int = 100) -> list[dict[str, Any]]:
@@ -118,7 +179,14 @@ async def sync(user_id: str = "local") -> dict[str, Any]:
     from app.xdr import _link_incident, _upsert_event
 
     agents = await wazuh_conn.fetch_agents()
-    agents_new = sum(1 for a in agents if _upsert_agent(a))
+    agents_new = 0
+    assets_linked = 0
+    for a in agents:
+        inserted, asset_id = _upsert_agent(a, user_id=user_id)
+        if inserted:
+            agents_new += 1
+        if asset_id:
+            assets_linked += 1
 
     detections = await wazuh_conn.fetch_detections()
     alerts_new = 0
@@ -145,6 +213,7 @@ async def sync(user_id: str = "local") -> dict[str, Any]:
         "configured": True,
         "agents_new": agents_new,
         "agents_total": len(agents),
+        "assets_linked": assets_linked,
         "alerts_new": alerts_new,
         "alerts_total": len(detections),
         "indexer": wazuh_conn.indexer_configured(),
@@ -152,7 +221,14 @@ async def sync(user_id: str = "local") -> dict[str, Any]:
     try:
         from app.realtime_bus import publish
 
-        publish(type="siem", source="wazuh", alerts_new=alerts_new, agents_new=agents_new)
+        publish(
+            type="siem",
+            source="wazuh",
+            alerts_new=alerts_new,
+            agents_new=agents_new,
+            assets_linked=assets_linked,
+        )
+        publish(type="asset", source="siem", count=assets_linked)
     except Exception:
         pass
     return out

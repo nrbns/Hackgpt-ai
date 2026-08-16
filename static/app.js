@@ -125,14 +125,57 @@ window.setSelectedTools = (ids) => {
   updateToolsChipState();
 };
 
-/** Builtin live-scan pack — works without PATH binaries; persists assets + vulns when Auth is on. */
+/** Builtin PT pack — always available without nmap/nuclei install. */
 const LIVE_SCAN_DEFAULT_TOOLS = [
+  "securaiq",
   "ports",
   "http",
   "tls",
+  "dns",
+  "headers_security",
   "hardening_baseline",
   "openvas",
 ];
+
+async function openNewScanModal() {
+  const modal = document.getElementById("newScanModal");
+  if (!modal) {
+    return startLiveScan();
+  }
+  modal.classList.remove("hidden");
+  const progress = document.getElementById("newScanProgress");
+  if (progress) progress.classList.add("hidden");
+  const form = document.getElementById("newScanForm");
+  if (form) form.classList.remove("hidden");
+  const target = document.getElementById("newScanTarget");
+  const existing = typeof getScanTarget === "function" ? getScanTarget() : "";
+  if (target && existing) target.value = existing;
+  target?.focus();
+  try {
+    const res = await fetch("/api/scans/scanners", { headers: authHeaders() });
+    if (res.ok) {
+      const data = await res.json();
+      const sel = document.getElementById("newScanScanner");
+      if (sel && Array.isArray(data.scanners)) {
+        const enabled = data.scanners.filter((s) => s.engine_enabled);
+        const opts = [
+          '<option value="all">All available scanners</option>',
+          ...enabled.map((s) => {
+            const label = s.available ? s.name : `${s.name} (not installed)`;
+            const dis = s.available ? "" : " disabled";
+            return `<option value="${s.id}"${dis}>${label}</option>`;
+          }),
+        ];
+        sel.innerHTML = opts.join("");
+        const firstAvail = enabled.find((s) => s.available);
+        sel.value = firstAvail ? firstAvail.id : "all";
+      }
+    }
+  } catch (_) {
+    /* keep HTML defaults */
+  }
+}
+window.openNewScanModal = openNewScanModal;
 
 async function startLiveScan() {
   showView("chat");
@@ -141,6 +184,8 @@ async function startLiveScan() {
   if (scanAuthorizedEl) scanAuthorizedEl.checked = true;
   if (localToolsEl) localToolsEl.checked = true;
   selectedTools = LIVE_SCAN_DEFAULT_TOOLS.slice();
+  const engineSel = document.getElementById("toolsEngineScanner");
+  if (engineSel && engineSel.value === "none") engineSel.value = "securaiq";
   openToolsPalette(true);
   syncScanTargetFields(false);
   await renderToolsPalette();
@@ -148,23 +193,384 @@ async function startLiveScan() {
   updateToolsChipState();
   const hint = document.getElementById("toolsPaletteHint");
   if (hint) {
-    hint.textContent = "Enter owned target below · Auth on · Run scan";
+    hint.textContent = "Tools hub · engine scan + PT pack + SIEM/inventory from one place";
   }
   const focusEl = scanTargetIpEl || targetIpEl;
   focusEl?.focus();
-  if (!getScanTarget()) {
-    appendMessage(
-      "assistant",
-      renderMarkdown(
-        "**Live scan** — type an **owned** IP/hostname in the **Target** field above the tools, keep **Auth** on, then **Run scan**.\n\nDefault tools: `" +
-          LIVE_SCAN_DEFAULT_TOOLS.join(", ") +
-          "`."
-      ),
-      true
-    );
-  }
 }
 window.startLiveScan = startLiveScan;
+
+function toolsHubTargetAuth() {
+  syncScanTargetFields(true);
+  return { target: getScanTarget(), authorized: getScanAuthorized() };
+}
+
+async function queueEngineScanFromTools(opts = {}) {
+  const { target, authorized } = toolsHubTargetAuth();
+  const scanner =
+    opts.scanner || document.getElementById("toolsEngineScanner")?.value || "securaiq";
+  const profile =
+    opts.profile || document.getElementById("toolsEngineProfile")?.value || "discovery";
+  if (scanner === "none") {
+    return { skipped: true, reason: "engine_off" };
+  }
+  if (!target) {
+    throw new Error("Set a Target (owned IP/host or local path) before queuing an engine scan.");
+  }
+  if (!authorized) {
+    throw new Error("Check Auth before queuing an engine scan on this target.");
+  }
+  if (authorizedTargetEl) authorizedTargetEl.checked = true;
+  if (targetIpEl) targetIpEl.value = target;
+  const body = {
+    target,
+    scanner,
+    profile,
+    authorized: true,
+    scope: [],
+    engagement_id: engagementSelectEl?.value || null,
+  };
+  const res = await fetch("/api/scans", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    let detail = data.detail || `HTTP ${res.status}`;
+    if (typeof detail !== "string") detail = JSON.stringify(detail);
+    throw new Error(detail);
+  }
+  const scanIds = Array.isArray(data.scans)
+    ? data.scans.map((s) => s.scan_id).filter(Boolean)
+    : data.scan_id
+      ? [data.scan_id]
+      : [];
+  if (!scanIds.length) throw new Error("No scan_id returned");
+  if (toolsPaletteOutEl) {
+    toolsPaletteOutEl.classList.remove("hidden");
+    toolsPaletteOutEl.textContent = `Engine scan queued (${scanner}/${profile}): ${scanIds.join(", ")}`;
+  }
+  if (typeof setLiveState === "function") {
+    setLiveState(
+      "live-busy",
+      data.scanner === "all" ? `${scanIds.length} scanners queued` : "Scan queued",
+      scanIds[0]
+    );
+  }
+  if (opts.poll !== false && typeof pollScansUntilDone === "function") {
+    await pollScansUntilDone(scanIds);
+  }
+  return { ok: true, scan_ids: scanIds, data };
+}
+window.queueEngineScanFromTools = queueEngineScanFromTools;
+
+async function syncSiemFromTools() {
+  const res = await fetch("/api/siem/sync", { method: "POST", headers: authHeaders() });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    let detail = data.detail || `HTTP ${res.status}`;
+    if (typeof detail !== "string") detail = JSON.stringify(detail);
+    throw new Error(detail);
+  }
+  const job = data.job || data;
+  const msg = `SIEM sync queued${job.id ? ` · job ${job.id}` : ""}`;
+  if (toolsPaletteOutEl) {
+    toolsPaletteOutEl.classList.remove("hidden");
+    toolsPaletteOutEl.textContent = msg;
+  }
+  if (typeof notifyUser === "function") notifyUser(`**${msg}**`);
+  return data;
+}
+window.syncSiemFromTools = syncSiemFromTools;
+
+async function syncInventoryFromTools() {
+  const res = await fetch("/api/openaudit/sync", { method: "POST", headers: authHeaders() });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    let detail = data.detail || `HTTP ${res.status}`;
+    if (typeof detail !== "string") detail = JSON.stringify(detail);
+    throw new Error(detail);
+  }
+  const job = data.job || data;
+  const msg = `Inventory sync queued${job.id ? ` · job ${job.id}` : ""}`;
+  if (toolsPaletteOutEl) {
+    toolsPaletteOutEl.classList.remove("hidden");
+    toolsPaletteOutEl.textContent = msg;
+  }
+  if (typeof notifyUser === "function") notifyUser(`**${msg}**`);
+  return data;
+}
+window.syncInventoryFromTools = syncInventoryFromTools;
+
+async function ensurePtPackSelected() {
+  if (selectedTools.length) return selectedTools;
+  try {
+    const res = await fetch("/api/tools", { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    selectedTools =
+      Array.isArray(data.pt_pack) && data.pt_pack.length
+        ? data.pt_pack.slice()
+        : LIVE_SCAN_DEFAULT_TOOLS.slice();
+  } catch {
+    selectedTools = LIVE_SCAN_DEFAULT_TOOLS.slice();
+  }
+  syncToolsPaletteSelection();
+  updateToolsChipState();
+  return selectedTools;
+}
+
+async function runAllFromTools() {
+  const engine = document.getElementById("toolsEngineScanner")?.value || "securaiq";
+  await ensurePtPackSelected();
+  const notes = [];
+  const jobs = [];
+  if (engine !== "none") {
+    jobs.push(
+      queueEngineScanFromTools({ poll: true })
+        .then((queued) => {
+          if (!queued.skipped) notes.push(`engine: ${(queued.scan_ids || []).join(", ")}`);
+        })
+        .catch((err) => {
+          appendMessage(
+            "assistant",
+            renderMarkdown(`**Engine scan skipped:** ${err.message || err}`),
+            true
+          );
+        })
+    );
+  }
+  jobs.push(runSelectedTools());
+  await Promise.all(jobs);
+  if (notes.length && toolsPaletteOutEl) {
+    toolsPaletteOutEl.classList.remove("hidden");
+    const prev = toolsPaletteOutEl.textContent || "";
+    toolsPaletteOutEl.textContent = `${notes.join(" · ")}\n${prev}`.slice(0, 4000);
+  }
+}
+window.runAllFromTools = runAllFromTools;
+
+function renderScanSteps(progress) {
+  const ul = document.getElementById("newScanSteps");
+  if (!ul) return;
+  const steps = Array.isArray(progress) ? progress : [];
+  ul.innerHTML = steps
+    .map((s) => {
+      const st = s.status || "pending";
+      const mark = st === "done" ? "✓" : st === "active" ? "●" : st === "failed" ? "✗" : "○";
+      return `<li class="scan-step scan-step-${st}"><span>${mark}</span> ${s.label || s.id}</li>`;
+    })
+    .join("");
+}
+
+async function pollScanUntilDone(scanId) {
+  const progressEl = document.getElementById("newScanProgress");
+  const form = document.getElementById("newScanForm");
+  const statusLabel = document.getElementById("newScanStatusLabel");
+  const idLabel = document.getElementById("newScanIdLabel");
+  const summaryEl = document.getElementById("newScanSummary");
+  if (form) form.classList.add("hidden");
+  if (progressEl) progressEl.classList.remove("hidden");
+  if (idLabel) idLabel.textContent = scanId;
+  for (let i = 0; i < 120; i++) {
+    const res = await fetch(`/api/scans/${encodeURIComponent(scanId)}`, { headers: authHeaders() });
+    if (!res.ok) break;
+    const scan = await res.json();
+    if (statusLabel) statusLabel.textContent = (scan.status || "").toUpperCase();
+    renderScanSteps(scan.progress);
+    const terminal = ["completed", "failed", "blocked"].includes(scan.status);
+    if (terminal) {
+      const sum = scan.summary || {};
+      if (summaryEl) {
+        if (scan.status === "completed") {
+          const reportUrl = sum.report_url || `/api/scans/${encodeURIComponent(scanId)}/report`;
+          const pdfUrl = sum.report_pdf_url || `/api/scans/${encodeURIComponent(scanId)}/report.pdf`;
+          summaryEl.innerHTML = `Open ports: ${sum.open_ports ?? "—"} · Findings: ${sum.findings_created ?? sum.findings ?? "—"} · Evidence: saved<br/>
+            <button type="button" class="cc-action" id="newScanOpenReport" data-href="${reportUrl}">Download MD report</button>
+            <button type="button" class="cc-action" id="newScanOpenPdf" data-href="${pdfUrl}">Download PDF report</button>
+            <button type="button" class="cc-action" data-workspace="reports" id="newScanGotoReports">Open Reports</button>
+            <button type="button" class="cc-action" data-workspace="vulns" id="newScanGotoVulns">View findings</button>`;
+          const dl = document.getElementById("newScanOpenReport");
+          dl?.addEventListener("click", async () => {
+            try {
+              if (typeof downloadMd === "function") {
+                await downloadMd(reportUrl, `securaiq-scan-${String(scanId).slice(0, 8)}.md`);
+              } else {
+                const r = await fetch(reportUrl, { headers: authHeaders() });
+                const md = await r.text();
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+                a.download = `securaiq-scan-${String(scanId).slice(0, 8)}.md`;
+                a.click();
+              }
+            } catch (err) {
+              alert(err.message || "Report download failed");
+            }
+          });
+          document.getElementById("newScanOpenPdf")?.addEventListener("click", async () => {
+            try {
+              if (typeof window.downloadBinary === "function") {
+                await window.downloadBinary(pdfUrl, `securaiq-va-${String(scanId).slice(0, 8)}.pdf`, "application/pdf");
+              } else {
+                const r = await fetch(pdfUrl, { headers: authHeaders() });
+                const buf = await r.arrayBuffer();
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(new Blob([buf], { type: "application/pdf" }));
+                a.download = `securaiq-va-${String(scanId).slice(0, 8)}.pdf`;
+                a.click();
+              }
+            } catch (err) {
+              alert(err.message || "PDF download failed");
+            }
+          });
+          document.getElementById("newScanGotoReports")?.addEventListener("click", () => {
+            document.getElementById("newScanModal")?.classList.add("hidden");
+            if (typeof showView === "function") showView("reports");
+            else if (typeof window.showView === "function") window.showView("reports");
+          });
+          document.getElementById("newScanGotoVulns")?.addEventListener("click", () => {
+            document.getElementById("newScanModal")?.classList.add("hidden");
+            if (typeof showView === "function") showView("vulns");
+            else if (typeof window.showView === "function") window.showView("vulns");
+          });
+        } else {
+          summaryEl.textContent = scan.error || scan.status;
+        }
+      }
+      if (scan.status === "completed" && typeof loadVulns === "function") {
+        try {
+          await loadVulns();
+        } catch (_) {}
+      }
+      if (scan.status === "completed" && typeof refreshMissionControl === "function") {
+        try {
+          await refreshMissionControl();
+        } catch (_) {}
+      }
+      return scan;
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  if (summaryEl) summaryEl.textContent = "Still running — check Jobs or refresh later.";
+  return null;
+}
+
+/** Poll one or many queued scans (scanner=all returns scans[]). */
+async function pollScansUntilDone(scanIds) {
+  const ids = (Array.isArray(scanIds) ? scanIds : [scanIds]).filter(Boolean);
+  if (!ids.length) return [];
+  const statusLabel = document.getElementById("newScanStatusLabel");
+  const idLabel = document.getElementById("newScanIdLabel");
+  const summaryEl = document.getElementById("newScanSummary");
+  const form = document.getElementById("newScanForm");
+  const progressEl = document.getElementById("newScanProgress");
+  if (form) form.classList.add("hidden");
+  if (progressEl) progressEl.classList.remove("hidden");
+  if (idLabel) idLabel.textContent = ids.length === 1 ? ids[0] : `${ids.length} scans`;
+  const results = [];
+  for (let i = 0; i < ids.length; i++) {
+    if (statusLabel) statusLabel.textContent = `RUNNING ${i + 1}/${ids.length}`;
+    if (summaryEl && ids.length > 1) {
+      summaryEl.textContent = `Waiting on scan ${i + 1} of ${ids.length}…`;
+    }
+    results.push(await pollScanUntilDone(ids[i]));
+  }
+  if (summaryEl && ids.length > 1) {
+    const done = results.filter((s) => s && s.status === "completed").length;
+    const findings = results.reduce((n, s) => {
+      const sum = (s && s.summary) || {};
+      return n + Number(sum.findings_created ?? sum.findings ?? 0);
+    }, 0);
+    summaryEl.textContent = `Batch done: ${done}/${ids.length} completed · Findings: ${findings}`;
+  }
+  return results;
+}
+
+async function submitNewScan(ev) {
+  ev?.preventDefault?.();
+  const target = document.getElementById("newScanTarget")?.value?.trim();
+  const authorized = !!document.getElementById("newScanAuthorized")?.checked;
+  const scanner = document.getElementById("newScanScanner")?.value || "securaiq";
+  const profile =
+    document.querySelector('input[name="scanProfile"]:checked')?.value || "discovery";
+  const scopeRaw = document.getElementById("newScanScope")?.value || "";
+  const scope = scopeRaw
+    .split(/[\n,;]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!target) {
+    alert("Enter a target hostname or IP you are authorized to scan.");
+    return;
+  }
+  if (!authorized) {
+    alert("Confirm authorization before starting a scan.");
+    return;
+  }
+  const btn = document.getElementById("newScanStart");
+  if (btn) btn.disabled = true;
+  try {
+    const body = {
+      target,
+      scanner,
+      profile,
+      authorized: true,
+      scope,
+      engagement_id: engagementSelectEl?.value || null,
+    };
+    const res = await fetch("/api/scans", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      let detail = data.detail || `HTTP ${res.status}`;
+      if (typeof detail !== "string") detail = JSON.stringify(detail);
+      if (res.status === 405) {
+        detail =
+          "Scan API not loaded (Method Not Allowed). Restart the SecuraIQ server (python run.py), then hard-refresh the page.";
+      }
+      throw new Error(detail);
+    }
+    const scanIds = Array.isArray(data.scans)
+      ? data.scans.map((s) => s.scan_id).filter(Boolean)
+      : data.scan_id
+        ? [data.scan_id]
+        : [];
+    if (!scanIds.length) throw new Error("No scan_id returned");
+    if (typeof setLiveState === "function") {
+      const label =
+        data.scanner === "all"
+          ? `${scanIds.length} scanners queued`
+          : "Scan queued";
+      setLiveState("live-busy", label, scanIds[0]);
+    }
+    await pollScansUntilDone(scanIds);
+  } catch (err) {
+    const summaryEl = document.getElementById("newScanSummary");
+    const progressEl = document.getElementById("newScanProgress");
+    if (progressEl) progressEl.classList.remove("hidden");
+    if (summaryEl) summaryEl.textContent = String(err.message || err);
+    alert(String(err.message || err));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function bindNewScanModal() {
+  const modal = document.getElementById("newScanModal");
+  if (!modal) return;
+  on(document.getElementById("newScanClose"), "click", () => modal.classList.add("hidden"));
+  on(modal, "click", (e) => {
+    if (e.target === modal) modal.classList.add("hidden");
+  });
+  on(document.getElementById("newScanForm"), "submit", submitNewScan);
+  on(document.getElementById("newScanAdvanced"), "click", () => {
+    modal.classList.add("hidden");
+    startLiveScan();
+  });
+}
+
 const attachBtn = document.getElementById("attachBtn");
 const chatAttachInput = document.getElementById("chatAttachInput");
 const attachChipsEl = document.getElementById("attachChips");
@@ -2104,9 +2510,10 @@ function wireCommandCenterUi() {
   }
   wireToolsPalette();
   wireLiveScanActions(document);
+  bindNewScanModal();
   document.querySelectorAll("#emptySuite .suite-chip").forEach((btn) => {
     btn.addEventListener("click", () => {
-      if (btn.getAttribute("data-action") === "live-scan") return; // handled by wireLiveScanActions
+      if (btn.getAttribute("data-action") === "live-scan" || btn.getAttribute("data-action") === "new-scan") return;
       if (btn.getAttribute("data-ai-tab")) {
         showView("chat");
         openAiTab(btn.getAttribute("data-ai-tab"));
@@ -2180,9 +2587,35 @@ window.openToolsPalette = openToolsPalette;
 async function renderToolsPalette() {
   if (!toolsPaletteGridEl) return;
   try {
-    const res = await fetch("/api/tools", { headers: authHeaders() });
-    const data = await res.json();
+    const [toolsRes, scannersRes] = await Promise.all([
+      fetch("/api/tools", { headers: authHeaders() }),
+      fetch("/api/scans/scanners", { headers: authHeaders() }).catch(() => null),
+    ]);
+    const data = await toolsRes.json();
     toolsCatalogCache = data.tools || [];
+    let scanners = [];
+    if (scannersRes && scannersRes.ok) {
+      const scData = await scannersRes.json().catch(() => ({}));
+      scanners = Array.isArray(scData.scanners) ? scData.scanners : [];
+      const engineSel = document.getElementById("toolsEngineScanner");
+      if (engineSel && scanners.length) {
+        const cur = engineSel.value || "securaiq";
+        const enabled = scanners.filter((s) => s.engine_enabled);
+        const opts = [
+          '<option value="securaiq">Engine: SecuraIQ</option>',
+          '<option value="all">Engine: all available</option>',
+          ...enabled
+            .filter((s) => s.id !== "securaiq")
+            .map((s) => {
+              const label = s.available ? s.name : `${s.name} (fallback/PATH)`;
+              return `<option value="${escapeHtml(s.id)}">Engine: ${escapeHtml(label)}</option>`;
+            }),
+          '<option value="none">Engine: off (tools only)</option>',
+        ];
+        engineSel.innerHTML = opts.join("");
+        if ([...engineSel.options].some((o) => o.value === cur)) engineSel.value = cur;
+      }
+    }
     const originMeta = {
       securaiq: {
         label: "SecuraIQ tools",
@@ -2190,7 +2623,7 @@ async function renderToolsPalette() {
       },
       third_party: {
         label: "Third-party tools & APIs",
-        hint: "PATH binaries or vendor APIs · install / configure to enable",
+        hint: "PATH binaries or vendor APIs · missing tools use builtin fallback",
       },
     };
     const byOrigin = { securaiq: {}, third_party: {} };
@@ -2200,39 +2633,60 @@ async function renderToolsPalette() {
       (byOrigin[origin][cat] = byOrigin[origin][cat] || []).push(t);
     });
     const renderTool = (t) => {
-      const readyLabel = !t.available
-        ? t.origin === "third_party"
-          ? t.kind === "external"
-            ? "not installed"
-            : "API not configured"
-          : "unavailable"
-        : t.heavy
+      const selectable = t.available || !!t.fallback;
+      const readyLabel = t.available
+        ? t.heavy
           ? "heavy"
-          : "ready";
+          : "ready"
+        : t.fallback
+          ? `fallback → ${t.fallback}`
+          : t.origin === "third_party"
+            ? t.kind === "external"
+              ? "not installed"
+              : "API not configured"
+            : "unavailable";
       const provider =
         t.origin === "third_party" && t.provider ? ` · ${t.provider}` : "";
       return `<label class="tool-pick tool-origin-${escapeHtml(t.origin || "securaiq")} ${
-        t.available ? "" : "unavailable"
+        selectable ? "" : "unavailable"
       } ${selectedTools.includes(t.id) ? "selected" : ""}" data-id="${escapeHtml(
         t.id
       )}" title="${escapeHtml(t.description || "")}">
                 <input type="checkbox" ${selectedTools.includes(t.id) ? "checked" : ""} ${
-        t.available ? "" : "disabled"
+        selectable ? "" : "disabled"
       } />
                 <span><strong>${escapeHtml(t.name || t.id)}</strong>
                 <small>${escapeHtml(readyLabel)}${escapeHtml(provider)}</small></span>
               </label>`;
     };
-    toolsPaletteGridEl.innerHTML = ["securaiq", "third_party"]
-      .map((origin) => {
-        const cats = byOrigin[origin] || {};
-        const entries = Object.entries(cats);
-        if (!entries.length) return "";
-        const meta = originMeta[origin];
-        const avail =
-          origin === "securaiq" ? data.securaiq_available : data.third_party_available;
-        const total = origin === "securaiq" ? data.securaiq_count : data.third_party_count;
-        return `<section class="tools-origin tools-origin-${origin}">
+    const engineSection = scanners.length
+      ? `<section class="tools-origin tools-origin-engine">
+          <header class="tools-origin-head">
+            <strong>Scan engine</strong>
+            <span class="hint">${scanners.filter((s) => s.available).length}/${scanners.length} available · Queue engine scan or Run all</span>
+          </header>
+          <div class="tools-cat-grid">${scanners
+            .map((s) => {
+              const ready = s.available ? "ready" : s.engine_enabled ? "PATH / fallback" : "disabled";
+              return `<div class="tool-pick tool-origin-securaiq" title="${escapeHtml(s.description || s.name || "")}">
+                <span><strong>${escapeHtml(s.name || s.id)}</strong><small>${escapeHtml(ready)}</small></span>
+              </div>`;
+            })
+            .join("")}</div>
+        </section>`
+      : "";
+    toolsPaletteGridEl.innerHTML =
+      engineSection +
+      ["securaiq", "third_party"]
+        .map((origin) => {
+          const cats = byOrigin[origin] || {};
+          const entries = Object.entries(cats);
+          if (!entries.length) return "";
+          const meta = originMeta[origin];
+          const avail =
+            origin === "securaiq" ? data.securaiq_available : data.third_party_available;
+          const total = origin === "securaiq" ? data.securaiq_count : data.third_party_count;
+          return `<section class="tools-origin tools-origin-${origin}">
           <header class="tools-origin-head">
             <strong>${escapeHtml(meta.label)}</strong>
             <span class="hint">${avail || 0}/${total || 0} ready · ${escapeHtml(meta.hint)}</span>
@@ -2246,9 +2700,9 @@ async function renderToolsPalette() {
             )
             .join("")}
         </section>`;
-      })
-      .join("");
-    toolsPaletteGridEl.querySelectorAll(".tool-pick").forEach((el) => {
+        })
+        .join("");
+    toolsPaletteGridEl.querySelectorAll(".tool-pick[data-id]").forEach((el) => {
       el.addEventListener("click", (e) => {
         if (el.classList.contains("unavailable")) return;
         e.preventDefault();
@@ -2261,7 +2715,7 @@ async function renderToolsPalette() {
     });
     const hint = document.getElementById("toolsPaletteHint");
     if (hint) {
-      hint.textContent = `SecuraIQ ${data.securaiq_available || 0}/${data.securaiq_count || 0} · third-party ${
+      hint.textContent = `Engine + SecuraIQ ${data.securaiq_available || 0}/${data.securaiq_count || 0} · third-party ${
         data.third_party_available || 0
       }/${data.third_party_count || 0} · Auth + owned target`;
     }
@@ -2280,6 +2734,54 @@ function wireToolsPalette() {
     updateToolsChipState();
     loadToolsStatus();
   });
+  on(document.getElementById("toolsPalettePtPack"), "click", async () => {
+    try {
+      const res = await fetch("/api/tools", { headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      const pack = Array.isArray(data.pt_pack) && data.pt_pack.length
+        ? data.pt_pack
+        : LIVE_SCAN_DEFAULT_TOOLS;
+      selectedTools = pack.slice();
+      syncToolsPaletteSelection();
+      updateToolsChipState();
+      const hint = document.getElementById("toolsPaletteHint");
+      if (hint) hint.textContent = `PT pack selected (${selectedTools.length} tools) · Auth + Run all`;
+      if (typeof notifyUser === "function") {
+        notifyUser(`**PT pack ready:** ${selectedTools.join(", ")}`);
+      }
+    } catch (err) {
+      selectedTools = LIVE_SCAN_DEFAULT_TOOLS.slice();
+      syncToolsPaletteSelection();
+      updateToolsChipState();
+    }
+  });
+  on(document.getElementById("toolsPaletteEngineRun"), "click", async () => {
+    try {
+      showView("chat");
+      openAiTab("chat");
+      await queueEngineScanFromTools({ poll: true });
+    } catch (err) {
+      appendMessage("assistant", renderMarkdown(`**Engine scan failed:** ${err.message || err}`), true);
+    }
+  });
+  on(document.getElementById("toolsPaletteSyncSiem"), "click", async () => {
+    try {
+      await syncSiemFromTools();
+    } catch (err) {
+      appendMessage("assistant", renderMarkdown(`**SIEM sync failed:** ${err.message || err}`), true);
+    }
+  });
+  on(document.getElementById("toolsPaletteSyncInv"), "click", async () => {
+    try {
+      await syncInventoryFromTools();
+    } catch (err) {
+      appendMessage("assistant", renderMarkdown(`**Inventory sync failed:** ${err.message || err}`), true);
+    }
+  });
+  on(document.getElementById("toolsPaletteNewScan"), "click", () => {
+    toolsPaletteEl?.classList.add("hidden");
+    if (typeof openNewScanModal === "function") openNewScanModal();
+  });
   on(document.getElementById("toolsPaletteUseChat"), "click", () => {
     if (localToolsEl) localToolsEl.checked = true;
     toolsPaletteEl?.classList.add("hidden");
@@ -2291,12 +2793,12 @@ function wireToolsPalette() {
     inputEl?.focus();
     updateToolsChipState();
   });
-  on(document.getElementById("toolsPaletteRun"), "click", () => runSelectedTools());
+  on(document.getElementById("toolsPaletteRun"), "click", () => runAllFromTools());
   on(scanTargetIpEl, "input", () => syncScanTargetFields(true));
   on(scanTargetIpEl, "keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      runSelectedTools();
+      runAllFromTools();
     }
   });
   on(scanAuthorizedEl, "change", () => syncScanTargetFields(true));
@@ -2485,12 +2987,14 @@ function askAboutEntity(kind, payload) {
     },
     vuln: {
       mode: "blueteam",
-      prompt: `Triage vulnerability ${p.cve || ""} — ${p.title || p.id} (severity=${p.severity || "?"}, asset=${p.asset_name || "?"}).
+      prompt: `Triage vulnerability ${p.cve || ""} — ${p.title || p.id} (severity=${p.severity || "?"}, asset=${p.asset_name || "?"}, exposure=${p.scope || "unknown"}).
 
 Rules:
-- If asset is 127.0.0.1, ::1, or localhost, treat as loopback-only: not internet-exposed; do NOT claim remote/unauthenticated RCE from the public internet.
-- Match severity to real exposure (loopback = local hardening; RFC1918 = LAN/lateral; public = remote).
-- Be concrete for an authorized environment: detection, patch/workaround, verify. No generic scanner marketing.`,
+- If asset is 127.0.0.1, ::1, or localhost: loopback-only — not internet-exposed.
+- If asset is RFC1918 (10/8, 172.16/12, 192.168/16) and finding is SMB/445, MSRPC/135, or NetBIOS/139: treat as expected Windows LAN service (info/low residual). Do NOT call it High ransomware exposure unless internet-facing.
+- VirtualBox/VMware host-only gateway (.1) is usually the host, not the lab VM — say so.
+- Only recommend real commands (nmap, Windows Firewall, Get-SmbServerConfiguration / Set-SmbServerConfiguration -RequireSecuritySignature $true). Never invent tools (no vulcanize, fake firewall CLIs, or made-up smbclient flags).
+- Be concrete: detection, harden/verify, owner. No generic marketing.`,
     },
     remediation: {
       mode: "ciso",
@@ -2693,7 +3197,7 @@ async function loadCommandCenter() {
     const levelEl = document.getElementById("ccScoreLevel");
     if (levelEl) {
       if (emptyWorkspace) {
-        levelEl.textContent = "Empty — run Live scan";
+        levelEl.textContent = "Empty — run New scan";
         levelEl.dataset.level = "ok";
       } else {
         levelEl.textContent =
@@ -2998,7 +3502,7 @@ async function loadCommandCenter() {
                 <strong>${Number(r.hits) || 0} hit${Number(r.hits) === 1 ? "" : "s"}</strong></div>`
             )
             .join("")}`
-        : `<p class="hint">No MITRE keyword signals yet — run Live scan or add risks/playbooks</p>`;
+        : `<p class="hint">No MITRE keyword signals yet — run New scan or add risks/playbooks</p>`;
     }
 
     if (riskListEl) {
@@ -3073,12 +3577,17 @@ function syncChecklistProgress(data) {
 }
 
 function wireLiveScanActions(root) {
-  (root || document).querySelectorAll("[data-action='live-scan']").forEach((btn) => {
+  (root || document).querySelectorAll("[data-action='live-scan'], [data-action='new-scan']").forEach((btn) => {
     if (btn.dataset.liveScanWired) return;
     btn.dataset.liveScanWired = "1";
     btn.addEventListener("click", (e) => {
       e.preventDefault();
-      if (typeof window.startLiveScan === "function") window.startLiveScan();
+      const action = btn.getAttribute("data-action");
+      if (action === "new-scan" && typeof window.openNewScanModal === "function") {
+        window.openNewScanModal();
+      } else if (typeof window.startLiveScan === "function") {
+        window.startLiveScan();
+      }
     });
   });
 }
@@ -3089,7 +3598,7 @@ function wireMissionFirstRunOnce() {
   wireLiveScanActions(document);
   document.querySelectorAll("#mcChecklist .mc-check-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      if (btn.getAttribute("data-action") === "live-scan") return; // wireLiveScanActions
+      if (btn.getAttribute("data-action") === "live-scan" || btn.getAttribute("data-action") === "new-scan") return;
       const ws = btn.getAttribute("data-workspace");
       const mod = btn.getAttribute("data-module");
       if (ws && typeof window.showWorkspace === "function") window.showWorkspace(ws);
@@ -3109,7 +3618,7 @@ function renderWorkQueue(items) {
   const el = document.getElementById("ccWorkQueue");
   if (!el) return;
   if (!items.length) {
-    el.innerHTML = `<p class="hint">Empty queue — run a Live scan on an owned target, or use the quick-start checklist.</p>`;
+    el.innerHTML = `<p class="hint">Empty queue — run a New scan on an owned target, or use the quick-start checklist.</p>`;
     return;
   }
   el.innerHTML = `<div class="wq-table-wrap"><table class="wq-table">

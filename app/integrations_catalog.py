@@ -104,7 +104,7 @@ CATALOG: list[dict[str, Any]] = [
     {"id": "msrc", "name": "Microsoft MSRC", "category": "intel", "status": "shipped"},
     {"id": "filterlists", "name": "FilterLists", "category": "intel", "status": "shipped"},
     {"id": "phishstats", "name": "PhishStats", "category": "intel", "status": "shipped"},
-    {"id": "free_apis_security", "name": "Free APIs (Security)", "category": "intel", "status": "shipped", "hint": "GET /api/intel/free/catalog"},
+    {"id": "free_apis_security", "name": "Threat intel providers", "category": "intel", "status": "shipped", "hint": "GET /api/intel/free/catalog · GET /api/intel/lookup"},
     {"id": "awesome_threat_detection", "name": "Awesome Threat Detection", "category": "intel", "status": "shipped", "hint": "0x4D31 curated hunt/detect catalog — GET /api/intel/threat-detection"},
     {"id": "virustotal", "name": "VirusTotal", "category": "intel", "status": "partial", "hint": "Set VIRUSTOTAL_API_KEY"},
     {"id": "abuseipdb", "name": "AbuseIPDB", "category": "intel", "status": "partial", "hint": "Set ABUSEIPDB_API_KEY"},
