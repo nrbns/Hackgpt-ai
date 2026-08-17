@@ -183,7 +183,10 @@ With the server running:
 ```bash
 .venv/bin/python scripts/smoke_test.py
 .venv/bin/python scripts/check_openapi_gets.py
+.venv/bin/python scripts/commercial_integration_check.py
 ```
+
+Or offline: `.venv/Scripts/python -m pytest tests/ -q`
 
 ---
 
@@ -225,7 +228,7 @@ Full OpenAPI: http://127.0.0.1:8080/docs
 ```
 app/           FastAPI backend
 static/        Web UI (primary)
-scripts/       Zero-config start + backend helpers
+scripts/       Start helpers, backend switches, smoke checks
 data/knowledge RAG corpus
 docs/          Manuals and runbooks
 ```

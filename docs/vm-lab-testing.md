@@ -39,7 +39,7 @@ Work through these in the Tools Palette (bell/wrench icon in the composer) or by
 
 - **XDR/EDR connectors** (Sophos/CrowdStrike/SentinelOne/Defender) — these need real vendor tenant credentials to test at all; a lab VM alone won't exercise them. If you have a trial account for any of these, that's the next thing to validate — I have not been able to test any of the four against a live tenant.
 - **Heavy/aggressive tools** (`sqlmap`, `ffuf`, `gobuster`, `masscan`) are opt-in (`include_heavy`) by design — don't run these against anything except a VM you fully control, and expect them to be noisy/slow.
-- This guide validates *this session's* new work (`hardening_baseline`) and the pre-existing tool pipeline together — it's not a substitute for `scripts/integration_check.py` etc. against a live server, which is still the broader "does everything start up correctly" check from `docs/run-and-verify.md`.
+- This guide validates *this session's* new work (`hardening_baseline`) and the pre-existing tool pipeline together — it's not a substitute for `scripts/smoke_test.py` / `scripts/check_openapi_gets.py` against a live server.
 
 ## 5. What "strong tool" should mean when you're done
 

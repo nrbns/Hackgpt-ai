@@ -213,11 +213,20 @@ def _hydrate(d: dict[str, Any] | None) -> dict[str, Any] | None:
     return d
 
 
-def clear_user_scan_data(user_id: str) -> dict[str, Any]:
-    """Remove scan records, evidence dirs, and findings produced by scans/live tools."""
+def clear_user_scan_data(user_id: str, *, archive: bool = True) -> dict[str, Any]:
+    """Remove scan records/evidence after optionally archiving them (no-loss default)."""
     import shutil
 
     ensure_scans_schema()
+    archived: dict[str, Any] = {"ok": False, "archived_count": 0}
+    if archive:
+        try:
+            from app.archive import archive_user_scans
+
+            archived = archive_user_scans(user_id)
+        except Exception as exc:
+            archived = {"ok": False, "error": str(exc), "archived_count": 0}
+
     c = get_conn()
     scans = c.execute("SELECT id, evidence_dir FROM scans WHERE user_id = ?", (user_id,)).fetchall()
     evidence_removed = 0
@@ -270,8 +279,23 @@ def clear_user_scan_data(user_id: str) -> dict[str, Any]:
         )
         vulns_deleted = int(cur.rowcount or 0)
     c.commit()
+    try:
+        from app.realtime_bus import publish
+
+        publish(
+            type="scan_clear",
+            user_id=user_id,
+            scans_deleted=scans_deleted,
+            archived_count=archived.get("archived_count") or 0,
+            batch_dir=archived.get("batch_dir"),
+        )
+    except Exception:
+        pass
     return {
         "scans_deleted": scans_deleted,
         "vulnerabilities_deleted": vulns_deleted,
         "evidence_dirs_removed": evidence_removed,
+        "archived": archived,
+        "archive_batch": archived.get("batch_dir"),
+        "archived_count": archived.get("archived_count") or 0,
     }

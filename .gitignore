@@ -7,6 +7,9 @@ data/*.db
 data/*.db-*
 data/uploads/
 data/kpi_snaps/
+data/evidence/
+data/archive/
+data/server-*.log
 tools/ollama/
 vendor/HardeningKitty/
 data/hardeningkitty/

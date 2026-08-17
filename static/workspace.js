@@ -1820,7 +1820,7 @@
         }
       </div>
       <div class="cc-action-row" style="margin-top:1rem">
-        <button type="button" class="cc-action" id="reportClearScans">Clear old scan findings</button>
+        <button type="button" class="cc-action" id="reportClearScans">Archive & clear live scans</button>
         <button type="button" class="cc-action" id="reportExecPdf">Download executive PDF</button>
         <button type="button" class="cc-action" id="reportExecDocx">Executive DOCX</button>
         <button type="button" class="cc-action" id="reportRisksPdf">Risks PDF</button>
@@ -1886,13 +1886,19 @@
       }
     });
     qs("reportClearScans")?.addEventListener("click", async () => {
-      if (!confirm("Delete old scan records, evidence, and scan/tool findings so you can start fresh?")) return;
+      if (
+        !confirm(
+          "Archive scan reports to data/archive, then clear live scan records and findings so you can start fresh? Archives stay available under Reports."
+        )
+      )
+        return;
       try {
         const res = await fetch("/api/scans/clear", { method: "POST", headers: authHeaders() });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+        const archived = data.archived_count || 0;
         alert(
-          `Cleared: ${data.scans_deleted || 0} scans, ${data.vulnerabilities_deleted || 0} findings, ${data.evidence_dirs_removed || 0} evidence folders.`
+          `Archived ${archived} scan(s)${data.archive_batch ? ` → ${data.archive_batch}` : ""}.\nCleared: ${data.scans_deleted || 0} live scans, ${data.vulnerabilities_deleted || 0} findings.`
         );
         await renderReportsPage();
         if (typeof loadVulns === "function") await loadVulns();

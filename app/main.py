@@ -49,6 +49,7 @@ from app.gap_api import router as gap_router
 from app.enterprise_api import router as enterprise_router
 from app.ops_api import router as ops_router
 from app.scans_api import router as scans_router
+from app.archive_api import router as archive_router
 from app.commercial_ext_api import router as commercial_ext_router
 from app.platform_api import router as platform_router
 from app.billing_api import router as billing_router
@@ -129,6 +130,17 @@ async def lifespan(app: FastAPI):
         import app.scan_engine.jobs  # noqa: F401 — register scan_execute handler
 
         ensure_scans_schema()
+        try:
+            from app.archive import ensure_data_layout, prototype_status
+
+            layout = ensure_data_layout()
+            proto = prototype_status()
+            print(
+                f"Data layout ready: evidence={layout.get('evidence')} archive={layout.get('archive')}"
+            )
+            print(f"Prototype: {proto.get('hint')}")
+        except Exception as exc:
+            print(f"Data layout skipped: {exc}")
     except Exception as exc:
         print(f"DB/auth bootstrap: {exc}")
         # Hard-fail unsafe production auth misconfig
@@ -278,6 +290,7 @@ app.include_router(gap_router)
 app.include_router(enterprise_router)
 app.include_router(ops_router)
 app.include_router(scans_router)
+app.include_router(archive_router)
 app.include_router(commercial_ext_router)
 app.include_router(platform_router)
 app.include_router(billing_router)
@@ -877,6 +890,12 @@ async def health():
         payload["realtime_bus"] = realtime_backend_status()
     except Exception:
         payload["realtime_bus"] = {"mode": "unknown"}
+    try:
+        from app.archive import prototype_status
+
+        payload["prototype"] = prototype_status()
+    except Exception:
+        payload["prototype"] = {"ok": False}
     health._cache = {"ts": now_t, "payload": payload}
     return payload
 

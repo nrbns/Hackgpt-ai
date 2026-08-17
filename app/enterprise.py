@@ -1595,7 +1595,18 @@ _DEFAULT_PLAYBOOKS = [
 
 
 def reset_workspace(user_id: str, *, clear_rag: bool = False) -> dict[str, Any]:
-    """Wipe operational data for a user so Mission Control starts at zero. Keeps auth accounts."""
+    """Wipe operational data for a user so Mission Control starts at zero. Keeps auth accounts.
+
+    Scan evidence is archived under data/archive/ first (no-loss).
+    """
+    archived: dict[str, Any] = {}
+    try:
+        from app.archive import archive_user_scans
+
+        archived = archive_user_scans(user_id)
+    except Exception as exc:
+        archived = {"ok": False, "error": str(exc)}
+
     c = get_conn()
     counts: dict[str, int] = {}
 
@@ -1701,7 +1712,14 @@ def reset_workspace(user_id: str, *, clear_rag: bool = False) -> dict[str, Any]:
         except Exception:
             rag_cleared = False
 
-    return {"ok": True, "deleted": counts, "rag_cleared": rag_cleared}
+    return {
+        "ok": True,
+        "deleted": counts,
+        "rag_cleared": rag_cleared,
+        "archived": archived,
+        "archived_count": archived.get("archived_count") or 0,
+        "archive_batch": archived.get("batch_dir"),
+    }
 
 
 def apply_workspace_zero_start() -> dict[str, Any] | None:

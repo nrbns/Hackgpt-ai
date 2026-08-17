@@ -34,9 +34,11 @@ def _lan_ips() -> list[str]:
 
 
 def _module_available(name: str) -> bool:
+    """Cheap presence check — never import heavy packages (unsloth/torch hang the event loop)."""
     try:
-        __import__(name)
-        return True
+        import importlib.util
+
+        return importlib.util.find_spec(name) is not None
     except Exception:
         return False
 
@@ -50,11 +52,22 @@ def normalize_path(value: str) -> str:
         return str(p)
 
 
+_PLATFORM_CACHE: dict[str, Any] | None = None
+_PLATFORM_CACHE_TS = 0.0
+
+
 def platform_info() -> dict[str, Any]:
+    global _PLATFORM_CACHE, _PLATFORM_CACHE_TS
+    import time
+
+    now = time.monotonic()
+    if _PLATFORM_CACHE is not None and (now - _PLATFORM_CACHE_TS) < 30:
+        return _PLATFORM_CACHE
+
     system = platform.system()
     ips = _lan_ips()
     port = settings.port
-    return {
+    payload = {
         "os": system,
         "os_release": platform.release(),
         "python": platform.python_version(),
@@ -91,3 +104,6 @@ def platform_info() -> dict[str, Any]:
         },
         "mobile_clients": ["Android browser", "iOS Safari", "PWA / Add to Home Screen"],
     }
+    _PLATFORM_CACHE = payload
+    _PLATFORM_CACHE_TS = now
+    return payload

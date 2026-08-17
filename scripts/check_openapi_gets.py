@@ -17,6 +17,8 @@ SKIP = {
     "/api/auth/oidc/login",  # Redirects or 400 when auth/OIDC disabled
     "/api/auth/oidc/callback",  # Requires valid OIDC code + state
 }
+# Optional features: 503 "disabled" is healthy for default lab installs.
+OPTIONAL_DISABLED_PREFIXES = ("/scim/",)
 
 
 def main() -> int:
@@ -49,12 +51,20 @@ def main() -> int:
                 continue
 
             checked += 1
-            if not 200 <= response.status_code < 300:
-                failures.append(
-                    f"GET {path}: HTTP {response.status_code} {response.text[:160]!r}"
-                )
-            else:
+            if 200 <= response.status_code < 300:
                 print(f"OK  {response.status_code} GET {path}")
+                continue
+            body = (response.text or "")[:160]
+            if (
+                response.status_code == 503
+                and path.startswith(OPTIONAL_DISABLED_PREFIXES)
+                and "disabled" in body.lower()
+            ):
+                skipped += 1
+                checked -= 1
+                print(f"SKIP {response.status_code} GET {path} (optional feature off)")
+                continue
+            failures.append(f"GET {path}: HTTP {response.status_code} {body!r}")
 
     print(
         f"\nOpenAPI GET audit: checked={checked} skipped={skipped} "

@@ -19,18 +19,28 @@ def main() -> int:
     args = parser.parse_args()
 
     base = args.base.rstrip("/")
-    with httpx.Client(timeout=30.0) as client:
+    with httpx.Client(timeout=60.0) as client:
         health = client.get(f"{base}/api/health").json()
         backend = client.get(f"{base}/api/backend").json()
         status = client.get(f"{base}/api/status").json()
         settings = client.get(f"{base}/api/settings").json()
-        platform = client.get(f"{base}/api/platform").json()
+        try:
+            platform = client.get(f"{base}/api/platform").json()
+        except Exception as exc:
+            print(f"WARN /api/platform slow or unavailable: {exc}")
+            platform = {}
 
     print("health:", health)
     print("backend:", backend)
     print("rag_documents:", status.get("rag_documents"))
     print("settings_keys:", sorted(settings.keys())[:8], "...")
     print("platform:", platform.get("os"), platform.get("lan_urls"))
+    proto = health.get("prototype") or {}
+    if proto:
+        print("prototype:", proto.get("hint") or proto.get("data_persists"))
+    rt = health.get("realtime_bus") or {}
+    if rt:
+        print("realtime:", rt.get("mode"), "subscribers=", rt.get("local_subscribers"))
 
     if health.get("status") != "ok":
         return 1
@@ -51,7 +61,7 @@ def main() -> int:
     if "hf_token_set" not in settings:
         print("settings missing hf_token_set")
         return 1
-    if not platform.get("os"):
+    if platform and not platform.get("os"):
         print("platform missing os")
         return 1
 

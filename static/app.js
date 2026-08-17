@@ -1754,6 +1754,13 @@ function startRealtimeFeed() {
         window.__securaiqRealtime = data;
         const push = data.push || null;
         const pushType = push && push.type ? String(push.type) : "";
+        if (pushType === "archive" || pushType === "scan_clear") {
+          if (typeof loadReports === "function") {
+            try {
+              loadReports();
+            } catch (_) {}
+          }
+        }
         const ready = data.backend_ready || data.backend_status === "loads_on_chat";
         const backend = data.backend || "model";
         const jobsBusy = Number(data.jobs_running || 0) + Number(data.jobs_pending || 0);

@@ -131,14 +131,14 @@ async def scans_clear_old(
     user: Annotated[AuthUser, Depends(require_user)],
     x_securaiq_org: str | None = Header(default=None, alias="X-SecuraIQ-Org"),
 ):
-    """Delete prior scan rows, scan evidence dirs, and scan/tool findings so a fresh scan can replace them."""
+    """Archive scan evidence, then clear live scan rows/findings (no-loss)."""
     from app.exposure import reclassify_stored_risky_ports
     from app.scan_engine.models import clear_user_scan_data
 
     ensure_scans_schema()
     oid = resolve_request_org(user, org_id=None, header_org=x_securaiq_org)
     require_perm(user, "asset.write", org_id=oid)
-    result = clear_user_scan_data(user.id)
+    result = clear_user_scan_data(user.id, archive=True)
     reclass = reclassify_stored_risky_ports(user.id)
     return {"ok": True, **result, "reclassified": reclass.get("updated", 0)}
 

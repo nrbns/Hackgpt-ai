@@ -274,6 +274,14 @@ def reports_catalog(user_id: str) -> dict[str, Any]:
     except Exception:
         pass
 
+    # Archived scans (survives clear / workspace reset)
+    try:
+        from app.archive import list_archives
+
+        items.extend(list_archives(user_id, limit=20))
+    except Exception:
+        pass
+
     items.extend(
         [
         {
